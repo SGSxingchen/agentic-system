@@ -1,0 +1,51 @@
+# 扳机规则配置
+# 定义事件与智能体之间的触发关系
+# 字段参考: backend/src/core/event/trigger.py -> Trigger
+#
+# 字段说明:
+#   id         — 扳机唯一标识
+#   event      — 监听的事件类型 (对应 Trigger.event_type)
+#   agent      — 响应该事件的智能体名称 (对应 Trigger.agent_name)
+#   priority   — 优先级，数值越小越先执行 (0 最高)
+#   condition  — 可选的 Python 表达式条件
+#   async      — 是否异步执行 (对应 Trigger.async_mode，默认 true)
+#   enabled    — 是否启用 (默认 true)
+
+triggers:
+  # 1. 用户消息 → 助手处理（最高优先级）
+  - id: "user_to_assistant"
+    event: "user_message"
+    agent: "assistant"
+    priority: 0
+    enabled: true
+
+  # 2. 规划请求 → 规划器分解任务
+  - id: "plan_request_to_planner"
+    event: "plan_request"
+    agent: "planner"
+    priority: 0
+    enabled: true
+
+  # 3. 规划完成 → 编码器生成代码
+  - id: "plan_to_coder"
+    event: "plan_created"
+    agent: "coder"
+    priority: 1
+    enabled: true
+
+  # 4. 代码生成完成 → 审查器自动审查
+  - id: "code_to_reviewer"
+    event: "code_generated"
+    agent: "reviewer"
+    priority: 1
+    condition: "data.get('language') == 'python'"
+    enabled: true
+
+  # 5. 审查失败且严重度高 → 编码器自动修复
+  - id: "review_fail_to_coder"
+    event: "review_failed"
+    agent: "coder"
+    priority: 2
+    condition: "data.get('severity', 0) > 5"
+    async: false  # 同步执行，等待修复完成
+    enabled: true

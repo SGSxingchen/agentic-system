@@ -1,0 +1,364 @@
+# 基于多智能体协作的自动化代码生成与审查系统
+
+> 本科毕业设计项目 | 2026 届
+
+## 项目简介
+
+本系统采用**事件驱动的多智能体协作架构**，实现从需求分析到代码生成再到自动审查的全流程自动化。系统包含四个核心智能体（助手、规划、编码、审查），通过统一消息总线进行事件驱动通信，支持 YAML 配置驱动的工作流编排，并配备长期记忆系统（情景/语义/程序三种记忆类型），实现智能体间的高效协作。
+
+前后端分离设计：后端基于 FastAPI + Python asyncio，前端基于 React + TypeScript + Vite，通过 REST API 和 WebSocket 实时通信。
+
+---
+
+## 技术栈
+
+| 分类 | 技术 | 版本 |
+|------|------|------|
+| **后端框架** | FastAPI | ≥ 0.100 |
+| **ASGI 服务器** | Uvicorn | ≥ 0.20 |
+| **数据验证** | Pydantic | ≥ 2.0 |
+| **LLM - OpenAI** | openai SDK | ≥ 1.0 |
+| **LLM - Anthropic** | anthropic SDK | ≥ 0.20 |
+| **配置管理** | PyYAML | ≥ 6.0 |
+| **日志** | structlog | ≥ 23.0 |
+| **向量数据库** | ChromaDB | 可选 |
+| **前端框架** | React | 18.x |
+| **前端语言** | TypeScript | 5.3+ |
+| **构建工具** | Vite | 5.x |
+| **运行时** | Python 3.10+ / Node.js 18+ | |
+
+---
+
+## 项目结构
+
+```
+agentic-system/
+├── config/                         # YAML 配置 (agents/triggers/workflows/capabilities/system)
+├── backend/
+│   ├── src/
+│   │   ├── agents/                 # 4 个智能体 (assistant/planner/coder/reviewer)
+│   │   ├── api/                    # FastAPI 应用 (routes/websocket/schemas/dependencies)
+│   │   ├── core/                   # 核心框架
+│   │   │   ├── bus/                #   统一消息总线 (UnifiedBus)
+│   │   │   ├── event/              #   事件引擎 + 扳机系统
+│   │   │   ├── memory/             #   长期记忆系统
+│   │   │   ├── capability/         #   能力插件系统
+│   │   │   ├── workflow/           #   工作流编排器
+│   │   │   ├── context/            #   上下文管理
+│   │   │   ├── llm/                #   LLM 客户端 (OpenAI/Anthropic)
+│   │   │   └── config.py           #   配置管理
+│   │   ├── capabilities/builtin/   # 完整能力实现 (代码解析/静态分析/测试运行)
+│   │   └── utils/                  # 日志 + 追踪
+│   ├── tests/                      # 测试 (unit + integration)
+│   └── requirements.txt
+├── frontend/
+│   └── src/
+│       ├── components/             # 8 个面板 (Chat/Agent/Task/Workflow/Memory/Monitor/Settings/Sidebar)
+│       ├── hooks/                  # WebSocket Hook
+│       ├── store/                  # 全局状态管理
+│       └── api/                    # API 客户端
+├── docs/                           # 项目文档 (architecture/api/deployment/bus-design)
+├── CLAUDE.md                       # 架构设计文档 (详细)
+├── QUICKSTART.md                   # 快速开始指南
+├── HANDOFF.md                      # 交接文档
+└── README.md                       # ← 本文件
+```
+
+---
+
+## 已实现功能
+
+### 🤖 智能体系统
+- **AssistantAgent** — 对话助手，集成记忆检索，支持上下文感知对话
+- **PlannerAgent** — 任务规划，将需求分解为可执行的子任务列表 (结构化 JSON)
+- **CoderAgent** — 代码生成，结构化输出（文件名 + 代码 + 说明）
+- **ReviewerAgent** — 代码审查，六维度评估（正确性/安全性/可维护性/性能/最佳实践/错误处理）
+
+### 📡 消息总线 & 事件引擎
+- **UnifiedBus** — 统一消息总线，支持发布/订阅、请求/响应、广播、点对点
+- 优先级队列、消息历史、运行指标统计
+- 事件引擎 + 扳机系统 (Trigger)，支持条件匹配、优先级、异步/同步调度
+
+### 🧠 长期记忆系统
+- 三种记忆类型：情景记忆 / 语义记忆 / 程序性记忆
+- 双后端存储：InMemory + ChromaDB（向量数据库，可选）
+- 多信号加权检索（相关性 + 重要性 + 时间衰减 + 访问频率）
+- 记忆巩固（去重合并）+ 记忆遗忘（时间衰减）
+- 完整 REST API：CRUD + 搜索 + 巩固 + 遗忘
+
+### 🔧 能力系统
+- 能力抽象接口 + JSON Schema 描述
+- 内置能力：代码解析器 (AST)、静态分析器、测试运行器
+- 能力注册中心，支持动态加载
+
+### 🔄 工作流编排
+- 顺序执行、并行执行、YAML 配置驱动
+- 预定义工作流模板（规划→编码→审查→修复）
+- 分层上下文存储（全局/会话/智能体三层）
+
+### 🌐 WebSocket 实时通信
+- 连接管理器，支持广播与定向发送
+- Agent 状态和对话响应实时推送前端
+
+### 🖥️ 前端界面 (8 个面板)
+- **ChatPanel** — 聊天气泡界面，显示记忆使用指示
+- **AgentPanel** — 智能体状态查看与直接调用
+- **TaskPanel** — 任务提交与状态跟踪
+- **WorkflowPanel** — 工作流模板选择与执行
+- **MemoryPanel** — 记忆统计/列表/搜索/创建/删除
+- **MonitorPanel** — 系统状态可视化
+- **Settings** — LLM 配置面板（支持热重载）
+- **Sidebar** — 侧边栏导航
+
+### 🛠️ 基础设施
+- YAML 配置体系 (5 个配置文件 + 动态加载 + fallback)
+- 统一日志系统 (structlog)
+- 调用追踪器 (Tracer/Span)
+- Pydantic 类型安全配置
+
+---
+
+## 安装与运行
+
+### 环境要求
+
+- Python 3.10+
+- Node.js 18+
+- npm
+
+### 1. 克隆项目
+
+```bash
+git clone <repo-url>
+cd agentic-system
+```
+
+### 2. 后端安装与启动
+
+```bash
+# 创建虚拟环境 (推荐)
+cd backend
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置 LLM (任选其一)
+# 方式 1: 编辑配置文件
+cp config.example.yaml src/config.yaml
+# 编辑 src/config.yaml，填入 LLM API Key
+
+# 方式 2: 环境变量
+export LLM_PROVIDER=openai
+export LLM_API_KEY=sk-your-key
+export LLM_MODEL=gpt-4
+
+# 启动后端 (二选一)
+cd src && python -m api.main
+# 或
+cd src && uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+后端将在 **http://localhost:8001** 启动。
+
+### 3. 前端安装与启动
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+前端将在 **http://localhost:3000** 启动。
+
+### 4. 访问系统
+
+| 地址 | 说明 |
+|------|------|
+| http://localhost:3000 | 前端界面 |
+| http://localhost:8001/docs | Swagger API 文档 |
+| http://localhost:8001/api/health | 健康检查 |
+| ws://localhost:8001/ws | WebSocket 实时通信 |
+
+---
+
+## 配置说明
+
+### 运行时配置 (backend/src/config.yaml)
+
+```yaml
+llm:
+  provider: openai          # openai 或 anthropic
+  model: gpt-4              # 模型名称
+  api_key: sk-xxx           # API Key (建议用环境变量 LLM_API_KEY)
+  base_url: ""              # 自定义 API 端点 (可选)
+
+memory:
+  backend: "memory"         # "memory" (内存) 或 "chroma" (ChromaDB)
+```
+
+### 组件配置 (config/ 目录)
+
+| 文件 | 用途 |
+|------|------|
+| `config/agents.yaml` | 智能体定义 (名称/类型/能力) |
+| `config/triggers.yaml` | 事件扳机规则 |
+| `config/workflows.yaml` | 工作流模板 |
+| `config/capabilities.yaml` | 能力插件 |
+| `config/system.yaml` | 全局系统配置 |
+
+### 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `LLM_PROVIDER` | LLM 提供商 (openai/anthropic) |
+| `LLM_API_KEY` | LLM API Key |
+| `LLM_MODEL` | 模型名称 |
+| `LLM_BASE_URL` | 自定义 API 端点 |
+| `MEMORY_BACKEND` | 记忆后端 (memory/chroma) |
+
+---
+
+## 运行测试
+
+```bash
+# 全部测试
+python3 -m pytest backend/tests/ -q
+
+# 单元测试
+python3 -m pytest backend/tests/unit/ -v
+
+# 集成测试
+python3 -m pytest backend/tests/integration/ -v
+
+# 查看详细输出
+python3 -m pytest backend/tests/ -v --tb=short
+```
+
+### 测试模块
+
+| 模块 | 文件 | 覆盖范围 |
+|------|------|----------|
+| 消息总线 | `test_bus.py` | SimpleBus / UnifiedBus / 频道 / 路由 |
+| 智能体 | `test_agent_system.py` | 基类 / 生命周期 / 注册中心 |
+| 事件引擎 | `test_event_engine.py` | 事件匹配 / 扳机 / 条件评估 |
+| 能力系统 | `test_capability.py` | 代码解析 / 静态分析 / 注册 |
+| 配置管理 | `test_config.py` | 配置加载 / 环境变量 / YAML 合并 |
+| 上下文 | `test_context.py` | 分层存储 |
+| 记忆系统 | `test_memory.py` | 存储 / 检索 / 巩固 / 遗忘 |
+| 规划器 | `test_planner.py` | PlannerAgent 逻辑 |
+| 工作流 | `test_workflow.py` | 顺序 / 并行执行 |
+| 工作流边界 | `test_workflow_edge_cases.py` | 工作流边界条件 |
+| 集成-流水线 | `test_agent_pipeline.py` | 多智能体协作流程 |
+| 集成-API | `test_api.py` | REST API 端点 |
+
+---
+
+## API 端点
+
+### 智能体管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/agents` | 列出所有已注册智能体 |
+| GET | `/api/agents/{name}` | 获取特定智能体详情 |
+| POST | `/api/agents/{name}/invoke` | 直接调用某个智能体 |
+
+### 任务管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/tasks` | 提交新任务 |
+| GET | `/api/tasks` | 列出所有任务 |
+| GET | `/api/tasks/{task_id}` | 获取任务详情 |
+| DELETE | `/api/tasks/{task_id}` | 取消/删除任务 |
+
+### 工作流
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/workflows/templates` | 获取预定义工作流模板 |
+| POST | `/api/workflows/execute` | 执行工作流 |
+
+### 记忆系统
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/memory/stats` | 记忆统计 |
+| GET | `/api/memory/list` | 列出记忆 (支持类型过滤) |
+| POST | `/api/memory/search` | 搜索记忆 |
+| POST | `/api/memory/create` | 创建记忆 |
+| DELETE | `/api/memory/{memory_id}` | 删除记忆 |
+| POST | `/api/memory/consolidate` | 触发记忆巩固 |
+| POST | `/api/memory/forget` | 触发记忆遗忘 |
+
+### 配置与健康
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/config` | 获取当前配置 (隐藏 API Key) |
+| POST | `/api/config` | 更新配置并热重载 |
+| GET | `/api/health` | 健康检查 |
+
+### WebSocket
+
+| 路径 | 说明 |
+|------|------|
+| `ws://localhost:8001/ws` | 实时通信端点 |
+
+---
+
+## 前端面板功能描述
+
+| 面板 | 功能说明 |
+|------|----------|
+| **聊天面板** | 用户与 AI 的对话界面，显示聊天气泡，支持记忆使用指示 |
+| **智能体面板** | 列出所有已注册的智能体，查看状态和能力列表，可直接调用 |
+| **任务面板** | 提交开发需求，触发 规划→编码→审查 流水线，跟踪任务状态 |
+| **工作流面板** | 选择预设工作流模板 (如完整流水线)，配置参数后执行 |
+| **记忆面板** | 查看记忆统计 (三种类型分布)，列表浏览，搜索，手动创建/删除 |
+| **监控面板** | 系统实时状态，WebSocket 连接状态，事件流日志 |
+| **设置面板** | LLM 提供商切换，API Key 配置，模型选择，自定义 base_url |
+
+---
+
+## 项目统计
+
+| 指标 | 数值 |
+|------|------|
+| 源代码文件 | ~87 个 (62 Python + 15 TS/TSX + 10 CSS) |
+| 后端代码行数 | ~8,300 行 |
+| 前端代码行数 | ~5,100 行 |
+| 测试代码行数 | ~4,900 行 |
+| 测试用例 | ~331 个 |
+| 测试模块 | 12 个 (10 单元 + 2 集成) |
+| REST API 端点 | 19 个 |
+| 前端面板 | 8 个 |
+| YAML 配置文件 | 6 个 |
+
+---
+
+## 文档索引
+
+| 文档 | 说明 |
+|------|------|
+| `CLAUDE.md` | 架构设计文档 (详细，面向 AI 和开发者) |
+| `README.md` | 项目说明 (面向用户和评审) |
+| `QUICKSTART.md` | 5 分钟快速上手 |
+| `HANDOFF.md` | 交接文档 (状态概览 + 下一步) |
+| `PROGRESS.md` | 开发进度追踪 |
+| `docs/architecture.md` | 系统架构 |
+| `docs/api.md` | API 端点详细文档 |
+| `docs/bus-design.md` | 消息总线设计 |
+| `docs/deployment.md` | 部署指南 |
+
+---
+
+## 开发规范
+
+- 所有改动遵循「先文档 → 再编码 → 再验收」流程
+- Python: PEP 8 + 类型注解 + Google 风格 docstring
+- TypeScript: 严格模式 + 函数式组件
+- 提交: [Conventional Commits](https://www.conventionalcommits.org/) 规范
+- 架构变动须同步更新 `CLAUDE.md` 和相关文档

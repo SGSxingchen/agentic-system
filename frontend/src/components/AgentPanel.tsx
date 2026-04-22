@@ -1,0 +1,439 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useAppStore } from '../store/appStore'
+import * as api from '../api/client'
+import './AgentPanel.css'
+
+const STATUS_CONFIG: Record<
+  string,
+  { bg: string; color: string; dotColor: string; label: string }
+> = {
+  idle: { bg: '#DCFCE7', color: '#166534', dotColor: '#16A34A', label: '空闲' },
+  busy: { bg: '#FEF3C7', color: '#92400E', dotColor: '#D97706', label: '忙碌' },
+  error: { bg: '#FEE2E2', color: '#991B1B', dotColor: '#DC2626', label: '错误' },
+  stopped: { bg: '#F3F4F6', color: '#4B5563', dotColor: '#9CA3AF', label: '已停止' },
+}
+
+interface AgentFormData {
+  name: string
+  description: string
+  system_prompt: string
+  tools: string[]
+  output_format: string
+  max_iterations: number
+}
+
+const EMPTY_FORM: AgentFormData = {
+  name: '',
+  description: '',
+  system_prompt: '',
+  tools: [],
+  output_format: 'text',
+  max_iterations: 10,
+}
+
+interface CapabilityOption {
+  name: string
+  description: string
+}
+
+export function AgentPanel() {
+  const { state, dispatch } = useAppStore()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [apiAvailable, setApiAvailable] = useState(true)
+
+  // CRUD 状态
+  const [editingAgent, setEditingAgent] = useState<string | null>(null)
+  const [form, setForm] = useState<AgentFormData>(EMPTY_FORM)
+  const [capabilities, setCapabilities] = useState<CapabilityOption[]>([])
+  const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // 内联工具管理
+  const [toolPanelAgent, setToolPanelAgent] = useState<string | null>(null)
+  const [toolSaving, setToolSaving] = useState(false)
+
+  const fetchAgents = useCallback(async () => {
+    setLoading(true)
+    const res = await api.listAgents()
+    if (res.status === 'ok' && res.data) {
+      dispatch({ type: 'SET_AGENTS', payload: res.data })
+      setError(null)
+      setApiAvailable(true)
+    } else {
+      setApiAvailable(false)
+      setError(null)
+    }
+    setLoading(false)
+  }, [dispatch])
+
+  const fetchCapabilities = useCallback(async () => {
+    const res = await api.listCapabilities()
+    if (res.status === 'ok' && res.data) {
+      setCapabilities(res.data as CapabilityOption[])
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchAgents()
+    fetchCapabilities()
+    const timer = setInterval(fetchAgents, 10000)
+    return () => clearInterval(timer)
+  }, [fetchAgents, fetchCapabilities])
+
+  // 开始创建
+  const startCreate = () => {
+    setEditingAgent('__new__')
+    setForm({ ...EMPTY_FORM })
+    setConfirmDelete(null)
+    fetchCapabilities()
+  }
+
+  // 开始编辑
+  const startEdit = (agent: { name: string; status: string; description?: string; capabilities?: string[] }) => {
+    setEditingAgent(agent.name)
+    setForm({
+      name: agent.name,
+      description: agent.description || '',
+      system_prompt: '', // 需要从后端获取完整配置
+      tools: agent.capabilities || [],
+      output_format: 'text',
+      max_iterations: 10,
+    })
+    setConfirmDelete(null)
+    fetchCapabilities()
+  }
+
+  const cancelEdit = () => {
+    setEditingAgent(null)
+    setForm(EMPTY_FORM)
+    setError(null)
+  }
+
+  const toggleTool = (toolName: string) => {
+    setForm((prev) => {
+      const tools = prev.tools.includes(toolName)
+        ? prev.tools.filter((t) => t !== toolName)
+        : [...prev.tools, toolName]
+      return { ...prev, tools }
+    })
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+
+    let res
+    if (editingAgent === '__new__') {
+      if (!form.name.trim()) {
+        setError('名称不能为空')
+        setSaving(false)
+        return
+      }
+      res = await api.createAgent({
+        name: form.name.trim(),
+        description: form.description,
+        system_prompt: form.system_prompt,
+        tools: form.tools,
+        output_format: form.output_format,
+        max_iterations: form.max_iterations,
+      })
+    } else {
+      res = await api.updateAgent(editingAgent!, {
+        description: form.description,
+        system_prompt: form.system_prompt || undefined,
+        tools: form.tools,
+        output_format: form.output_format,
+        max_iterations: form.max_iterations,
+      })
+    }
+
+    if (res.status === 'ok') {
+      cancelEdit()
+      await fetchAgents()
+    } else {
+      setError(res.message || '保存失败')
+    }
+    setSaving(false)
+  }
+
+  // 内联切换 Agent 的工具（即时保存）
+  const handleInlineToggleTool = async (agentName: string, toolName: string, currentTools: string[]) => {
+    setToolSaving(true)
+    const newTools = currentTools.includes(toolName)
+      ? currentTools.filter((t) => t !== toolName)
+      : [...currentTools, toolName]
+
+    const res = await api.updateAgent(agentName, { tools: newTools })
+    if (res.status === 'ok') {
+      await fetchAgents()
+    } else {
+      setError(res.message || '更新工具失败')
+    }
+    setToolSaving(false)
+  }
+
+  const handleDelete = async (name: string) => {
+    const res = await api.deleteAgent(name)
+    if (res.status === 'ok') {
+      setConfirmDelete(null)
+      await fetchAgents()
+    } else {
+      setError(res.message || '删除失败')
+    }
+  }
+
+  // 渲染编辑表单
+  const renderEditForm = () => {
+    const isNew = editingAgent === '__new__'
+
+    return (
+      <div className="agent-card agent-card--editing">
+        <div className="agent-form">
+          <h3 className="agent-form__title">{isNew ? '新建智能体' : `编辑: ${editingAgent}`}</h3>
+
+          <div className="form-group">
+            <label>名称</label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              disabled={!isNew}
+              placeholder="如: my_agent"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>描述</label>
+            <input
+              type="text"
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="智能体功能描述"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>系统提示词 (System Prompt)</label>
+            <textarea
+              value={form.system_prompt}
+              onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
+              placeholder="定义智能体的角色、行为和输出格式..."
+              rows={8}
+              style={{ fontFamily: 'monospace', fontSize: '13px' }}
+            />
+            <span className="form-hint">定义 Agent 的角色和行为，支持 Markdown 格式</span>
+          </div>
+
+          <div className="form-group">
+            <label>可用工具</label>
+            <div className="tools-selector">
+              {capabilities.length > 0 ? (
+                capabilities.map((cap) => (
+                  <label key={cap.name} className="tool-checkbox" title={cap.description}>
+                    <input
+                      type="checkbox"
+                      checked={form.tools.includes(cap.name)}
+                      onChange={() => toggleTool(cap.name)}
+                    />
+                    <span className="tool-name">{cap.name}</span>
+                    {cap.description && <span className="tool-desc">{cap.description}</span>}
+                  </label>
+                ))
+              ) : (
+                <span className="form-hint">无可用工具（后端未启动或无插件）</span>
+              )}
+            </div>
+            <span className="form-hint">选择 Agent 可以调用的工具，LLM 会自主决定何时使用</span>
+          </div>
+
+          <div className="form-group form-group--row">
+            <div style={{ flex: 1 }}>
+              <label>输出格式</label>
+              <select
+                value={form.output_format}
+                onChange={(e) => setForm({ ...form, output_format: e.target.value })}
+              >
+                <option value="text">text（原样返回）</option>
+                <option value="json">json（自动解析）</option>
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label>最大迭代次数</label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={form.max_iterations}
+                onChange={(e) => setForm({ ...form, max_iterations: parseInt(e.target.value) || 10 })}
+              />
+              <span className="form-hint">tool_use 循环上限</span>
+            </div>
+          </div>
+
+          {error && <div className="agent-error">{error}</div>}
+
+          <div className="button-group">
+            <button className="btn-primary" onClick={handleSave} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </button>
+            <button className="btn-secondary" onClick={cancelEdit}>取消</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderAgentCard = (agent: { name: string; status: string; description?: string; capabilities?: string[] }) => {
+    const statusCfg = STATUS_CONFIG[agent.status] || STATUS_CONFIG.stopped
+    const isConfirming = confirmDelete === agent.name
+
+    return (
+      <div key={agent.name} className="agent-card">
+        <div className="agent-card-header">
+          <div className="agent-name-row">
+            <span className="agent-status-dot" style={{ backgroundColor: statusCfg.dotColor }} />
+            <h3 className="agent-name">{agent.name}</h3>
+          </div>
+          <div className="agent-card__actions">
+            <span className="agent-status-badge" style={{ background: statusCfg.bg, color: statusCfg.color }}>
+              {statusCfg.label}
+            </span>
+            <button className="btn-icon" onClick={() => startEdit(agent)} title="编辑">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </button>
+            <button className="btn-icon btn-icon--danger" onClick={() => setConfirmDelete(agent.name)} title="删除">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {isConfirming && (
+          <div className="confirm-strip">
+            <span>确认删除 "{agent.name}"？</span>
+            <button className="btn-danger-sm" onClick={() => handleDelete(agent.name)}>确定</button>
+            <button className="btn-secondary-sm" onClick={() => setConfirmDelete(null)}>取消</button>
+          </div>
+        )}
+
+        {agent.description && <p className="agent-description">{agent.description}</p>}
+
+        {/* 当前工具标签 + 管理按钮 */}
+        <div className="agent-tools-section">
+          <div className="agent-capabilities">
+            {(agent.capabilities || []).map((cap) => {
+              const isAgentTool = state.agents.some((a) => a.name === cap)
+              return (
+                <span key={cap} className={`capability-tag ${isAgentTool ? 'capability-tag--agent' : ''}`}>
+                  {cap}
+                  <button
+                    className="capability-tag__remove"
+                    title={`移除 ${cap}`}
+                    disabled={toolSaving}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleInlineToggleTool(agent.name, cap, agent.capabilities || [])
+                    }}
+                  >x</button>
+                </span>
+              )
+            })}
+            <button
+              className="capability-tag capability-tag--add"
+              onClick={() => {
+                setToolPanelAgent(toolPanelAgent === agent.name ? null : agent.name)
+                fetchCapabilities()
+              }}
+            >+ 工具</button>
+          </div>
+
+          {/* 展开的工具选择面板 */}
+          {toolPanelAgent === agent.name && (
+            <div className="tool-picker">
+              <div className="tool-picker__header">
+                <span className="tool-picker__title">可用工具</span>
+                <button className="tool-picker__close" onClick={() => setToolPanelAgent(null)}>x</button>
+              </div>
+              <div className="tool-picker__list">
+                {capabilities
+                  .filter((cap) => cap.name !== agent.name)  /* 不能选自己 */
+                  .map((cap) => {
+                    const active = (agent.capabilities || []).includes(cap.name)
+                    const isAgentCap = state.agents.some((a) => a.name === cap.name)
+                    return (
+                      <label key={cap.name} className={`tool-picker__item ${active ? 'tool-picker__item--active' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={active}
+                          disabled={toolSaving}
+                          onChange={() => handleInlineToggleTool(agent.name, cap.name, agent.capabilities || [])}
+                        />
+                        <span className="tool-picker__name">
+                          {cap.name}
+                          {isAgentCap && <span className="tool-picker__badge">Agent</span>}
+                        </span>
+                        {cap.description && <span className="tool-picker__desc">{cap.description}</span>}
+                      </label>
+                    )
+                  })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (loading && state.agents.length === 0) {
+    return (
+      <div className="agent-panel">
+        <div className="panel-header"><h2>智能体管理</h2></div>
+        <div className="agent-loading">
+          <div className="loading-spinner" />
+          <p>加载中...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="agent-panel">
+      <div className="panel-header">
+        <h2>智能体管理</h2>
+        <div className="panel-header__actions">
+          <button className="btn-primary-sm" onClick={startCreate} disabled={editingAgent !== null}>
+            + 新建智能体
+          </button>
+          <button className="refresh-btn" onClick={fetchAgents}>刷新</button>
+        </div>
+      </div>
+
+      {!apiAvailable && (
+        <div className="agent-error" style={{ borderColor: 'rgba(217, 119, 6, 0.2)', background: 'rgba(217, 119, 6, 0.06)', color: 'var(--color-warning)' }}>
+          未连接到后端，部分功能不可用
+        </div>
+      )}
+
+      {error && !editingAgent && <div className="agent-error">{error}</div>}
+
+      {editingAgent === '__new__' && renderEditForm()}
+      {editingAgent && editingAgent !== '__new__' && renderEditForm()}
+
+      {state.agents.length === 0 && !editingAgent ? (
+        <div className="agent-empty">
+          <p>暂无已注册的智能体，点击上方按钮创建</p>
+        </div>
+      ) : (
+        <div className="agent-grid">
+          {state.agents
+            .filter((a) => a.name !== editingAgent || editingAgent === '__new__')
+            .map((agent) => renderAgentCard(agent))}
+        </div>
+      )}
+    </div>
+  )
+}

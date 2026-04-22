@@ -1,0 +1,105 @@
+# 工作流模板配置
+# 定义可复用的工作流模板，由 WorkflowOrchestrator 加载执行
+# 字段参考: backend/src/core/workflow/types.py -> Task
+#           backend/src/core/workflow/orchestrator.py -> execute_workflow()
+#
+# 每个 step 的字段:
+#   name           — 步骤名称（唯一标识）
+#   agent          — 负责执行的智能体名称
+#   input          — 输入数据，支持 ${variable} 引用上游输出
+#   output_key     — 输出键名，结果存入工作流上下文
+#   condition      — 条件表达式（Python），为空则无条件执行
+#   max_iterations — 最大迭代次数（用于修复循环），默认 1
+#   timeout        — 超时秒数（可选）
+
+workflows:
+  # 工作流 1: 代码生成与审查
+  # 流程: 规划 → 编码 → 审查 → 条件修复
+  code_generation_and_review:
+    description: "代码生成与审查流水线"
+    mode: "sequential"
+    steps:
+      - name: "plan"
+        agent: "planner"
+        input:
+          requirement: "${user_requirement}"
+        output_key: "plan"
+
+      - name: "code"
+        agent: "coder"
+        input:
+          plan: "${plan}"
+        output_key: "code"
+
+      - name: "review"
+        agent: "reviewer"
+        input:
+          code: "${code}"
+        output_key: "review_result"
+
+      - name: "fix"
+        agent: "coder"
+        condition: "review_result is not None and review_result.get('approved') == False"
+        input:
+          code: "${code}"
+          issues: "${review_result}"
+        output_key: "fixed_code"
+        max_iterations: 3
+
+  # 工作流 2: 任务分解与执行
+  # 流程: 规划分解 → 逐步编码
+  task_decompose_and_execute:
+    description: "任务分解与执行流水线"
+    mode: "sequential"
+    steps:
+      - name: "decompose"
+        agent: "planner"
+        input:
+          requirement: "${user_requirement}"
+        output_key: "plan"
+
+      - name: "implement"
+        agent: "coder"
+        input:
+          plan: "${plan}"
+        output_key: "code"
+
+  # 工作流 3: 完整流水线
+  # 流程: 规划 → 编码 → 审查 → 修复 → 再审查
+  full_pipeline:
+    description: "完整开发流水线：规划 → 编码 → 审查 → 修复"
+    mode: "sequential"
+    steps:
+      - name: "plan"
+        agent: "planner"
+        input:
+          requirement: "${user_requirement}"
+        output_key: "plan"
+
+      - name: "code"
+        agent: "coder"
+        input:
+          plan: "${plan}"
+        output_key: "code"
+
+      - name: "review"
+        agent: "reviewer"
+        input:
+          code: "${code}"
+        output_key: "review_result"
+
+      - name: "fix"
+        agent: "coder"
+        condition: "review_result is not None and review_result.get('approved') == False"
+        input:
+          code: "${code}"
+          issues: "${review_result}"
+        output_key: "fixed_code"
+        max_iterations: 3
+
+      - name: "final_review"
+        agent: "reviewer"
+        condition: "fixed_code is not None"
+        input:
+          code: "${fixed_code}"
+        output_key: "final_review_result"

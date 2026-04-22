@@ -1,0 +1,162 @@
+# 系统架构
+
+> 最后更新: 2026-03-25 | 与 CLAUDE.md 保持一致
+
+## 架构总览
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 前端 (React / TypeScript)             │
+│                                                       │
+│  ChatPanel │ TaskPanel │ AgentPanel │ MemoryPanel     │
+│  WorkflowPanel │ MonitorPanel │ Settings │ Sidebar    │
+└──────────────────────┬────────────────────────────────┘
+                       │ HTTP REST / WebSocket
+┌──────────────────────▼────────────────────────────────┐
+│               FastAPI 服务层 (Port 8001)               │
+│                                                        │
+│  Routes: tasks │ agents │ workflows │ memory │ config  │
+│  WebSocket Handler │ Dependencies (DI)                 │
+│  Pydantic Schemas │ CORS Middleware                    │
+└──────────────────────┬─────────────────────────────────┘
+                       │
+┌──────────────────────▼─────────────────────────────────┐
+│          UnifiedBus — 统一消息总线 (系统神经中枢)       │
+│                                                         │
+│  EventChannel │ RequestChannel │ BroadcastChannel       │
+│  MessageRouter │ PriorityQueue │ MessageHistory         │
+│  BusMetrics (运行指标)                                  │
+└───┬──────────┬──────────┬──────────┬───────────────────┘
+    │          │          │          │
+    ▼          ▼          ▼          ▼
+┌────────┐ ┌────────┐ ┌────────┐ ┌──────────────┐
+│ Event  │ │ Memory │ │Context │ │ Capability   │
+│ Engine │ │ System │ │ Store  │ │ Registry     │
+│(扳机)  │ │(记忆)  │ │(上下文)│ │(能力插件)    │
+└───┬────┘ └────────┘ └────────┘ └──────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│                    智能体层 (4 个 Agent)                  │
+│                                                           │
+│  ┌───────────┐ ┌──────────┐ ┌─────────┐ ┌──────────┐   │
+│  │ Assistant  │ │ Planner  │ │  Coder  │ │ Reviewer │   │
+│  │ (对话助手) │ │ (规划器) │ │(代码生成)│ │(代码审查)│   │
+│  └───────────┘ └──────────┘ └─────────┘ └──────────┘   │
+│                                                           │
+│  AgentRegistry │ AgentLifecycleManager                   │
+└──────────────────────┬────────────────────────────────────┘
+                       │
+┌──────────────────────▼────────────────────────────────────┐
+│                   LLM 客户端层                             │
+│  OpenAI Client │ Anthropic Client │ Factory               │
+└───────────────────────────────────────────────────────────┘
+```
+
+## 核心组件
+
+### 统一消息总线 (UnifiedBus)
+
+位于 `core/bus/unified_bus.py`，所有组件通过总线通信。
+
+| 通信模式 | 方法 | 说明 |
+|----------|------|------|
+| 发布/订阅 | `publish()` / `subscribe()` | 事件驱动，一对多 |
+| 请求/响应 | `request()` / `handle_request()` | 同步调用，一对一 |
+| 点对点 | `send()` / `register_route()` | 路由分发 |
+| 广播 | `broadcast()` | 全局通知 |
+
+内部由 EventChannel、RequestChannel、BroadcastChannel、MessageRouter 四个子组件协作。使用 asyncio.PriorityQueue 实现优先级消息处理。
+
+### 事件引擎 + 扳机系统
+
+**EventEngine** (`core/event/engine.py`):
+- 接收总线事件 → 查找匹配扳机 → 评估条件 → 调度 Agent
+- 同步扳机串行执行，异步扳机并发执行
+- 条件表达式安全评估 (restricted eval)
+
+**扳机 (Trigger)** 在 `config/triggers.yaml` 中定义:
+```yaml
+triggers:
+  - id: "code_to_reviewer"
+    event: "code_generated"
+    agent: "reviewer"
+    priority: 1
+    condition: "data.get('language') == 'python'"
+```
+
+### 智能体系统
+
+4 个 Agent 继承自 `BaseAgent`，通过 `AgentRegistry` 管理:
+
+| Agent | 功能 | 输入事件 | 输出事件 |
+|-------|------|----------|----------|
+| Assistant | 对话 + 记忆检索 | user_message | assistant_completed |
+| Planner | 需求分解 | plan_request | plan_created |
+| Coder | 代码生成 | plan_created | code_generated |
+| Reviewer | 六维度审查 | code_generated | review_passed / review_failed |
+
+### 记忆系统
+
+三种记忆类型: episodic / semantic / procedural
+
+组件:
+- **MemoryStore** — InMemoryStore 或 ChromaStore
+- **MemoryFormation** — 创建 / 巩固 (去重) / 遗忘 (衰减)
+- **MemoryRetriever** — 多信号加权检索
+
+### 能力系统
+
+内置 3 个原生能力:
+- `CodeParserCapability` — AST 代码解析
+- `StaticAnalyzerCapability` — 静态代码质量检查
+- `TestRunnerCapability` — 代码测试执行
+
+通过 `CapabilityRegistry` 管理，支持从 `config/capabilities.yaml` 动态加载。
+
+### 工作流编排
+
+`WorkflowOrchestrator` 支持顺序/并行执行，工作流模板在 `config/workflows.yaml` 中定义。
+
+### 配置管理
+
+两层配置:
+1. `backend/src/config.yaml` — LLM API Key 等运行时配置 (`load_config()`)
+2. `config/*.yaml` — Agent/Trigger/Capability/Workflow 定义 (`load_yaml_configs()`)
+
+支持环境变量覆盖 (LLM_PROVIDER, LLM_API_KEY 等)。
+
+## 启动流程
+
+```
+lifespan() 初始化顺序:
+1. load_yaml_configs()    → 加载 config/*.yaml
+2. bus.start()            → 启动 UnifiedBus
+3. ContextStore()         → 上下文存储
+4. CapabilityRegistry     → 能力系统
+5. TriggerRegistry        → 扳机系统
+6. EventEngine            → 事件引擎
+7. WorkflowOrchestrator   → 工作流编排
+8. init_memory_system()   → 记忆系统
+9. reload_agent()         → Agent 创建 + 注册
+10. lifecycle monitor     → 健康监控
+```
+
+所有子系统都有 fallback 机制：config/ 缺失时回退到硬编码默认值。
+
+## 数据流
+
+### 对话流程
+```
+用户消息 → WebSocket → bus.publish(user_message)
+→ AssistantAgent.on_event() → LLM.chat() + MemoryRetriever
+→ bus.publish(assistant_completed) → WebSocket → 前端显示
+```
+
+### 任务流水线
+```
+提交任务 → POST /api/tasks → bus.publish(plan_request)
+→ PlannerAgent → bus.publish(plan_created)
+→ CoderAgent → bus.publish(code_generated)
+→ ReviewerAgent → bus.publish(review_passed/failed)
+```

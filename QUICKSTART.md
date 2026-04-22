@@ -1,0 +1,124 @@
+# 快速开始
+
+> 5 分钟启动多智能体代码生成与审查系统
+
+## 前置要求
+
+- Python 3.10+
+- Node.js 18+
+- pip / npm
+
+## 1. 安装依赖
+
+```bash
+# 后端
+cd backend
+pip install -r requirements.txt
+
+# 前端
+cd ../frontend
+npm install
+```
+
+## 2. 配置 LLM
+
+编辑 `backend/src/config.yaml`：
+
+```yaml
+llm:
+  provider: "openai"             # openai / anthropic
+  model: "gpt-4"                 # 模型名称
+  api_key: "your-api-key-here"   # API Key
+  base_url: ""                   # 自定义端点 (可选)
+```
+
+或使用环境变量：
+
+```bash
+export LLM_PROVIDER=openai
+export LLM_API_KEY=sk-your-key
+export LLM_MODEL=gpt-4
+```
+
+也可以启动后在前端 Settings 面板中配置（支持热重载）。
+
+## 3. 启动
+
+### 后端 (端口 8001)
+
+```bash
+cd backend/src
+uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+### 前端 (端口 3000)
+
+```bash
+cd frontend
+npm run dev
+```
+
+## 4. 访问
+
+| 地址 | 说明 |
+|------|------|
+| http://localhost:3000 | 前端界面 |
+| http://localhost:8001/docs | Swagger API 文档 |
+| http://localhost:8001/api/health | 健康检查 |
+| ws://localhost:8001/ws | WebSocket 实时通信 |
+
+## 5. 使用
+
+1. **对话** — 在 ChatPanel 输入消息，AssistantAgent 自动回复（带记忆检索）
+2. **提交任务** — 在 TaskPanel 描述需求，触发 规划→编码→审查 流水线
+3. **查看智能体** — 在 AgentPanel 查看各 Agent 的状态和能力
+4. **工作流** — 在 WorkflowPanel 选择预设模板执行代码生成任务
+5. **记忆管理** — 在 MemoryPanel 查看/搜索/创建/删除记忆
+6. **系统监控** — 在 MonitorPanel 查看实时系统状态
+
+## 6. 运行测试
+
+```bash
+# 全部测试 (~331 个用例)
+python3 -m pytest backend/tests/ -q
+
+# 单元测试
+python3 -m pytest backend/tests/unit/ -v
+
+# 集成测试
+python3 -m pytest backend/tests/integration/ -v
+```
+
+## 核心架构
+
+```
+用户 → 前端 (React) → WebSocket / REST → FastAPI
+                                            ↓
+                                    UnifiedBus (消息总线)
+                                    ↙    ↓    ↘
+                            Planner  Coder  Reviewer
+                               ↓       ↓       ↓
+                             计划  →  代码  →  审查 → 完成
+```
+
+## 功能速览
+
+- ✅ 4 个专业智能体 (Assistant / Planner / Coder / Reviewer)
+- ✅ 统一消息总线 (发布订阅 / 请求响应 / 广播 / 优先级队列)
+- ✅ 事件引擎 + 扳机系统 (ECA 规则引擎)
+- ✅ 工作流编排 (顺序 / 并行 / 条件 / 重试 / YAML 模板)
+- ✅ 长期记忆系统 (情景/语义/程序记忆 + 多信号加权检索)
+- ✅ 能力插件 (代码解析 / 静态分析 / 测试运行)
+- ✅ 上下文管理 (全局/会话/智能体三层作用域)
+- ✅ 19 个 REST API + WebSocket 实时通信
+- ✅ React 前端 (8 个面板)
+- ✅ ~331 个测试用例 (单元 + 集成)
+- ✅ YAML 配置体系 (5 个配置文件 + 动态加载 + fallback)
+- ✅ 结构化日志 + 链路追踪
+
+## 更多文档
+
+- 架构详情 → `CLAUDE.md`
+- API 文档 → `docs/api.md`
+- 部署指南 → `docs/deployment.md`
+- 交接文档 → `HANDOFF.md`

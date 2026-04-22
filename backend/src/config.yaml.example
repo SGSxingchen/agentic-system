@@ -1,0 +1,61 @@
+# 系统配置模板
+# 复制本文件为 config.yaml 并填入你的实际配置
+# 敏感信息（如 api_key）建议通过环境变量设置:
+#   export LLM_API_KEY="your-api-key"
+#   export LLM_PROVIDER="openai"
+#   export LLM_MODEL="gpt-3.5-turbo"
+#   export LLM_BASE_URL=""
+
+# LLM 配置
+llm:
+  api_key: ""              # 建议通过环境变量 LLM_API_KEY 设置
+  base_url: ""             # 自定义 API 地址，留空使用官方端点
+  model: "gpt-3.5-turbo"  # 模型名称
+  provider: "openai"       # openai 或 anthropic
+  temperature: 0.7
+  max_tokens: 4096
+
+# 记忆系统配置
+memory:
+  backend: "memory"  # "memory" (内存) 或 "chroma" (ChromaDB 持久化)
+  persist_dir: "./data/chroma"
+  collection_name: "agent_memories"
+
+# 消息总线配置
+bus:
+  queue_size: 1000
+  history_size: 500
+
+# 上下文管理配置
+context:
+  persist_dir: "./data/context"
+
+# 工作流配置
+workflow:
+  max_iterations: 10
+  default_timeout: 300.0
+
+# 智能体配置
+agents:
+  - name: "planner"
+    type: "builtin.PlannerAgent"
+    description: "任务规划智能体"
+    capabilities:
+      - "task_decomposition"
+      - "dependency_analysis"
+    config:
+      max_subtasks: 10
+
+  - name: "coder"
+    type: "builtin.CoderAgent"
+    description: "代码生成智能体"
+    capabilities:
+      - "code_generation"
+      - "code_refactoring"
+
+  - name: "reviewer"
+    type: "builtin.ReviewerAgent"
+    description: "代码审查智能体"
+    capabilities:
+      - "code_review"
+      - "quality_check"

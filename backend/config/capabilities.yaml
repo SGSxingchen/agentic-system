@@ -1,0 +1,25 @@
+capabilities:
+  # 原生插件
+  - name: "code_parser"
+    type: "native"
+    class: "core.capability.native.CodeParserCapability"
+    description: "解析 Python 代码生成 AST 信息（函数/类/导入列表）"
+
+  - name: "static_analyzer"
+    type: "native"
+    class: "core.capability.native.StaticAnalyzerCapability"
+    description: "基本代码质量检查（行长/函数长度/未使用导入）"
+
+  # MCP 服务器 (未来扩展)
+  # - name: "github_integration"
+  #   type: "mcp"
+  #   server:
+  #     command: "uvx"
+  #     args: ["mcp-server-github"]
+  #     env:
+  #       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+
+  # OpenAPI 集成 (未来扩展)
+  # - name: "sonarqube_api"
+  #   type: "openapi"
+  #   spec_url: "https://sonarqube.example.com/api/openapi.json"

@@ -1,0 +1,28 @@
+agents:
+  - name: "assistant"
+    type: "agents.assistant.AssistantAgent"
+    description: "对话助手，处理用户消息并检索记忆"
+    capabilities:
+      - "chat"
+      - "conversation"
+
+  - name: "planner"
+    type: "agents.planner.PlannerAgent"
+    description: "任务规划智能体，将需求分解为子任务"
+    capabilities:
+      - "task_decomposition"
+      - "planning"
+
+  - name: "coder"
+    type: "agents.coder.CoderAgent"
+    description: "代码生成智能体，根据任务生成高质量代码"
+    capabilities:
+      - "code_generation"
+      - "code_refactoring"
+
+  - name: "reviewer"
+    type: "agents.reviewer.ReviewerAgent"
+    description: "代码审查智能体，六维度评估代码质量"
+    capabilities:
+      - "code_review"
+      - "quality_analysis"

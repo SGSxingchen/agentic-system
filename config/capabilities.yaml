@@ -1,0 +1,45 @@
+# 能力插件配置
+# 定义系统中可用的能力（工具）
+# 字段参考: backend/src/core/capability/base.py -> CapabilityBase, CapabilitySchema
+#           backend/src/core/capability/native.py -> CodeParserCapability, StaticAnalyzerCapability
+#
+# 能力类型:
+#   native  — 原生 Python 插件，进程内调用，高性能
+#   mcp     — MCP 服务器集成（跨进程，标准化协议）
+#   openapi — OpenAPI/HTTP 第三方服务集成
+
+capabilities:
+  # 原生能力 1: 代码解析器
+  - name: "code_parser"
+    type: "native"
+    class: "core.capability.native.CodeParserCapability"
+    description: "解析 Python 代码，提取函数、类、导入等 AST 信息"
+    config: {}
+
+  # 原生能力 2: 静态分析器
+  - name: "static_analyzer"
+    type: "native"
+    class: "core.capability.native.StaticAnalyzerCapability"
+    description: "基本代码质量检查：行长度、函数长度、未使用导入检测"
+    config:
+      max_line_length: 120
+      max_function_length: 50
+
+  # === 以下为预留扩展，当前未启用 ===
+
+  # MCP 服务器集成 (未来扩展)
+  # - name: "github_integration"
+  #   type: "mcp"
+  #   server:
+  #     command: "uvx"
+  #     args: ["mcp-server-github"]
+  #     env:
+  #       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+
+  # OpenAPI 集成 (未来扩展)
+  # - name: "sonarqube_api"
+  #   type: "openapi"
+  #   spec_url: "https://sonarqube.example.com/api/openapi.json"
+  #   auth:
+  #     type: "bearer"
+  #     token: "${SONARQUBE_TOKEN}"

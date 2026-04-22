@@ -1,0 +1,51 @@
+# 系统全局配置
+# 包含日志、服务器、LLM 默认模型、消息总线、记忆系统等
+# 字段参考: backend/src/core/config.py -> SystemConfig 及其子模型
+
+# 系统元数据
+system:
+  name: "Multi-Agent Code System"
+  version: "0.2.0"
+  debug: false
+
+# 日志配置
+logging:
+  level: "INFO"            # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  format: "console"        # "json" (结构化) 或 "console" (人类可读)
+
+# FastAPI 服务器配置
+server:
+  host: "0.0.0.0"
+  port: 8001
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:3001"
+
+# LLM 默认配置 (可被环境变量覆盖: LLM_PROVIDER, LLM_API_KEY, LLM_MODEL, LLM_BASE_URL)
+llm:
+  provider: "openai"             # openai | anthropic
+  api_key: ""                    # 建议通过环境变量 LLM_API_KEY 设置
+  model: "gpt-3.5-turbo"        # 默认模型
+  base_url: ""                   # 自定义 API 地址（留空使用官方端点）
+  temperature: 0.7
+  max_tokens: 4096
+
+# 消息总线配置 (可被环境变量覆盖: BUS_QUEUE_SIZE, BUS_HISTORY_SIZE)
+bus:
+  queue_size: 1000               # 消息队列大小，0 为无限
+  history_size: 500              # 消息历史保留数量
+
+# 记忆系统配置 (可被环境变量覆盖: MEMORY_BACKEND, MEMORY_PERSIST_DIR)
+memory:
+  backend: "memory"              # "memory" (内存) 或 "chroma" (ChromaDB 持久化)
+  persist_dir: "./data/chroma"
+  collection_name: "agent_memories"
+
+# 上下文管理配置
+context:
+  persist_dir: "./data/context"  # 项目上下文持久化目录
+
+# 工作流配置
+workflow:
+  max_iterations: 10             # 全局最大迭代次数
+  default_timeout: 300.0         # 默认超时（秒）
