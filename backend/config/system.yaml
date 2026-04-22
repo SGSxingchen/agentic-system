@@ -17,7 +17,7 @@ logging:
   format: "console"  # "json" 或 "console"
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8001
   cors_origins:
     - "http://localhost:3000"

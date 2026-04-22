@@ -3,7 +3,7 @@
 ⚠️ 前置条件：
 1. 在 backend/src/config.yaml 中配置有效的 LLM API Key
 2. 启动后端服务:
-   cd backend/src && python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8001
+   cd backend/src && python3 -m uvicorn api.main:app --host 127.0.0.1 --port 8001
 3. 确保 LLM API 可访问
 
 运行方式:
@@ -68,7 +68,7 @@ def ensure_server_running():
     if not check_server():
         pytest.skip(
             "后端服务未启动。请先运行:\n"
-            "  cd backend/src && python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8001"
+            "  cd backend/src && python3 -m uvicorn api.main:app --host 127.0.0.1 --port 8001"
         )
 
 
@@ -465,7 +465,7 @@ def run_all_scenarios():
     """直接运行所有场景测试并输出报告"""
     if not check_server():
         print("❌ 后端服务未启动！")
-        print("请先运行: cd backend/src && python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8001")
+        print("请先运行: cd backend/src && python3 -m uvicorn api.main:app --host 127.0.0.1 --port 8001")
         sys.exit(1)
 
     results: List[Dict[str, Any]] = []

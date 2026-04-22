@@ -97,8 +97,9 @@ agentic-system/
 - 分层上下文存储（全局/会话/智能体三层）
 
 ### 🌐 WebSocket 实时通信
-- 连接管理器，支持广播与定向发送
-- Agent 状态和对话响应实时推送前端
+- 对话响应只回发到当前连接，避免不同浏览器会话互相串消息
+- Pipeline 监控事件单独广播到监控面板，不混入聊天回复
+- 所有推送消息统一附带时间戳，便于前端事件流展示
 
 ### 🖥️ 前端界面 (8 个面板)
 - **ChatPanel** — 聊天气泡界面，显示记忆使用指示
@@ -157,7 +158,7 @@ export LLM_MODEL=gpt-4
 # 启动后端 (二选一)
 cd src && python -m api.main
 # 或
-cd src && uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+cd src && uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 后端将在 **http://localhost:8001** 启动。
@@ -187,6 +188,14 @@ npm run dev
 
 ### 运行时配置 (backend/src/config.yaml)
 
+`backend/src/config.yaml` 现在只作为本地运行时覆盖项，适合放未提交的个人配置；实际加载优先级为：
+
+1. `config/*.yaml`
+2. `backend/src/config.yaml`
+3. 环境变量
+
+敏感信息请优先使用环境变量注入，避免把真实密钥提交到仓库。
+
 ```yaml
 llm:
   provider: openai          # openai 或 anthropic
@@ -207,6 +216,10 @@ memory:
 | `config/workflows.yaml` | 工作流模板 |
 | `config/capabilities.yaml` | 能力插件 |
 | `config/system.yaml` | 全局系统配置 |
+
+补充说明:
+- 默认服务监听地址已收紧为 `127.0.0.1`
+- `bash` 工具默认关闭，只有在显式设置 `ENABLE_SHELL_TOOL=true` 时才允许使用
 
 ### 环境变量
 

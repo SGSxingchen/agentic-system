@@ -22,7 +22,7 @@ llm:
 
 ### 1.2 启动后端
 ```bash
-cd backend/src && python3 -m uvicorn api.main:app --port 8004 --host 0.0.0.0
+cd backend/src && python3 -m uvicorn api.main:app --port 8004 --host 127.0.0.1
 ```
 **结果:** ✅ 成功启动，Application startup complete
 

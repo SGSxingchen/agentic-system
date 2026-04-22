@@ -1,11 +1,14 @@
-"""ReadFile 能力插件 — 读取文件内容"""
+"""Read file capability with workspace boundary checks."""
+
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
 
+from ._safety import resolve_workspace_path
+
 
 class ReadFileCapability(CapabilityBase):
-    """读取指定路径的文件内容"""
+    """读取工作区内的文件内容。"""
 
     @property
     def name(self) -> str:
@@ -13,7 +16,7 @@ class ReadFileCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "读取指定路径的文件内容，返回文件文本"
+        return "读取工作区内指定路径的文件内容"
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -24,7 +27,7 @@ class ReadFileCapability(CapabilityBase):
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "要读取的文件路径",
+                        "description": "要读取的文件路径（仅允许工作区内路径）",
                     },
                     "encoding": {
                         "type": "string",
@@ -45,10 +48,17 @@ class ReadFileCapability(CapabilityBase):
             return {"error": "file_path is required"}
 
         try:
-            with open(file_path, "r", encoding=encoding) as f:
-                content = f.read()
-            return {"content": content, "file_path": file_path, "size": len(content)}
+            resolved_path = resolve_workspace_path(file_path)
+            with open(resolved_path, "r", encoding=encoding) as file:
+                content = file.read()
+            return {
+                "content": content,
+                "file_path": str(resolved_path),
+                "size": len(content),
+            }
         except FileNotFoundError:
             return {"error": f"File not found: {file_path}"}
-        except Exception as e:
-            return {"error": f"Failed to read file: {str(e)}"}
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": f"Failed to read file: {str(exc)}"}

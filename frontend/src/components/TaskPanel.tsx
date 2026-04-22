@@ -29,8 +29,16 @@ export function TaskPanel() {
     try {
       const resp = await fetch(`${API}/api/tasks`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data = await resp.json()
-      setTasks(Array.isArray(data) ? data : (data as Record<string, unknown>).tasks as Task[] || [])
+      const body = await resp.json()
+      const payload = body as Record<string, unknown>
+      const taskList = Array.isArray(body)
+        ? body
+        : Array.isArray(payload.data)
+          ? payload.data
+          : Array.isArray(payload.tasks)
+            ? payload.tasks
+            : []
+      setTasks(taskList as Task[])
       setApiAvailable(true)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '获取任务列表失败'

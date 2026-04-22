@@ -120,17 +120,18 @@ triggers:
 
 ### 配置管理
 
-两层配置:
-1. `backend/src/config.yaml` — LLM API Key 等运行时配置 (`load_config()`)
-2. `config/*.yaml` — Agent/Trigger/Capability/Workflow 定义 (`load_yaml_configs()`)
+配置加载优先级:
+1. `config/*.yaml` — 系统与组件主配置
+2. `backend/src/config.yaml` — 本地运行时覆盖
+3. 环境变量 — 最终覆盖 (LLM_PROVIDER, LLM_API_KEY 等)
 
-支持环境变量覆盖 (LLM_PROVIDER, LLM_API_KEY 等)。
+默认服务监听 `127.0.0.1`，`bash` 工具默认关闭，需显式设置 `ENABLE_SHELL_TOOL=true` 才启用。
 
 ## 启动流程
 
 ```
 lifespan() 初始化顺序:
-1. load_yaml_configs()    → 加载 config/*.yaml
+1. load_config() / load_yaml_configs() → 合并 `config/*.yaml`、`backend/src/config.yaml` 与环境变量
 2. bus.start()            → 启动 UnifiedBus
 3. ContextStore()         → 上下文存储
 4. CapabilityRegistry     → 能力系统
@@ -148,9 +149,11 @@ lifespan() 初始化顺序:
 
 ### 对话流程
 ```
-用户消息 → WebSocket → bus.publish(user_message)
-→ AssistantAgent.on_event() → LLM.chat() + MemoryRetriever
-→ bus.publish(assistant_completed) → WebSocket → 前端显示
+用户消息 → WebSocket Handler → assistant capability
+→ 仅向当前连接返回 assistant_response
+
+Pipeline 执行 → bus.publish(step_started / step_completed)
+→ WebSocket 事件桥接 → 广播到监控面板
 ```
 
 ### 任务流水线

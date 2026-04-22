@@ -1,12 +1,16 @@
-"""WriteFile 能力插件 — 写入文件内容"""
-import os
+"""Write file capability with workspace boundary checks."""
+
+from __future__ import annotations
+
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
 
+from ._safety import resolve_workspace_path
+
 
 class WriteFileCapability(CapabilityBase):
-    """写入内容到指定路径的文件"""
+    """Write content to files inside the current workspace only."""
 
     @property
     def name(self) -> str:
@@ -14,7 +18,7 @@ class WriteFileCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "将内容写入指定路径的文件，自动创建目录"
+        return "Write content to a file inside the workspace and create parent directories when needed."
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -25,21 +29,21 @@ class WriteFileCapability(CapabilityBase):
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "要写入的文件路径",
+                        "description": "Target file path inside the workspace.",
                     },
                     "content": {
                         "type": "string",
-                        "description": "要写入的文件内容",
+                        "description": "Content to write into the file.",
                     },
                     "encoding": {
                         "type": "string",
-                        "description": "文件编码，默认 utf-8",
+                        "description": "File encoding, defaults to utf-8.",
                         "default": "utf-8",
                     },
                 },
                 "required": ["file_path", "content"],
             },
-            returns="写入结果",
+            returns="Write result metadata.",
         )
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -51,18 +55,15 @@ class WriteFileCapability(CapabilityBase):
             return {"error": "file_path is required"}
 
         try:
-            # 自动创建目录
-            dir_path = os.path.dirname(file_path)
-            if dir_path:
-                os.makedirs(dir_path, exist_ok=True)
-
-            with open(file_path, "w", encoding=encoding) as f:
-                f.write(content)
-
+            resolved_path = resolve_workspace_path(file_path)
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+            resolved_path.write_text(content, encoding=encoding)
             return {
                 "success": True,
-                "file_path": file_path,
+                "file_path": str(resolved_path),
                 "bytes_written": len(content.encode(encoding)),
             }
-        except Exception as e:
-            return {"error": f"Failed to write file: {str(e)}"}
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": f"Failed to write file: {str(exc)}"}

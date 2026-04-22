@@ -13,9 +13,9 @@
 ```yaml
 llm:
   provider: "openai"
-  api_key: "sk-0Myyvo2rgGiVmMVfV"
+  api_key: "your-api-key-here"
   model: "claude-sonnet-4-20250514"
-  base_url: "http://156.238.228.118:8317/v1"
+  base_url: "http://your-openai-compatible-endpoint/v1"
   temperature: 0.7
   max_tokens: 4096
 ```

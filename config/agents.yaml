@@ -107,7 +107,7 @@ agents:
           "file_path": "建议的文件路径",
           "description": "简要说明代码的功能和设计思路"
       }
-    tools: ["code_parser", "read_file", "write_file", "bash", "reviewer"]
+    tools: ["code_parser", "read_file", "write_file", "reviewer"]
     output_format: "json"
     max_iterations: 15
     input_schema:

@@ -4,7 +4,7 @@
 使用前提:
     1. 启动后端服务:
        cd backend/src
-       LLM_API_KEY=test-key python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8001
+       LLM_API_KEY=test-key python3 -m uvicorn api.main:app --host 127.0.0.1 --port 8001
     2. 等待 "🚀 系统全部初始化完成!" 输出
     3. 运行此脚本:
        python3 tests/api_live_test.py

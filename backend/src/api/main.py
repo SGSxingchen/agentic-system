@@ -1,79 +1,68 @@
-"""FastAPI 应用入口 — 重构版
+"""FastAPI application entrypoint for the multi-agent system."""
 
-架构:
-- Pipeline 统一编排所有任务
-- Agent 全配置化（agents.yaml），内置 tool_use 循环
-- 能力插件自动发现（capabilities/ 目录扫描）
-- Bus 仅用于前端状态通知
-"""
+from __future__ import annotations
+
 import sys
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-# 修复导入路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.bus import UnifiedBus
-from core.llm import create_llm_client
-from core.config import load_config, load_yaml_configs
-from core.memory import (
-    MemoryFormation,
-    MemoryRetriever,
-    create_memory_store,
-)
 from core.agent import Agent, AgentRegistry
 from core.capability import CapabilityRegistry
 from core.capability.agent_adapter import AgentCapability
+from core.bus import UnifiedBus
+from core.config import load_config, load_yaml_configs
 from core.context import ContextStore
+from core.llm import create_llm_client
+from core.memory import MemoryFormation, MemoryRetriever, create_memory_store
 from core.pipeline import Pipeline
 
-# 依赖注入 setter / getter
 from .dependencies import (
-    set_bus,
+    get_capability_registry,
     set_agent_registry,
+    set_bus,
+    set_capability_registry,
+    set_context_store,
     set_llm_client,
-    set_memory_store,
     set_memory_formation,
     set_memory_retriever,
-    set_reload_agent_fn,
-    set_context_store,
-    set_capability_registry,
+    set_memory_store,
     set_pipeline,
-    get_capability_registry,
+    set_reload_agent_fn,
 )
-
-# 路由
 from .routes import (
-    tasks_router,
     agents_router,
-    workflows_router,
-    memory_router,
     config_router,
+    memory_router,
+    tasks_router,
+    workflows_router,
+)
+from .websocket.handlers import (
+    register_bus_event_bridge,
+    websocket_endpoint as ws_handler,
 )
 
-# WebSocket
-from .websocket.handlers import websocket_endpoint as ws_handler
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-
-# ─── 全局实例 ─────────────────────────────────────────────
-
-bus = UnifiedBus()
+bus: Optional[UnifiedBus] = None
 registry = AgentRegistry()
-
-# 缓存已加载的 config/ 配置
 _yaml_configs: Dict[str, Any] = {}
 
 
-# ─── 配置加载辅助 ─────────────────────────────────────────
+def _resolve_project_path(raw_path: str, default: str) -> str:
+    path = Path(raw_path or default)
+    if not path.is_absolute():
+        path = (PROJECT_ROOT / path).resolve()
+    return str(path)
 
 
 def _load_external_configs() -> Dict[str, Any]:
-    """加载 config/ 目录下的 YAML 配置，缓存结果"""
     global _yaml_configs
     if not _yaml_configs:
         _yaml_configs = load_yaml_configs()
@@ -81,24 +70,26 @@ def _load_external_configs() -> Dict[str, Any]:
 
 
 def clear_yaml_cache() -> None:
-    """清除 YAML 配置缓存"""
     global _yaml_configs
     _yaml_configs = {}
 
 
-# ─── 初始化函数 ───────────────────────────────────────────
+async def init_memory_system(config: Dict[str, Any]):
+    """Initialize the configured memory backend."""
 
-
-async def init_memory_system():
-    """初始化记忆系统"""
-    config = load_config()
     memory_config = config.get("memory", {})
     backend = memory_config.get("backend", "memory")
+    store_kwargs: Dict[str, Any] = {}
 
-    store_kwargs = {}
     if backend == "chroma":
-        store_kwargs["persist_dir"] = memory_config.get("persist_dir", "./data/chroma")
-        store_kwargs["collection_name"] = memory_config.get("collection_name", "agent_memories")
+        store_kwargs["persist_dir"] = _resolve_project_path(
+            memory_config.get("persist_dir", "./data/chroma"),
+            "./data/chroma",
+        )
+        store_kwargs["collection_name"] = memory_config.get(
+            "collection_name",
+            "agent_memories",
+        )
 
     memory_store = create_memory_store(backend, **store_kwargs)
     memory_formation = MemoryFormation(store=memory_store)
@@ -108,20 +99,19 @@ async def init_memory_system():
     set_memory_formation(memory_formation)
     set_memory_retriever(memory_retriever)
 
-    print(f"[OK] 记忆系统已初始化 (backend={backend})")
+    print(f"[OK] memory initialized (backend={backend})")
     return memory_store, memory_formation, memory_retriever
 
 
 def _discover_capabilities(cap_registry: CapabilityRegistry) -> None:
-    """自动发现并注册所有能力插件"""
-    src_dir = Path(__file__).parent.parent  # backend/src/
-    capabilities_dir = src_dir / "capabilities"
+    """Auto-discover capabilities from the local capabilities package."""
 
+    capabilities_dir = Path(__file__).parent.parent / "capabilities"
     if capabilities_dir.is_dir():
         count = cap_registry.discover_plugins([str(capabilities_dir)])
-        print(f"[OK] 能力插件自动发现: {count} 个能力已注册")
+        print(f"[OK] discovered {count} capabilities")
     else:
-        print(f"[WARN] 能力插件目录不存在: {capabilities_dir}")
+        print(f"[WARN] capabilities directory missing: {capabilities_dir}")
 
 
 def _create_agents_from_config(
@@ -129,32 +119,28 @@ def _create_agents_from_config(
     llm_client: Any,
     cap_registry: CapabilityRegistry,
 ) -> List[Agent]:
-    """从 agents.yaml 配置创建 Agent 实例（两阶段加载）
+    """Create configured agents and register agent-to-agent capability adapters."""
 
-    阶段 1: 创建所有 Agent（只绑定非 Agent 工具），注册为 Capability
-    阶段 2: 回填 Agent 互调工具（此时所有 Agent 已在 registry 中）
-    """
-    agent_names = {d["name"] for d in agents_config}
-    agents = []
-    deferred_tools: List[tuple] = []  # (agent, [tool_name, ...])
+    agent_names = {item["name"] for item in agents_config}
+    agents: List[Agent] = []
+    deferred_tools: List[tuple[Agent, List[str]]] = []
 
-    # ── 阶段 1: 创建 Agent，只绑定普通工具 ──
     for agent_def in agents_config:
         name = agent_def["name"]
         tool_names = agent_def.get("tools", [])
 
         tools = []
-        agent_tool_names = []
+        agent_tool_names: List[str] = []
         for tool_name in tool_names:
             if tool_name in agent_names:
-                # 其他 Agent 还没注册，先记下来
                 agent_tool_names.append(tool_name)
+                continue
+
+            capability = cap_registry.get(tool_name)
+            if capability:
+                tools.append(capability)
             else:
-                cap = cap_registry.get(tool_name)
-                if cap:
-                    tools.append(cap)
-                else:
-                    print(f"[WARN] Agent '{name}' 引用的工具 '{tool_name}' 未找到，跳过")
+                print(f"[WARN] agent '{name}' references missing tool '{tool_name}'")
 
         agent = Agent(
             name=name,
@@ -167,167 +153,158 @@ def _create_agents_from_config(
         )
         agents.append(agent)
 
-        # 注册为 Capability（带 input_schema）
-        input_schema = agent_def.get("input_schema")
-        cap_registry.register_native(AgentCapability(agent, input_schema))
+        cap_registry.register_native(
+            AgentCapability(agent, agent_def.get("input_schema"))
+        )
 
         if agent_tool_names:
             deferred_tools.append((agent, agent_tool_names))
 
-    # ── 阶段 2: 回填 Agent 互调工具 ──
     for agent, tool_names in deferred_tools:
         for tool_name in tool_names:
-            cap = cap_registry.get(tool_name)
-            if cap:
-                agent._tools.append(cap)
+            capability = cap_registry.get(tool_name)
+            if capability:
+                agent._tools.append(capability)
             else:
-                print(f"[WARN] Agent '{agent.name}' 引用的 Agent 工具 '{tool_name}' 未找到")
+                print(
+                    f"[WARN] agent '{agent.name}' references missing agent tool '{tool_name}'"
+                )
 
     for agent in agents:
-        print(f"  [+] Agent '{agent.name}' (tools: {[t.name for t in agent._tools]})")
+        print(f"  [+] agent '{agent.name}' tools={[tool.name for tool in agent._tools]}")
 
     return agents
 
 
-async def reload_agents():
-    """重新加载所有 Agent（热重载）"""
-    try:
-        config = load_config()
-        print(f"[INFO] 加载配置: {config['llm']['provider']} - {config['llm']['model']}")
+async def reload_agents() -> None:
+    """Reload all configured agents from merged config sources."""
 
-        # 重新创建 LLM 客户端
+    try:
+        clear_yaml_cache()
+        config = load_config()
+        llm_config = config.get("llm", {})
+
         llm_client = create_llm_client(
-            provider=config["llm"]["provider"],
-            api_key=config["llm"]["api_key"],
-            model=config["llm"]["model"],
-            base_url=config["llm"].get("base_url") or None,
+            provider=llm_config.get("provider", "openai"),
+            api_key=llm_config.get("api_key", ""),
+            model=llm_config.get("model", "gpt-3.5-turbo"),
+            base_url=llm_config.get("base_url") or None,
         )
         set_llm_client(llm_client)
 
-        # 获取能力注册表
-        from .dependencies import get_capability_registry
         cap_registry = get_capability_registry()
+        if cap_registry is None:
+            raise RuntimeError("Capability registry is not initialized")
 
-        # 先注销旧的 Agent 能力
-        for meta in registry.list_all():
-            cap_registry.unregister(meta.name)
-        # 清空 Agent 注册表
-        for meta in registry.list_all():
-            registry.unregister(meta.name)
+        for metadata in registry.list_all():
+            cap_registry.unregister(metadata.name)
+        for metadata in registry.list_all():
+            registry.unregister(metadata.name)
 
-        # 从 config/agents.yaml 加载
         ext_configs = _load_external_configs()
         agents_config = ext_configs.get("agents", [])
-
         if not agents_config:
-            # Fallback: 硬编码默认 Agent
-            print("[WARN] config/agents.yaml 未找到或为空，使用默认配置")
-            agents_config = [
-                {"name": "assistant", "description": "对话助手", "system_prompt": "你是一个友好的AI助手。", "tools": [], "output_format": "text"},
-                {"name": "planner", "description": "任务规划", "system_prompt": "你是一个任务规划智能体。", "tools": [], "output_format": "json"},
-                {"name": "coder", "description": "代码生成", "system_prompt": "你是一位资深软件工程师。", "tools": [], "output_format": "json"},
-                {"name": "reviewer", "description": "代码审查", "system_prompt": "你是一位代码审查专家。", "tools": [], "output_format": "json"},
-            ]
+            raise RuntimeError("config/agents.yaml is missing or empty")
 
-        print(f"[INFO] 从配置加载 {len(agents_config)} 个 Agent:")
+        print(f"[INFO] loading {len(agents_config)} configured agents")
         agents = _create_agents_from_config(agents_config, llm_client, cap_registry)
 
         for agent in agents:
-            # 注册到 AgentRegistry（元数据查询用，AgentCapability 已在 _create 内注册）
             registry.register(agent)
 
-        # 启动所有 Agent
         await registry.start_all()
-
         print(
-            f"[OK] 所有 Agent 已加载 "
-            f"({config['llm']['provider']} - {config['llm']['model']}, "
-            f"{len(registry)} 个 Agent)"
+            "[OK] agents loaded "
+            f"({llm_config.get('provider')} - {llm_config.get('model')}, {len(registry)} agents)"
         )
-    except Exception as e:
-        print(f"[ERROR] Agent 加载失败: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception as exc:
+        print(f"[ERROR] failed to reload agents: {exc}")
         raise
-
-
-# ─── 应用生命周期 ─────────────────────────────────────────
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    # 注入总线
+    """Initialize application dependencies and background infrastructure."""
+
+    global bus
+
+    config = load_config()
+    bus_config = config.get("bus", {})
+    context_config = config.get("context", {})
+
+    bus = UnifiedBus(
+        queue_size=int(bus_config.get("queue_size", 1000)),
+        history_size=int(bus_config.get("history_size", 500)),
+    )
+
     set_bus(bus)
     set_agent_registry(registry)
     set_reload_agent_fn(reload_agents)
 
-    # 启动总线（仅用于前端通知）
     await bus.start()
+    register_bus_event_bridge(bus)
 
-    # 初始化上下文存储
-    context_store = ContextStore()
+    context_store = ContextStore(
+        persist_dir=_resolve_project_path(
+            context_config.get("persist_dir", "./data/context"),
+            "./data/context",
+        )
+    )
+    await context_store.load_project_context()
     set_context_store(context_store)
-    print("[OK] 上下文存储已初始化")
+    print("[OK] context store initialized")
 
-    # 初始化能力系统（目录扫描自动发现）
     cap_registry = CapabilityRegistry()
     _discover_capabilities(cap_registry)
     set_capability_registry(cap_registry)
 
-    # 初始化记忆系统
-    await init_memory_system()
-
-    # 初始化所有 Agent（从 config/agents.yaml）
+    await init_memory_system(config)
     await reload_agents()
 
-    # 初始化 Pipeline
-    ext_configs = _load_external_configs()
     pipeline = Pipeline(cap_registry, bus)
-
-    # 加载管线模板（从 config/pipelines.yaml 或 config/workflows.yaml）
-    pipelines_config = ext_configs.get("pipelines") or ext_configs.get("workflows")
-    if pipelines_config and isinstance(pipelines_config, dict):
-        pipeline.load_templates(pipelines_config)
-        print(f"[OK] Pipeline 已初始化 (已加载 {len(pipelines_config)} 个模板)")
+    ext_configs = _load_external_configs()
+    pipeline_templates = ext_configs.get("pipelines") or ext_configs.get("workflows")
+    if isinstance(pipeline_templates, dict):
+        pipeline.load_templates(pipeline_templates)
+        print(f"[OK] pipeline initialized with {len(pipeline_templates)} templates")
     else:
-        print("[OK] Pipeline 已初始化")
+        print("[OK] pipeline initialized without templates")
     set_pipeline(pipeline)
 
-    print("[OK] 系统全部初始化完成!")
+    print("[OK] system initialization completed")
 
-    yield
+    try:
+        yield
+    finally:
+        print("[INFO] shutting down system...")
+        await context_store.save_project_context()
+        await registry.stop_all()
+        await bus.stop()
+        print("[OK] shutdown completed")
 
-    # 关闭
-    print("[INFO] 正在关闭系统...")
-    await registry.stop_all()
-    await bus.stop()
-    print("[OK] 系统已安全关闭")
 
-
-# ─── 创建 FastAPI 应用 ────────────────────────────────────
-
+APP_CONFIG = load_config()
+SERVER_CONFIG = APP_CONFIG.get("server", {})
+CORS_ORIGINS = SERVER_CONFIG.get(
+    "cors_origins",
+    ["http://localhost:3000", "http://localhost:3001"],
+)
 
 app = FastAPI(
     title="Multi-Agent Code System",
-    description="多智能体协作代码生成与审查系统 API",
-    version="0.3.0",
+    description="Multi-agent code generation and review system API",
+    version=APP_CONFIG.get("system", {}).get("version", "0.3.0"),
     lifespan=lifespan,
 )
 
-# CORS 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 注册路由
 app.include_router(tasks_router)
 app.include_router(agents_router)
 app.include_router(workflows_router)
@@ -335,31 +312,30 @@ app.include_router(memory_router)
 app.include_router(config_router)
 
 
-# ─── Chat REST 端点（前端 ChatPanel fallback）─────────────
-
-
 @app.post("/api/chat")
 async def chat_endpoint(req: dict):
-    """REST 聊天端点 — 调用 assistant Agent"""
+    """Fallback REST chat endpoint for the assistant agent."""
+
     message = req.get("message", "")
     if not message:
         return {"status": "error", "message": "message is required"}
 
     cap_registry = get_capability_registry()
     if not cap_registry or "assistant" not in cap_registry:
-        return {"status": "error", "message": "Assistant 未初始化"}
+        return {"status": "error", "message": "Assistant is not initialized"}
 
     try:
         result = await cap_registry.execute("assistant", message=message)
         response_text = result.get("response", str(result))
         return {"status": "ok", "response": response_text}
-    except Exception as e:
-        return {"status": "error", "message": f"处理失败: {str(e)}"}
+    except Exception as exc:
+        return {"status": "error", "message": f"processing failed: {str(exc)}"}
 
 
 @app.post("/api/chat/stream")
 async def chat_stream_endpoint(req: dict):
-    """SSE 流式聊天端点 — 逐步返回 Agent 事件"""
+    """SSE streaming chat endpoint."""
+
     import json as _json
 
     message = req.get("message", "")
@@ -368,23 +344,28 @@ async def chat_stream_endpoint(req: dict):
 
     cap_registry = get_capability_registry()
     if not cap_registry or "assistant" not in cap_registry:
-        return {"status": "error", "message": "Assistant 未初始化"}
+        return {"status": "error", "message": "Assistant is not initialized"}
 
-    cap = cap_registry.get("assistant")
+    capability = cap_registry.get("assistant")
 
     async def event_generator():
         try:
-            if hasattr(cap, "execute_stream"):
-                async for event in cap.execute_stream(message=message):
+            if hasattr(capability, "execute_stream"):
+                async for event in capability.execute_stream(message=message):
                     yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
             else:
-                # fallback: 非流式
                 result = await cap_registry.execute("assistant", message=message)
                 response_text = result.get("response", str(result))
-                yield f"data: {_json.dumps({'type': 'thinking', 'content': response_text}, ensure_ascii=False)}\n\n"
-                yield f"data: {_json.dumps({'type': 'done', 'content': result}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            yield f"data: {_json.dumps({'type': 'done', 'content': {'error': str(e)}}, ensure_ascii=False)}\n\n"
+                yield (
+                    f"data: {_json.dumps({'type': 'thinking', 'content': response_text}, ensure_ascii=False)}\n\n"
+                )
+                yield (
+                    f"data: {_json.dumps({'type': 'done', 'content': result}, ensure_ascii=False)}\n\n"
+                )
+        except Exception as exc:
+            yield (
+                f"data: {_json.dumps({'type': 'done', 'content': {'error': str(exc)}}, ensure_ascii=False)}\n\n"
+            )
 
     return StreamingResponse(
         event_generator(),
@@ -396,17 +377,20 @@ async def chat_stream_endpoint(req: dict):
     )
 
 
-# WebSocket 端点
 @app.websocket("/ws")
 async def websocket_route(websocket: WebSocket):
-    """WebSocket 连接端点"""
+    """Primary WebSocket endpoint."""
+
     await ws_handler(websocket)
-
-
-# ─── 入口 ────────────────────────────────────────────────
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    config = load_config()
+    server_config = config.get("server", {})
+    uvicorn.run(
+        app,
+        host=server_config.get("host", "127.0.0.1"),
+        port=int(server_config.get("port", 8001)),
+    )

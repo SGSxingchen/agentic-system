@@ -562,7 +562,7 @@ _CAPABILITY_CLASS_MAP = {
 # 启动后端
 cd backend/src && python -m api.main
 # 或
-cd backend/src && uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+cd backend/src && uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 
 # 启动前端
 cd frontend && npm install && npm run dev

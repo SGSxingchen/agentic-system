@@ -70,7 +70,7 @@ cd backend/src
 python -m api.main
 
 # 方式 2: uvicorn (支持热重载)
-uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 后端在 http://localhost:8001 启动。
@@ -107,7 +107,7 @@ npm run preview  # 预览生产构建
 
 ```bash
 cd backend/src
-uvicorn api.main:app --host 0.0.0.0 --port 8001 --workers 1
+uvicorn api.main:app --host 127.0.0.1 --port 8001 --workers 1
 ```
 
 > **注意**: 由于使用内存存储和 asyncio 事件循环，目前仅支持单 worker 模式。

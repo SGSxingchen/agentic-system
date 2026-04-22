@@ -94,7 +94,7 @@ agentic-system/
 │   │   │   │   └── config.py           #     GET/POST /api/config + /api/health
 │   │   │   └── websocket/
 │   │   │       ├── __init__.py
-│   │   │       └── handlers.py         #   WebSocket 连接管理 + 广播
+│   │   │       └── handlers.py         #   WebSocket 连接管理 + 定向回复/监控广播
 │   │   │
 │   │   ├── core/                       # 核心框架
 │   │   │   ├── config.py               #   ★ 配置管理 (load_config + load_yaml_configs)
@@ -191,7 +191,7 @@ LLM 客户端层 (OpenAI / Anthropic)
 `main.py` 的 `lifespan()` 函数按以下顺序初始化所有子系统:
 
 ```
-1. load_yaml_configs()          → 加载 config/*.yaml (项目根目录)
+1. load_config() + load_yaml_configs() → 合并 config/*.yaml、backend/src/config.yaml 和环境变量
 2. bus.start()                  → 启动 UnifiedBus (优先级队列处理循环)
 3. ContextStore()               → 初始化上下文存储
 4. CapabilityRegistry           → 从 config/capabilities.yaml 加载能力
@@ -265,7 +265,8 @@ LLM 客户端层 (OpenAI / Anthropic)
 
 **标准事件链:**
 ```
-user_message → Assistant → assistant_completed → 前端 WebSocket
+user_message → WebSocket handler → Assistant capability → 定向返回当前连接
+pipeline step_started/step_completed → UnifiedBus → WebSocket 广播 → MonitorPanel
 plan_request → Planner → plan_created → Coder → code_generated → Reviewer → review_passed/failed
 ```
 
@@ -313,8 +314,8 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 | 配置 | 路径 | 用途 | 加载函数 |
 |------|------|------|----------|
-| 运行时配置 | `backend/src/config.yaml` | LLM API Key、模型 | `load_config()` |
-| 组件配置 | `config/*.yaml` (项目根目录) | Agent/Trigger/Capability/Workflow | `load_yaml_configs()` |
+| 运行时配置 | `backend/src/config.yaml` | 本地运行时覆盖 (建议不入库保存密钥) | `load_config()` |
+| 组件配置 | `config/*.yaml` (项目根目录) | 系统与组件主配置 | `load_yaml_configs()` |
 
 ### 4.2 config/ 目录详解
 
@@ -330,7 +331,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 ```python
 # config.py 中的三个加载函数:
-load_config()           # 旧版兼容，仅加载 src/config.yaml
+load_config()           # 合并 config/*.yaml + src/config.yaml + 环境变量
 load_yaml_configs()     # 加载 config/ 目录 + 深度合并 + 按文件名分键
 load_system_config()    # 类型安全版，返回 Pydantic SystemConfig
 ```
@@ -386,7 +387,7 @@ _CAPABILITY_CLASS_MAP = {
 
 ### 5.2 WebSocket
 
-`ws://localhost:8001/ws` — 实时通信 (Agent 状态、对话响应)
+`ws://localhost:8001/ws` — 实时通信。聊天回复仅回当前连接，系统监控事件单独广播。
 
 ---
 
@@ -562,7 +563,7 @@ _CAPABILITY_CLASS_MAP = {
 # 启动后端
 cd backend/src && python -m api.main
 # 或
-cd backend/src && uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+cd backend/src && uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 
 # 启动前端
 cd frontend && npm install && npm run dev

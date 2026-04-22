@@ -48,7 +48,7 @@ export LLM_MODEL=gpt-4
 
 ```bash
 cd backend/src
-uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
+uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 ### 前端 (端口 3000)
