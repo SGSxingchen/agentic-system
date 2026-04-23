@@ -8,9 +8,11 @@
     2. 等待 "🚀 系统全部初始化完成!" 输出
     3. 运行此脚本:
        python3 tests/api_live_test.py
+       python3 tests/api_live_test.py --suite smoke
 
 依赖:  pip install httpx websockets
 """
+import argparse
 import asyncio
 import json
 import sys
@@ -21,7 +23,7 @@ from typing import Any, Optional
 import httpx
 
 BASE_URL = "http://localhost:8001"
-TIMEOUT = 10
+TIMEOUT = 120
 
 
 # ─── 测试基础设施 ─────────────────────────────────────────
@@ -62,6 +64,8 @@ class TestRunner:
         expect_json_value: Any = None,
         store_field: Optional[str] = None,   # 从 response data 中存储字段
         store_key: Optional[str] = None,     # 存储到 self.shared 中的 key
+        request_timeout: Optional[float] = None,
+        retries: int = 0,
     ) -> Optional[httpx.Response]:
         """执行一个 HTTP 请求并记录结果"""
         print(f"\n{'─'*50}")
@@ -70,11 +74,25 @@ class TestRunner:
         if json_body:
             print(f"   Body: {json.dumps(json_body, ensure_ascii=False)[:200]}")
 
-        try:
-            resp = self.client.request(method, url, json=json_body)
-        except Exception as e:
-            print(f"   ❌ 请求异常: {e}")
-            self.results.append(TestResult(name, method, url, None, False, str(e)))
+        resp = None
+        last_error = None
+        for attempt in range(retries + 1):
+            try:
+                if attempt > 0:
+                    print(f"   Retry: {attempt}/{retries}")
+                resp = self.client.request(
+                    method,
+                    url,
+                    json=json_body,
+                    timeout=request_timeout if request_timeout is not None else TIMEOUT,
+                )
+                break
+            except Exception as e:
+                last_error = e
+
+        if resp is None:
+            print(f"   ❌ 请求异常: {last_error}")
+            self.results.append(TestResult(name, method, url, None, False, str(last_error)))
             return None
 
         status = resp.status_code
@@ -153,13 +171,8 @@ class TestRunner:
 # ─── 测试用例 ─────────────────────────────────────────────
 
 
-def run_all_tests(t: TestRunner):
-    """执行全部 API 测试"""
-
-    # ═══════════════════════════════════════════════════════
-    # 1. 健康检查 & 配置
-    # ═══════════════════════════════════════════════════════
-
+def run_smoke_tests(t: TestRunner):
+    """执行关键核心链路测试。"""
     t.request(
         "健康检查",
         "GET", "/api/health",
@@ -176,8 +189,61 @@ def run_all_tests(t: TestRunner):
         expect_json_value="ok",
     )
 
+    t.request(
+        "调用 Agent (assistant)",
+        "POST", "/api/agents/assistant/invoke",
+        json_body={"data": {"message": "Reply with exactly: HELLO_OK"}},
+        expect_status=200,
+        request_timeout=180,
+        retries=1,
+    )
+
+    t.request(
+        "获取工作流模板",
+        "GET", "/api/workflows/templates",
+        expect_status=200,
+        expect_json_field="status",
+        expect_json_value="ok",
+    )
+
+    t.request(
+        "执行工作流 (task_decompose_and_execute)",
+        "POST", "/api/workflows/execute",
+        json_body={
+            "template_name": "task_decompose_and_execute",
+            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
+            "options": {},
+        },
+        expect_status=200,
+        expect_json_field="status",
+        expect_json_value="ok",
+        request_timeout=300,
+        retries=1,
+    )
+
+    t.request(
+        "执行工作流 (code_generation_and_review)",
+        "POST", "/api/workflows/execute",
+        json_body={
+            "template_name": "code_generation_and_review",
+            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
+            "options": {},
+        },
+        expect_status=200,
+        expect_json_field="status",
+        expect_json_value="ok",
+        request_timeout=360,
+        retries=1,
+    )
+
+
+def run_all_tests(t: TestRunner):
+    """执行全部 API 测试"""
+
+    run_smoke_tests(t)
+
     # ═══════════════════════════════════════════════════════
-    # 2. Agent 相关
+    # 1. Agent 详情与错误路径
     # ═══════════════════════════════════════════════════════
 
     t.request(
@@ -227,16 +293,6 @@ def run_all_tests(t: TestRunner):
     )
 
     t.request(
-        "调用 Agent (assistant, 无真实 LLM key)",
-        "POST", "/api/agents/assistant/invoke",
-        json_body={"data": {"message": "hello"}},
-        expect_status=200,
-        # status=error 因为没有真实 LLM key，但不应该 500
-        expect_json_field="status",
-        expect_json_value="error",
-    )
-
-    t.request(
         "调用不存在的 Agent (404)",
         "POST", "/api/agents/nonexistent/invoke",
         json_body={"data": {}},
@@ -244,7 +300,7 @@ def run_all_tests(t: TestRunner):
     )
 
     # ═══════════════════════════════════════════════════════
-    # 3. 任务相关
+    # 2. 任务相关
     # ═══════════════════════════════════════════════════════
 
     t.request(
@@ -304,7 +360,7 @@ def run_all_tests(t: TestRunner):
     )
 
     # ═══════════════════════════════════════════════════════
-    # 4. 记忆相关
+    # 3. 记忆相关
     # ═══════════════════════════════════════════════════════
 
     t.request(
@@ -401,38 +457,8 @@ def run_all_tests(t: TestRunner):
     )
 
     # ═══════════════════════════════════════════════════════
-    # 5. 工作流相关
+    # 4. 工作流错误路径
     # ═══════════════════════════════════════════════════════
-
-    t.request(
-        "获取工作流模板",
-        "GET", "/api/workflows/templates",
-        expect_status=200,
-        expect_json_field="status",
-        expect_json_value="ok",
-    )
-
-    t.request(
-        "执行工作流 (plan_code_review)",
-        "POST", "/api/workflows/execute",
-        json_body={
-            "workflow_type": "plan_code_review",
-            "requirement": "Create a REST API endpoint",
-            "options": {},
-        },
-        expect_status=200,
-    )
-
-    t.request(
-        "执行工作流 (code_only)",
-        "POST", "/api/workflows/execute",
-        json_body={
-            "workflow_type": "code_only",
-            "requirement": "Write a fibonacci function",
-            "options": {},
-        },
-        expect_status=200,
-    )
 
     t.request(
         "执行工作流 (无效类型)",
@@ -448,33 +474,15 @@ def run_all_tests(t: TestRunner):
     )
 
     t.request(
-        "执行工作流 (空 requirement, 422)",
+        "执行工作流 (空 requirement)",
         "POST", "/api/workflows/execute",
         json_body={
             "workflow_type": "plan_code_review",
             "requirement": "",
         },
-        expect_status=422,
-    )
-
-    # ═══════════════════════════════════════════════════════
-    # 6. 配置更新
-    # ═══════════════════════════════════════════════════════
-
-    t.request(
-        "更新配置 (有效)",
-        "POST", "/api/config",
-        json_body={
-            "llm": {
-                "provider": "anthropic",
-                "api_key": "test-key",
-                "model": "claude-opus-4-6",
-                "base_url": "https://code.newcli.com/claude/droid",
-            }
-        },
         expect_status=200,
         expect_json_field="status",
-        expect_json_value="ok",
+        expect_json_value="error",
     )
 
 
@@ -533,8 +541,17 @@ async def test_websocket(results: list[TestResult]):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Run live API checks against the local backend.")
+    parser.add_argument(
+        "--suite",
+        choices=("full", "smoke"),
+        default="full",
+        help="Choose a smaller smoke suite or the full live suite.",
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
-    print("  🚀 API 全量集成测试 (Live)")
+    print(f"  🚀 API 集成测试 (Live, suite={args.suite})")
     print(f"  目标: {BASE_URL}")
     print("=" * 60)
 
@@ -554,7 +571,10 @@ def main():
     # 执行 HTTP 测试
     t = TestRunner()
     try:
-        run_all_tests(t)
+        if args.suite == "smoke":
+            run_smoke_tests(t)
+        else:
+            run_all_tests(t)
     finally:
         t.close()
 

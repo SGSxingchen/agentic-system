@@ -50,6 +50,7 @@ from api.schemas import (
     TaskStatus,
     TaskSubmitRequest,
     WorkflowExecuteRequest,
+    WorkflowStepSchema,
     WorkflowTemplate,
 )
 from api.websocket.handlers import ConnectionManager
@@ -324,6 +325,16 @@ class TestWorkflowExecuteRequest:
         )
         assert r.template_name == "full_pipeline"
         assert r.options["retry"] is True
+
+
+class TestWorkflowStepSchema:
+    def test_accepts_timeout(self):
+        step = WorkflowStepSchema(name="review", agent="reviewer", timeout=2.5)
+        assert step.timeout == 2.5
+
+    def test_rejects_non_positive_timeout(self):
+        with pytest.raises(Exception):
+            WorkflowStepSchema(name="review", agent="reviewer", timeout=0)
 
 
 class TestWorkflowTemplate:

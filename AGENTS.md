@@ -1,7 +1,7 @@
 # 基于多智能体协作的自动化代码生成与审查系统 — 架构设计文档
 
-**版本**: v2.0 (arch-fix 后)
-**日期**: 2026-03-25
+**版本**: v2.1 (workflow-timeout 后)
+**日期**: 2026-04-23
 **作者**: 项目维护者
 
 > 本文档面向后续 AI 和开发者，完整描述系统架构、模块关系和开发规范。
@@ -300,6 +300,8 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - 顺序执行 (`execute_sequential`)
 - 并行执行 (`execute_parallel`)
 - YAML 模板驱动 (从 `config/workflows.yaml` 加载)
+- 步骤级超时控制 (`timeout` 字段，超时后标记失败并终止后续顺序步骤)
+- 嵌套变量解析 (支持 dict / list / tuple 中的 `${var}` 引用)
 
 预定义工作流:
 1. `code_generation_and_review` — 规划 → 编码 → 审查 → 条件修复
@@ -583,5 +585,5 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 ---
 
-**文档状态**: v2.0 — 基于实际代码审计
-**最后更新**: 2026-03-25
+**文档状态**: v2.1 — 基于实际代码审计
+**最后更新**: 2026-04-23

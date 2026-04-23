@@ -222,10 +222,21 @@ class WorkflowOrchestrator:
             task_result.iterations = iteration
 
             try:
-                output = await agent.process(input_data)
+                output = await self._run_agent(task, agent, input_data)
                 task_result.output = output
                 task_result.status = WorkflowStatus.COMPLETED
                 break
+            except asyncio.TimeoutError:
+                timeout_seconds = self._get_timeout_seconds(task.timeout)
+                task_result.error = (
+                    f"Task '{task.name}' timed out after {timeout_seconds:g}s"
+                    if timeout_seconds is not None
+                    else f"Task '{task.name}' timed out"
+                )
+                if iteration >= max_iter:
+                    task_result.status = WorkflowStatus.FAILED
+                else:
+                    input_data["_previous_error"] = task_result.error
             except Exception as e:
                 task_result.error = str(e)
                 if iteration >= max_iter:
@@ -261,15 +272,47 @@ class WorkflowOrchestrator:
         如果整个值是 ${key} 则替换为原始类型，
         否则做字符串插值。
         """
-        resolved: Dict[str, Any] = {}
-        for key, value in data.items():
-            if isinstance(value, str):
-                resolved[key] = _substitute(value, context)
-            elif isinstance(value, dict):
-                resolved[key] = WorkflowOrchestrator._resolve_variables(value, context)
-            else:
-                resolved[key] = value
-        return resolved
+        return {
+            key: WorkflowOrchestrator._resolve_value(value, context)
+            for key, value in data.items()
+        }
+
+    @staticmethod
+    def _resolve_value(value: Any, context: Dict[str, Any]) -> Any:
+        """递归解析字符串、字典、列表和元组中的变量引用。"""
+        if isinstance(value, str):
+            return _substitute(value, context)
+        if isinstance(value, dict):
+            return WorkflowOrchestrator._resolve_variables(value, context)
+        if isinstance(value, list):
+            return [WorkflowOrchestrator._resolve_value(item, context) for item in value]
+        if isinstance(value, tuple):
+            return tuple(WorkflowOrchestrator._resolve_value(item, context) for item in value)
+        return value
+
+    @staticmethod
+    def _get_timeout_seconds(timeout: Optional[float]) -> Optional[float]:
+        """标准化 timeout 配置，忽略非正数和非法值。"""
+        if timeout is None:
+            return None
+        try:
+            timeout_value = float(timeout)
+        except (TypeError, ValueError):
+            return None
+        return timeout_value if timeout_value > 0 else None
+
+    async def _run_agent(
+        self,
+        task: Task,
+        agent: Any,
+        input_data: Dict[str, Any],
+    ) -> Any:
+        """按需为 Agent.process 附加 asyncio.wait_for 超时控制。"""
+        execution = agent.process(input_data)
+        timeout_seconds = self._get_timeout_seconds(task.timeout)
+        if timeout_seconds is None:
+            return await execution
+        return await asyncio.wait_for(execution, timeout=timeout_seconds)
 
     @staticmethod
     def _parse_task(step: Dict[str, Any]) -> Task:

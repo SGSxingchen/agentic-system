@@ -184,6 +184,34 @@ npm run dev
 
 ---
 
+## 测试与验证
+
+```bash
+# 后端单元 + 集成测试
+python3 -m pytest backend/tests/ -q
+
+# 真实 LLM 冒烟验证（建议日常回归优先使用）
+python3 tests/api_live_test.py --suite smoke
+
+# 真实 LLM 全量 API 验证
+python3 tests/api_live_test.py
+```
+
+`--suite smoke` 会优先验证最关键的真实链路：
+- `/api/agents/assistant/invoke`
+- `task_decompose_and_execute`
+- `code_generation_and_review`
+- WebSocket 连通性
+
+如果在 Windows 终端运行 live 脚本时遇到编码问题，可先设置：
+
+```powershell
+$env:PYTHONUTF8='1'
+$env:PYTHONIOENCODING='utf-8'
+```
+
+---
+
 ## 配置说明
 
 ### 运行时配置 (backend/src/config.yaml)

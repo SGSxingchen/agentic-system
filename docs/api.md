@@ -1,6 +1,6 @@
 # API 文档
 
-> 最后更新: 2026-03-25 | 基于 backend/src/api/routes/ 实际代码
+> 最后更新: 2026-04-23 | 基于 backend/src/api/routes/ 实际代码
 
 ## 基础信息
 
@@ -272,15 +272,40 @@
 }
 ```
 
+说明:
+- `template_name` 优先级高于 `workflow_type`
+- 执行器会把 `requirement` 同时注入为 `user_requirement` / `requirement` / `message`
+- 若模板步骤声明 `timeout`，超时会在对应 `step_results` 中返回失败信息
+
+工作流 CRUD 中单个步骤现在支持以下字段:
+- `name`
+- `agent`
+- `input`
+- `output_key`
+- `condition`
+- `max_iterations`
+- `timeout`
+
 **响应:**
 ```json
 {
   "status": "ok",
-  "message": "工作流已启动",
+  "message": "工作流 'full_pipeline' 执行完成",
   "data": {
-    "workflow_id": "uuid-xxx",
-    "workflow_type": "plan_code_review",
-    "steps": ["planner", "coder", "reviewer"]
+    "status": "completed",
+    "context": {
+      "user_requirement": "实现排序算法"
+    },
+    "step_results": [
+      {
+        "step_name": "plan",
+        "status": "completed",
+        "output": {},
+        "error": null,
+        "duration_ms": 12.5
+      }
+    ],
+    "duration_ms": 35.1
   }
 }
 ```

@@ -1,6 +1,6 @@
 # 系统架构
 
-> 最后更新: 2026-03-25 | 与 CLAUDE.md 保持一致
+> 最后更新: 2026-04-23 | 与 CLAUDE.md 保持一致
 
 ## 架构总览
 
@@ -117,6 +117,10 @@ triggers:
 ### 工作流编排
 
 `WorkflowOrchestrator` 支持顺序/并行执行，工作流模板在 `config/workflows.yaml` 中定义。
+
+当前执行器具备两项关键运行时保障:
+- 支持步骤级 `timeout`，单步超时后会返回失败状态，避免工作流或管线无限卡住。
+- 支持递归变量解析，`input` 中的 dict / list / tuple 都可以安全引用 `${upstream_output}`。
 
 ### 配置管理
 

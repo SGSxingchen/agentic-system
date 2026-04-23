@@ -89,8 +89,7 @@ class Tracer:
             span.error = str(e)
             raise
         finally:
-            span.duration_ms = (time.monotonic() - start) * 1000
-            span.completed_at = datetime.now()
+            self._finalize_span(span, start)
             self._traces.append(span)
 
     @contextmanager
@@ -111,8 +110,7 @@ class Tracer:
             span.error = str(e)
             raise
         finally:
-            span.duration_ms = (time.monotonic() - start) * 1000
-            span.completed_at = datetime.now()
+            self._finalize_span(span, start)
             self._traces.append(span)
 
     def get_traces(
@@ -150,3 +148,12 @@ class Tracer:
     def total_traces(self) -> int:
         """已记录的追踪总数"""
         return len(self._traces)
+
+    @staticmethod
+    def _finalize_span(span: Span, start: float) -> None:
+        """统一回填完成时间和耗时，兼容低精度时钟环境。"""
+        completed_at = datetime.now()
+        monotonic_ms = (time.monotonic() - start) * 1000
+        wall_clock_ms = (completed_at - span.started_at).total_seconds() * 1000
+        span.completed_at = completed_at
+        span.duration_ms = max(monotonic_ms, wall_clock_ms, 0.0)

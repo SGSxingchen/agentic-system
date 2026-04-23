@@ -36,7 +36,7 @@ class OpenAIClient(BaseLLMClient):
         """发送聊天消息，支持 function calling"""
         kwargs: Dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": self._convert_messages(messages),
         }
 
         # 转换工具定义为 OpenAI 格式
@@ -116,7 +116,7 @@ class OpenAIClient(BaseLLMClient):
         """流式聊天 — 逐步 yield 文本片段和工具调用"""
         kwargs: Dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": self._convert_messages(messages),
             "stream": True,
         }
         if tools:
@@ -177,3 +177,51 @@ class OpenAIClient(BaseLLMClient):
 
         stop = "tool_use" if tool_call_buffers else "end_turn"
         yield LLMStreamEvent(type="done", stop_reason=stop)
+
+    @classmethod
+    def _convert_messages(cls, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """将中立消息格式转换为 OpenAI Chat Completions 可接受的格式。"""
+        converted: List[Dict[str, Any]] = []
+        for message in messages:
+            normalized = dict(message)
+            tool_calls = normalized.get("tool_calls")
+            if normalized.get("role") == "assistant" and tool_calls:
+                normalized["tool_calls"] = [
+                    cls._convert_tool_call_message(tc) for tc in tool_calls
+                ]
+            converted.append(normalized)
+        return converted
+
+    @staticmethod
+    def _convert_tool_call_message(tool_call: Any) -> Dict[str, Any]:
+        """将 ToolCall 或中立 dict 转为 OpenAI tool_calls 消息结构。"""
+        if isinstance(tool_call, ToolCall):
+            tool_id = tool_call.id
+            name = tool_call.name
+            arguments = tool_call.arguments
+        elif isinstance(tool_call, dict):
+            if tool_call.get("type") == "function" and "function" in tool_call:
+                return tool_call
+            tool_id = tool_call.get("id", "")
+            function = tool_call.get("function", {})
+            name = tool_call.get("name") or function.get("name", "")
+            arguments = tool_call.get("arguments", function.get("arguments", {}))
+        else:
+            raise TypeError(f"Unsupported tool call type: {type(tool_call)!r}")
+
+        if isinstance(arguments, str):
+            argument_text = arguments
+        else:
+            try:
+                argument_text = json.dumps(arguments or {}, ensure_ascii=False)
+            except (TypeError, ValueError):
+                argument_text = json.dumps({"raw": str(arguments)}, ensure_ascii=False)
+
+        return {
+            "id": tool_id or str(uuid.uuid4()),
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": argument_text,
+            },
+        }

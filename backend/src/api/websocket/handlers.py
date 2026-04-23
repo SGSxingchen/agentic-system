@@ -43,6 +43,11 @@ class ConnectionManager:
     def active_count(self) -> int:
         return len(self._connections)
 
+    @property
+    def connections(self) -> list[WebSocket]:
+        """Expose a copy for backward-compatible inspection in callers/tests."""
+        return list(self._connections)
+
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
         self._connections.append(websocket)

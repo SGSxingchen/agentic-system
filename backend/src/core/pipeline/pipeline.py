@@ -199,10 +199,31 @@ class Pipeline:
         for attempt in range(max_attempts):
             step_result.retries = attempt
             try:
-                output = await self._capabilities.execute(step.capability, **input_data)
+                output = await self._execute_capability(step, input_data)
                 step_result.output = output if isinstance(output, dict) else {"result": output}
                 step_result.status = PipelineStatus.COMPLETED
                 break
+            except asyncio.TimeoutError:
+                timeout_seconds = self._get_timeout_seconds(step.timeout)
+                step_result.error = (
+                    f"Step '{step.name}' timed out after {timeout_seconds:g}s"
+                    if timeout_seconds is not None
+                    else f"Step '{step.name}' timed out"
+                )
+                if attempt >= max_attempts - 1:
+                    step_result.status = PipelineStatus.FAILED
+                    logger.error(
+                        "Step '%s' timed out after %d attempts",
+                        step.name,
+                        attempt + 1,
+                    )
+                else:
+                    input_data["_previous_error"] = step_result.error
+                    logger.warning(
+                        "Step '%s' attempt %d timed out, retrying",
+                        step.name,
+                        attempt + 1,
+                    )
             except Exception as exc:
                 step_result.error = str(exc)
                 if attempt >= max_attempts - 1:
@@ -232,15 +253,46 @@ class Pipeline:
     @staticmethod
     def _resolve_variables(data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """解析 ${variable} 引用"""
-        resolved: Dict[str, Any] = {}
-        for key, value in data.items():
-            if isinstance(value, str):
-                resolved[key] = _substitute(value, context)
-            elif isinstance(value, dict):
-                resolved[key] = Pipeline._resolve_variables(value, context)
-            else:
-                resolved[key] = value
-        return resolved
+        return {
+            key: Pipeline._resolve_value(value, context)
+            for key, value in data.items()
+        }
+
+    @staticmethod
+    def _resolve_value(value: Any, context: Dict[str, Any]) -> Any:
+        """递归解析字符串、字典、列表和元组中的变量引用。"""
+        if isinstance(value, str):
+            return _substitute(value, context)
+        if isinstance(value, dict):
+            return Pipeline._resolve_variables(value, context)
+        if isinstance(value, list):
+            return [Pipeline._resolve_value(item, context) for item in value]
+        if isinstance(value, tuple):
+            return tuple(Pipeline._resolve_value(item, context) for item in value)
+        return value
+
+    @staticmethod
+    def _get_timeout_seconds(timeout: Optional[float]) -> Optional[float]:
+        """标准化 timeout 配置，忽略非正数和非法值。"""
+        if timeout is None:
+            return None
+        try:
+            timeout_value = float(timeout)
+        except (TypeError, ValueError):
+            return None
+        return timeout_value if timeout_value > 0 else None
+
+    async def _execute_capability(
+        self,
+        step: PipelineStep,
+        input_data: Dict[str, Any],
+    ) -> Any:
+        """按需为能力执行附加 asyncio.wait_for 超时控制。"""
+        execution = self._capabilities.execute(step.capability, **input_data)
+        timeout_seconds = self._get_timeout_seconds(step.timeout)
+        if timeout_seconds is None:
+            return await execution
+        return await asyncio.wait_for(execution, timeout=timeout_seconds)
 
     # ─── 条件评估 ─────────────────────────────────────────
 

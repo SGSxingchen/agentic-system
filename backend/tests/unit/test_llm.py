@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
-from core.llm.base import BaseLLMClient
+from core.llm.base import BaseLLMClient, ToolCall
 from core.llm.factory import create_llm_client
 
 
@@ -139,3 +139,46 @@ class TestOpenAIClient:
         ]
         result = await client.chat(messages)
         assert result.content == "多轮回复"
+
+    @patch("openai.AsyncOpenAI")
+    async def test_chat_converts_tool_calls_in_messages(self, mock_openai_cls):
+        from core.llm.openai_client import OpenAIClient
+
+        mock_message = MagicMock()
+        mock_message.content = "done"
+        mock_message.tool_calls = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        mock_openai_cls.return_value = mock_client
+
+        client = OpenAIClient("sk-test", "gpt-4")
+        messages = [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": "calling tool",
+                "tool_calls": [
+                    ToolCall(id="call_1", name="reviewer", arguments={"code": "print(1)"})
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "{\"ok\": true}"},
+        ]
+
+        await client.chat(messages)
+
+        sent_messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        assert sent_messages[1]["tool_calls"] == [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "reviewer",
+                    "arguments": "{\"code\": \"print(1)\"}",
+                },
+            }
+        ]

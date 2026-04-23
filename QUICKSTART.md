@@ -87,6 +87,19 @@ python3 -m pytest backend/tests/unit/ -v
 
 # 集成测试
 python3 -m pytest backend/tests/integration/ -v
+
+# 真实 LLM 冒烟验证（需先启动后端）
+python3 tests/api_live_test.py --suite smoke
+
+# 真实 LLM 全量 API 验证
+python3 tests/api_live_test.py
+```
+
+Windows 终端如遇 emoji/编码问题，可先设置：
+
+```powershell
+$env:PYTHONUTF8='1'
+$env:PYTHONIOENCODING='utf-8'
 ```
 
 ## 核心架构

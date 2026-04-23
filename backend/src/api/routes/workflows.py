@@ -47,6 +47,7 @@ def _format_template(name: str, tpl: Dict[str, Any]) -> Dict[str, Any]:
                 "output_key": s.get("output_key"),
                 "condition": s.get("condition"),
                 "max_iterations": s.get("max_iterations", s.get("max_retries", 1)),
+                "timeout": s.get("timeout"),
             }
             for s in steps
         ],

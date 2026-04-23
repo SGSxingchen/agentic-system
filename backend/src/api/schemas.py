@@ -171,6 +171,7 @@ class WorkflowStepSchema(BaseModel):
     output_key: Optional[str] = None
     condition: Optional[str] = None
     max_iterations: int = Field(default=1, ge=1)
+    timeout: Optional[float] = Field(default=None, gt=0, description="步骤超时秒数")
 
 
 class WorkflowCreateRequest(BaseModel):
