@@ -8,6 +8,17 @@
 
 前后端分离设计：后端基于 FastAPI + Python asyncio，前端基于 React + TypeScript + Vite，通过 REST API 和 WebSocket 实时通信。
 
+## 核心特色：可进化私人助理
+
+本项目的差异化定位不是单个固定聊天机器人，而是一个**可进化的私人助理运行时**：
+
+- **主 Agent 调度子 Agent**：`assistant` 是主控 Agent，`planner`、`coder`、`reviewer` 等子 Agent 会被包装成标准 Tool，主 Agent 可按需委派任务。
+- **Agent 即能力**：系统通过 `AgentCapability` 将任意 Agent 注册到统一能力注册表，因此工作流和其他 Agent 不需要区分“工具”还是“智能体”。
+- **运行时装载新 Tool**：新增 `DynamicToolCapability`，支持 `template`、`checklist`、`regex_extract` 三种安全动态工具，可通过 API/前端创建，无需写 Python 插件。
+- **能力热挂载**：动态 Tool 创建后可立即挂载到 `assistant` 或其他 Agent，并触发 Agent 热重载。
+- **Tool 提示词可视化配置**：网页可直接修改暴露给 LLM 的 Tool 提示词，JSON Schema 只读，避免误改工具入参协议。
+- **进化中心可视化**：前端新增“进化中心”，展示 Agent-Tool 能力网络、主 Agent 委派关系、动态 Tool 库和子 Agent 创建入口。
+
 ---
 
 ## 技术栈
@@ -53,7 +64,7 @@ agentic-system/
 │   └── requirements.txt
 ├── frontend/
 │   └── src/
-│       ├── components/             # 8 个面板 (Chat/Agent/Task/Workflow/Memory/Monitor/Settings/Sidebar)
+│       ├── components/             # 9 个面板 (Chat/Agent/Task/Workflow/Memory/Monitor/Evolution/Settings/Sidebar)
 │       ├── hooks/                  # WebSocket Hook
 │       ├── store/                  # 全局状态管理
 │       └── api/                    # API 客户端
@@ -73,6 +84,7 @@ agentic-system/
 - **PlannerAgent** — 任务规划，将需求分解为可执行的子任务列表 (结构化 JSON)
 - **CoderAgent** — 代码生成，结构化输出（文件名 + 代码 + 说明）
 - **ReviewerAgent** — 代码审查，六维度评估（正确性/安全性/可维护性/性能/最佳实践/错误处理）
+- **Agent-as-Tool** — 任意 Agent 可被包装成 Capability，供主 Agent 或其他 Agent 调用
 
 ### 📡 消息总线 & 事件引擎
 - **UnifiedBus** — 统一消息总线，支持发布/订阅、请求/响应、广播、点对点
@@ -89,7 +101,11 @@ agentic-system/
 ### 🔧 能力系统
 - 能力抽象接口 + JSON Schema 描述
 - 内置能力：代码解析器 (AST)、静态分析器、测试运行器
+- 常规助理工具：`calculator`、`datetime_tool`、`web_fetch`、`file_search`、`json_tool`、`text_processor`
+- 工作区工具：`read_file`、`write_file`、`bash`（默认关闭，需显式启用）
 - 能力注册中心，支持动态加载
+- 动态能力：通过配置/API 创建 `template`、`checklist`、`regex_extract` Tool，并热挂载到 Agent
+- Tool 提示词管理：可编辑 LLM-facing prompt，JSON Schema 只读
 
 ### 🔄 工作流编排
 - 顺序执行、并行执行、YAML 配置驱动
@@ -101,7 +117,7 @@ agentic-system/
 - Pipeline 监控事件单独广播到监控面板，不混入聊天回复
 - 所有推送消息统一附带时间戳，便于前端事件流展示
 
-### 🖥️ 前端界面 (8 个面板)
+### 🖥️ 前端界面 (9 个面板)
 - **ChatPanel** — 聊天气泡界面，显示记忆使用指示
 - **AgentPanel** — 智能体状态查看与直接调用
 - **TaskPanel** — 任务提交与状态跟踪
@@ -110,6 +126,7 @@ agentic-system/
 - **MonitorPanel** — 系统状态可视化
 - **Settings** — LLM 配置面板（支持热重载）
 - **Sidebar** — 侧边栏导航
+- **EvolutionPanel** — 进化中心：能力网络可视化、动态 Tool 创建、子 Agent 创建
 
 ### 🛠️ 基础设施
 - YAML 配置体系 (5 个配置文件 + 动态加载 + fallback)
@@ -285,6 +302,7 @@ python3 -m pytest backend/tests/ -v --tb=short
 | 智能体 | `test_agent_system.py` | 基类 / 生命周期 / 注册中心 |
 | 事件引擎 | `test_event_engine.py` | 事件匹配 / 扳机 / 条件评估 |
 | 能力系统 | `test_capability.py` | 代码解析 / 静态分析 / 注册 |
+| 常规工具 | `test_common_tools.py` | 计算 / 时间 / 网页读取 / 文件搜索 / JSON / 文本处理 |
 | 配置管理 | `test_config.py` | 配置加载 / 环境变量 / YAML 合并 |
 | 上下文 | `test_context.py` | 分层存储 |
 | 记忆系统 | `test_memory.py` | 存储 / 检索 / 巩固 / 遗忘 |
@@ -368,14 +386,14 @@ python3 -m pytest backend/tests/ -v --tb=short
 
 | 指标 | 数值 |
 |------|------|
-| 源代码文件 | ~87 个 (62 Python + 15 TS/TSX + 10 CSS) |
+| 源代码文件 | ~109 个 (82 Python + 16 TS/TSX + 11 CSS) |
 | 后端代码行数 | ~8,300 行 |
 | 前端代码行数 | ~5,100 行 |
 | 测试代码行数 | ~4,900 行 |
-| 测试用例 | ~331 个 |
-| 测试模块 | 12 个 (10 单元 + 2 集成) |
-| REST API 端点 | 19 个 |
-| 前端面板 | 8 个 |
+| 测试用例 | 550 个 |
+| 测试模块 | 16 个 |
+| REST API 端点 | 31 个 |
+| 前端面板 | 9 个 |
 | YAML 配置文件 | 6 个 |
 
 ---

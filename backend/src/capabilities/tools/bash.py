@@ -65,7 +65,17 @@ class BashCapability(CapabilityBase):
 
     async def execute(self, **kwargs: Any) -> Any:
         command = (kwargs.get("command", "") or "").strip()
-        timeout = float(kwargs.get("timeout", 30) or 30)
+        configured_timeout = 30
+        try:
+            from core.config import get_tool_runtime_config
+
+            configured_timeout = float(
+                get_tool_runtime_config("shell").get("timeout", 30)
+            )
+        except Exception:
+            configured_timeout = 30
+
+        timeout = float(kwargs.get("timeout", configured_timeout) or configured_timeout)
         cwd = kwargs.get("cwd")
 
         if not command:

@@ -34,12 +34,12 @@
 
 | 指标 | 数值 |
 |------|------|
-| Python 源文件 | 62 个 |
-| 前端 TS/TSX 文件 | 15 个 |
-| 前端 CSS 文件 | 10 个 |
+| Python 源文件 | 82 个 |
+| 前端 TS/TSX 文件 | 16 个 |
+| 前端 CSS 文件 | 11 个 |
 | 后端代码行数 | ~8,300 行 |
 | 前端代码行数 | ~5,100 行 (TS+CSS) |
-| 测试用例 | ~331 个 (12 个测试文件) |
+| 测试用例 | 550 个 (16 个测试文件) |
 | 测试代码行数 | ~4,900 行 |
 | YAML 配置文件 | 5 个 (config/) + 1 个 (src/config.yaml) |
 
@@ -120,7 +120,9 @@ agentic-system/
 │   │   │   │   └── formation.py        #     MemoryFormation
 │   │   │   ├── capability/             #   能力系统
 │   │   │   │   ├── base.py             #     CapabilityBase 抽象
-│   │   │   │   ├── native.py           #     ★ 内置能力 (3 个)
+│   │   │   │   ├── native.py           #     ★ 代码类内置能力
+│   │   │   │   ├── dynamic.py          #     ★ 动态 Tool
+│   │   │   │   ├── prompt_override.py  #     ★ Tool 提示词覆盖
 │   │   │   │   └── registry.py         #     CapabilityRegistry
 │   │   │   ├── context/store.py        #   上下文管理 (三层作用域)
 │   │   │   ├── workflow/               #   工作流编排
@@ -138,13 +140,13 @@ agentic-system/
 │   │   │
 │   │   └── utils/                     # 工具 (logger.py + tracer.py)
 │   │
-│   └── tests/                         # 测试 (12 个文件, ~331 用例)
+│   └── tests/                         # 测试 (16 个文件, 548 用例)
 │       ├── unit/ (10 个)
 │       └── integration/ (2 个)
 │
 ├── frontend/                          # React + TypeScript + Vite
 │   └── src/
-│       ├── components/ (8 个面板)
+│       ├── components/ (9 个面板)
 │       ├── hooks/useWebSocket.ts
 │       ├── store/appStore.tsx
 │       ├── api/client.ts
@@ -164,6 +166,9 @@ agentic-system/
 ---
 
 ## 3. 核心架构
+
+> ⚠️ **编排层 v2 设计中**：本节描述的是 v1 实现现状。新版编排层（反应式 Agent 工具循环 + Task 抽象 + 子 Agent 派生）见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md)。
+> 落实后将删除 §3.8 工作流编排、§3.4 事件引擎扳机调度部分；本节会重写。
 
 ### 3.1 系统分层
 
@@ -283,7 +288,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 ### 3.7 能力系统
 
-**内置能力** (在 `core/capability/native.py`):
+**代码类内置能力** (在 `core/capability/native.py` 和 `capabilities/builtin/`):
 
 | 能力 | 功能 |
 |------|------|
@@ -291,9 +296,35 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 | `StaticAnalyzerCapability` | 行长度、函数长度、未使用导入检查 |
 | `TestRunnerCapability` | 代码测试执行 |
 
-> **注意:** `capabilities/builtin/` 下也有独立的完整实现。`core/capability/native.py` 是简化版，被 main.py 直接使用。
+**常规助理工具** (在 `capabilities/tools/`):
 
-### 3.8 工作流编排
+| Tool | 功能 |
+|------|------|
+| `memory_search` | 搜索长期记忆 |
+| `datetime_tool` | 获取日期时间与时区信息 |
+| `calculator` | 安全数学计算 |
+| `web_fetch` | HTTP/HTTPS 网页读取 |
+| `file_search` | 工作区文件名/内容搜索 |
+| `read_file` / `write_file` | 工作区文件读写 |
+| `json_tool` | JSON 校验、格式化、压缩、路径查询 |
+| `text_processor` | 文本统计、清洗、关键词提取、slug 生成 |
+| `bash` | 工作区 shell 执行，默认关闭 |
+
+**动态 Tool** (在 `core/capability/dynamic.py`):
+- `template` — 模板渲染
+- `checklist` — 需求/文本完整性检查
+- `regex_extract` — 正则结构化抽取
+
+**Tool 提示词覆盖** (在 `core/capability/prompt_override.py`):
+- 只覆盖 `CapabilitySchema.description`
+- 保持 `parameters` JSON Schema 只读不变
+- 保存到 `config/capabilities.yaml` 的 `prompt` 字段
+
+### 3.8 工作流编排（v1，待废弃）
+
+> ⚠️ **该模块已被 v2 设计替代**，详见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md)。
+> v2 实施时将删除 `core/workflow/` 模块、`config/workflows.yaml`、前端 WorkflowPanel；
+> 静态 DAG 的能力由 Agent 反应式工具循环 + 子 Agent 派生覆盖。
 
 `WorkflowOrchestrator` 支持:
 - 顺序执行 (`execute_sequential`)
@@ -396,7 +427,7 @@ _CAPABILITY_CLASS_MAP = {
 
 **状态管理:** `useReducer` + React Context (`AppProvider`)
 
-**8 个面板组件:**
+**9 个面板组件:**
 
 | 组件 | 功能 |
 |------|------|
@@ -406,6 +437,7 @@ _CAPABILITY_CLASS_MAP = {
 | `TaskPanel` | 任务提交、列表、状态跟踪 |
 | `WorkflowPanel` | 工作流模板选择、执行 |
 | `MemoryPanel` | 记忆统计/列表/搜索/创建/删除 |
+| `EvolutionPanel` | 进化中心 (Agent-Tool 能力网络、动态 Tool、子 Agent 创建) |
 | `MonitorPanel` | 系统监控 (连接状态、事件流) |
 | `Settings` | LLM 配置面板 (热重载) |
 
@@ -429,7 +461,7 @@ _CAPABILITY_CLASS_MAP = {
 ### Phase 3: 前后端集成 ✅
 - [x] FastAPI 应用 (路由拆分 + 依赖注入)
 - [x] WebSocket 实时通信 (连接管理 + 广播)
-- [x] React + TypeScript 前端 (8 个面板)
+- [x] React + TypeScript 前端 (9 个面板)
 - [x] 配置 API + 热重载
 
 ### Phase 4: 记忆系统 ✅
@@ -461,7 +493,7 @@ _CAPABILITY_CLASS_MAP = {
 ### Phase 7: 测试与文档 ✅
 - [x] 单元测试 (10 个模块)
 - [x] 集成测试 (Agent 流水线 + API 端点)
-- [x] 总计 ~331 个测试用例 (12 个测试文件)
+- [x] 总计 550 个测试用例 (16 个测试文件)
 - [x] 文档完善 (CLAUDE.md / README / QUICKSTART / docs/)
 - [ ] 性能优化 (预留)
 

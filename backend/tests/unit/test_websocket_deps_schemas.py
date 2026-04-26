@@ -43,12 +43,14 @@ from api.schemas import (
     APIResponse,
     ConfigResponse,
     ConfigUpdateRequest,
+    CustomToolConfigRequest,
     LLMConfigRequest,
     MemoryCreateRequest,
     MemorySearchRequest,
     TaskResponse,
     TaskStatus,
     TaskSubmitRequest,
+    ToolsConfigRequest,
     WorkflowExecuteRequest,
     WorkflowStepSchema,
     WorkflowTemplate,
@@ -349,6 +351,12 @@ class TestLLMConfigRequest:
         c = LLMConfigRequest(provider="openai", model="gpt-4")
         assert c.api_key == ""
         assert c.base_url == ""
+        assert c.temperature is None
+        assert c.top_p is None
+        assert c.max_tokens is None
+        assert c.stop_sequences == []
+        assert c.openai == {}
+        assert c.anthropic == {}
 
     def test_full(self):
         c = LLMConfigRequest(
@@ -356,9 +364,41 @@ class TestLLMConfigRequest:
             api_key="sk-xxx",
             model="claude-3",
             base_url="https://api.example.com",
+            temperature=0.2,
+            top_p=0.8,
+            max_tokens=8192,
+            stop_sequences=["STOP"],
+            anthropic={"top_k": 40},
         )
         assert c.provider == "anthropic"
         assert c.api_key == "sk-xxx"
+        assert c.temperature == 0.2
+        assert c.top_p == 0.8
+        assert c.max_tokens == 8192
+        assert c.stop_sequences == ["STOP"]
+        assert c.anthropic["top_k"] == 40
+
+
+class TestToolsConfigRequest:
+    def test_defaults(self):
+        config = ToolsConfigRequest()
+        assert config.web_search.provider == "duckduckgo"
+        assert config.web_search.api_key == ""
+        assert config.custom == {}
+
+    def test_custom_tool_config(self):
+        config = ToolsConfigRequest(
+            custom={
+                "notion_search": CustomToolConfigRequest(
+                    base_url="https://api.notion.com",
+                    api_key="secret",
+                    extra={"version": "2022-06-28"},
+                )
+            }
+        )
+        assert config.custom["notion_search"].enabled is True
+        assert config.custom["notion_search"].api_key == "secret"
+        assert config.custom["notion_search"].extra["version"] == "2022-06-28"
 
 
 class TestConfigUpdateRequest:

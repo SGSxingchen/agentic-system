@@ -19,9 +19,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pytest
+import yaml
 from httpx import AsyncClient, ASGITransport
 
 from core.bus import SimpleBus
+from core.capability import CapabilityRegistry, DynamicToolCapability
 from core.memory import (
     MemoryFormation,
     MemoryRetriever,
@@ -36,6 +38,7 @@ from api.dependencies import (
     set_memory_retriever,
     set_reload_agent_fn,
     set_pipeline,
+    set_capability_registry,
 )
 
 
@@ -53,9 +56,11 @@ def _create_test_app():
     from api.routes import (
         tasks_router,
         agents_router,
+        chat_sessions_router,
         workflows_router,
         memory_router,
         config_router,
+        evolution_router,
     )
 
     @asynccontextmanager
@@ -76,6 +81,8 @@ def _create_test_app():
     test_app.include_router(workflows_router)
     test_app.include_router(memory_router)
     test_app.include_router(config_router)
+    test_app.include_router(evolution_router)
+    test_app.include_router(chat_sessions_router)
 
     return test_app
 
@@ -92,6 +99,14 @@ async def setup_deps():
     store = InMemoryStore()
     formation = MemoryFormation(store=store)
     retriever = MemoryRetriever(store=store)
+    cap_registry = CapabilityRegistry()
+    cap_registry.register_native(
+        DynamicToolCapability(
+            name="requirement_checklist",
+            mode="checklist",
+            config={"required_terms": ["目标"]},
+        )
+    )
 
     # 创建一个 mock Pipeline
     mock_pipeline = MagicMock()
@@ -100,6 +115,7 @@ async def setup_deps():
     set_bus(bus)
     set_agent_registry(registry)
     set_pipeline(mock_pipeline)
+    set_capability_registry(cap_registry)
     set_memory_store(store)
     set_memory_formation(formation)
     set_memory_retriever(retriever)
@@ -112,6 +128,7 @@ async def setup_deps():
         "formation": formation,
         "retriever": retriever,
         "pipeline": mock_pipeline,
+        "cap_registry": cap_registry,
     }
 
     # 清理
@@ -119,6 +136,7 @@ async def setup_deps():
     set_bus(None)
     set_agent_registry(None)
     set_pipeline(None)
+    set_capability_registry(None)
     set_memory_store(None)
     set_memory_formation(None)
     set_memory_retriever(None)
@@ -132,6 +150,15 @@ async def client(setup_deps):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture
+def chat_sessions_file(tmp_path, monkeypatch):
+    """Use an isolated chat history file for chat session API tests."""
+
+    path = tmp_path / "chat_sessions.json"
+    monkeypatch.setenv("CHAT_SESSIONS_FILE", str(path))
+    return path
 
 
 # ========================
@@ -285,6 +312,87 @@ class TestMemoryAPI:
 
 
 # ========================
+# 聊天分页 / 历史会话
+# ========================
+
+class TestChatSessionsAPI:
+    async def test_create_and_list_chat_sessions(self, client, chat_sessions_file):
+        resp = await client.post("/api/chat-sessions", json={"title": "第一页"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["data"]["title"] == "第一页"
+        assert body["data"]["messages"] == []
+        assert chat_sessions_file.exists()
+
+        list_resp = await client.get("/api/chat-sessions")
+        assert list_resp.status_code == 200
+        sessions = list_resp.json()["data"]
+        assert len(sessions) == 1
+        assert sessions[0]["title"] == "第一页"
+        assert sessions[0]["message_count"] == 0
+
+    async def test_add_message_updates_session_title(self, client, chat_sessions_file):
+        create_resp = await client.post("/api/chat-sessions", json={})
+        session_id = create_resp.json()["data"]["id"]
+
+        resp = await client.post(
+            f"/api/chat-sessions/{session_id}/messages",
+            json={
+                "id": "msg-1",
+                "type": "user",
+                "content": "帮我设计一个私人助理 Agent",
+                "timestamp": "2026-04-24T00:00:00+00:00",
+                "elapsedMs": 123.4,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "total_tokens": 30,
+                },
+            },
+        )
+        assert resp.status_code == 200
+        session = resp.json()["data"]
+        assert session["title"] == "帮我设计一个私人助理 Agent"
+        assert session["messages"][0]["id"] == "msg-1"
+        assert session["messages"][0]["elapsedMs"] == 123.4
+        assert session["messages"][0]["usage"]["total_tokens"] == 30
+        assert chat_sessions_file.exists()
+
+    async def test_multiple_chat_sessions_are_isolated(self, client, chat_sessions_file):
+        first = (await client.post("/api/chat-sessions", json={"title": "A"})).json()["data"]
+        second = (await client.post("/api/chat-sessions", json={"title": "B"})).json()["data"]
+
+        await client.post(
+            f"/api/chat-sessions/{first['id']}/messages",
+            json={"type": "user", "content": "first only"},
+        )
+        await client.post(
+            f"/api/chat-sessions/{second['id']}/messages",
+            json={"type": "user", "content": "second only"},
+        )
+
+        first_resp = await client.get(f"/api/chat-sessions/{first['id']}")
+        second_resp = await client.get(f"/api/chat-sessions/{second['id']}")
+
+        assert first_resp.status_code == 200
+        assert second_resp.status_code == 200
+        assert first_resp.json()["data"]["messages"][0]["content"] == "first only"
+        assert second_resp.json()["data"]["messages"][0]["content"] == "second only"
+        assert chat_sessions_file.exists()
+
+    async def test_delete_chat_session(self, client, chat_sessions_file):
+        created = (await client.post("/api/chat-sessions", json={})).json()["data"]
+
+        delete_resp = await client.delete(f"/api/chat-sessions/{created['id']}")
+        assert delete_resp.status_code == 200
+
+        get_resp = await client.get(f"/api/chat-sessions/{created['id']}")
+        assert get_resp.status_code == 404
+        assert chat_sessions_file.exists()
+
+
+# ========================
 # 任务管理
 # ========================
 
@@ -390,3 +498,133 @@ class TestConfigAPI:
         # 不应直接暴露 api_key，只应有 api_key_set 布尔值
         assert "api_key" not in llm or llm.get("api_key") is None
         assert "api_key_set" in llm
+
+    async def test_update_config_preserves_tool_secrets_and_unknown_tools(
+        self,
+        client,
+        tmp_path,
+        monkeypatch,
+    ):
+        import api.routes.config as config_route
+        import core.config as core_config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump(
+                {
+                    "llm": {
+                        "provider": "openai",
+                        "model": "gpt-old",
+                        "api_key": "old-llm-key",
+                        "base_url": "https://old-llm.example/v1",
+                        "temperature": 0.2,
+                        "max_tokens": 1024,
+                    },
+                    "tools": {
+                        "web_search": {
+                            "provider": "brave",
+                            "api_key": "old-search-key",
+                            "base_url": "https://old-search.example",
+                            "max_results": 3,
+                            "timeout": 4,
+                        },
+                        "custom": {
+                        "ticket_api": {
+                            "enabled": True,
+                            "base_url": "https://ticket.example",
+                            "api_key": "old-ticket-key",
+                            "extra": {"project": "demo", "token": "hidden"},
+                        }
+                        },
+                        "future_tool": {
+                            "base_url": "https://future.example",
+                            "api_key": "keep-me",
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(config_route, "_runtime_config_path", lambda: config_file)
+        monkeypatch.setattr(core_config, "_default_runtime_config_path", lambda: config_file)
+
+        resp = await client.post(
+            "/api/config",
+            json={
+                "llm": {
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "api_key": "",
+                    "base_url": "https://new-llm.example/v1",
+                    "temperature": 0.4,
+                    "max_tokens": 4096,
+                },
+                "tools": {
+                    "web_search": {
+                        "provider": "brave",
+                        "base_url": "https://new-search.example",
+                        "api_key": "",
+                        "max_results": 5,
+                        "timeout": 8,
+                    },
+                    "web_fetch": {"timeout": 9, "max_chars": 5000},
+                    "file": {"workspace_root": ""},
+                    "shell": {"enabled": False, "timeout": 30},
+                    "custom": {
+                        "ticket_api": {
+                            "enabled": True,
+                            "base_url": "https://ticket.example",
+                            "api_key": "",
+                            "extra": {"project": "demo", "region": "sg", "token": "hidden"},
+                        }
+                    },
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        saved = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+        assert saved["llm"]["api_key"] == "old-llm-key"
+        assert saved["llm"]["model"] == "gpt-5.4"
+        assert saved["tools"]["web_search"]["api_key"] == "old-search-key"
+        assert saved["tools"]["custom"]["ticket_api"]["api_key"] == "old-ticket-key"
+        assert saved["tools"]["future_tool"]["api_key"] == "keep-me"
+
+        get_resp = await client.get("/api/config")
+        data = get_resp.json()["data"]
+        assert "api_key" not in data["llm"]
+        assert data["tools"]["web_search"]["api_key_set"] is True
+        assert data["tools"]["custom"]["ticket_api"]["api_key_set"] is True
+        assert "api_key" not in data["tools"]["custom"]["ticket_api"]
+        assert "token" not in data["tools"]["custom"]["ticket_api"]["extra"]
+
+
+# ========================
+# 进化能力图
+# ========================
+
+
+class TestEvolutionAPI:
+    async def test_evolution_graph(self, client):
+        resp = await client.get("/api/evolution/graph")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        data = body["data"]
+        assert "summary" in data
+        assert data["summary"]["dynamic_tools"] == 1
+        node_ids = {node["id"] for node in data["nodes"]}
+        assert "requirement_checklist" in node_ids
+
+    async def test_tool_prompts_schema_is_listed_readonly(self, client):
+        resp = await client.get("/api/evolution/tool-prompts")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        tools = body["data"]
+        requirement_tool = next(
+            item for item in tools if item["name"] == "requirement_checklist"
+        )
+        assert requirement_tool["prompt"]
+        assert requirement_tool["schema"]["type"] == "object"

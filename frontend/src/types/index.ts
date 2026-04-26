@@ -6,6 +6,28 @@ export interface Message {
   content: string
   timestamp: string
   memoriesUsed?: number
+  elapsedMs?: number
+  usage?: TokenUsage
+}
+
+export interface TokenUsage {
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  [key: string]: number | undefined
+}
+
+export interface ChatSessionSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count: number
+  last_message?: string
+}
+
+export interface ChatSession extends ChatSessionSummary {
+  messages: Message[]
 }
 
 export interface WSEvent {
@@ -22,6 +44,9 @@ export interface AgentInfo {
   status: 'idle' | 'busy' | 'error' | 'stopped'
   capabilities: string[]
   description?: string
+  system_prompt?: string
+  output_format?: string
+  max_iterations?: number
 }
 
 // ===== 记忆 =====
@@ -76,10 +101,53 @@ export interface LLMConfig {
   model: string
   api_key_set: boolean
   base_url?: string
+  temperature?: number
+  top_p?: number | null
+  max_tokens?: number
+  stop_sequences?: string[]
+  openai?: {
+    max_completion_tokens?: number | null
+    use_legacy_max_tokens?: boolean
+    presence_penalty?: number | null
+    frequency_penalty?: number | null
+    reasoning_effort?: string
+    seed?: number | null
+  }
+  anthropic?: {
+    top_k?: number | null
+  }
+}
+
+export interface ToolsConfig {
+  web_search: {
+    provider: string
+    base_url?: string
+    api_key_set: boolean
+    max_results: number
+    timeout: number
+  }
+  web_fetch: {
+    timeout: number
+    max_chars: number
+  }
+  file: {
+    workspace_root?: string
+  }
+  shell: {
+    enabled: boolean
+    timeout: number
+  }
+  custom?: Record<string, {
+    enabled: boolean
+    base_url?: string
+    api_key_set: boolean
+    extra?: Record<string, any>
+  }>
 }
 
 export interface SystemConfig {
   llm: LLMConfig
+  tools?: ToolsConfig
   [key: string]: any
 }
 
@@ -111,9 +179,52 @@ export interface CapabilityInfo {
   parameters?: Record<string, any>
 }
 
+// ===== 进化能力图 =====
+
+export interface EvolutionNode {
+  id: string
+  label: string
+  type: 'agent' | 'tool' | 'dynamic_tool'
+  description?: string
+  status?: string
+  capabilities?: string[]
+  parameters?: Record<string, any>
+  mode?: string | null
+}
+
+export interface EvolutionEdge {
+  source: string
+  target: string
+  kind: 'uses' | 'delegates'
+}
+
+export interface EvolutionGraph {
+  summary: {
+    agents: number
+    tools: number
+    dynamic_tools: number
+    edges: number
+    master_agent?: string | null
+  }
+  nodes: EvolutionNode[]
+  edges: EvolutionEdge[]
+  supported_dynamic_modes: string[]
+  extension_points: string[]
+}
+
+export interface ToolPromptInfo {
+  name: string
+  type: 'tool' | 'dynamic_tool'
+  prompt: string
+  prompt_source: 'default' | 'custom'
+  schema: Record<string, any>
+  returns?: string
+  mode?: string | null
+}
+
 // ===== 视图类型 =====
 
-export type PanelType = 'chat' | 'tasks' | 'agents' | 'memory' | 'monitor' | 'workflow'
+export type PanelType = 'chat' | 'tasks' | 'agents' | 'memory' | 'monitor' | 'workflow' | 'evolution'
 
 // ===== 视图类型（新 Layout 导航） =====
 

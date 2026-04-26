@@ -1,5 +1,6 @@
 """Anthropic 客户端 — 支持 tool_use + 流式传输"""
 import json
+import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -14,10 +15,12 @@ class AnthropicClient(BaseLLMClient):
         api_key: str,
         model: str = "claude-3-5-sonnet-20241022",
         base_url: Optional[str] = None,
+        generation_config: Optional[Dict[str, Any]] = None,
     ):
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+        self.generation_config = generation_config or {}
         try:
             from anthropic import AsyncAnthropic
 
@@ -85,9 +88,9 @@ class AnthropicClient(BaseLLMClient):
 
         kwargs: Dict[str, Any] = {
             "model": self.model,
-            "max_tokens": 4096,
             "messages": api_messages,
         }
+        kwargs.update(self._request_options())
 
         if system_msg:
             kwargs["system"] = system_msg
@@ -95,8 +98,11 @@ class AnthropicClient(BaseLLMClient):
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
 
+        start = time.perf_counter()
         response = await self.client.messages.create(**kwargs)
-        return self._parse_response(response)
+        parsed = self._parse_response(response)
+        parsed.elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        return parsed
 
     @staticmethod
     def _convert_tools(schemas: List[Any]) -> List[Dict[str, Any]]:
@@ -121,11 +127,12 @@ class AnthropicClient(BaseLLMClient):
             tools.append(tool)
         return tools
 
-    @staticmethod
-    def _parse_response(response: Any) -> LLMResponse:
+    @classmethod
+    def _parse_response(cls, response: Any) -> LLMResponse:
         """将 Anthropic 响应转为统一的 LLMResponse"""
         content_text = ""
         tool_calls = []
+        usage, raw_usage = cls._parse_usage(getattr(response, "usage", None))
 
         for block in response.content:
             if block.type == "text":
@@ -144,11 +151,15 @@ class AnthropicClient(BaseLLMClient):
                 content=content_text if content_text else None,
                 tool_calls=tool_calls,
                 stop_reason="tool_use",
+                usage=usage,
+                raw_usage=raw_usage,
             )
 
         return LLMResponse(
             content=content_text,
             stop_reason="end_turn",
+            usage=usage,
+            raw_usage=raw_usage,
         )
 
     async def chat_stream(
@@ -186,10 +197,10 @@ class AnthropicClient(BaseLLMClient):
 
         kwargs: Dict[str, Any] = {
             "model": self.model,
-            "max_tokens": 4096,
             "messages": api_messages,
             "stream": True,
         }
+        kwargs.update(self._request_options())
         if system_msg:
             kwargs["system"] = system_msg
         if tools:
@@ -199,10 +210,25 @@ class AnthropicClient(BaseLLMClient):
         current_tool_name = ""
         current_tool_input = ""
         stop_reason = "end_turn"
+        usage: Dict[str, int] = {}
+        raw_usage: Optional[Dict[str, Any]] = None
+        start = time.perf_counter()
 
         try:
             stream = await self.client.messages.create(**kwargs)
             async for event in stream:
+                event_usage = None
+                if hasattr(event, "usage"):
+                    event_usage = event.usage
+                elif hasattr(event, "message") and hasattr(event.message, "usage"):
+                    event_usage = event.message.usage
+                elif hasattr(event, "delta") and hasattr(event.delta, "usage"):
+                    event_usage = event.delta.usage
+                event_parsed_usage, event_raw_usage = self._parse_usage(event_usage)
+                if event_parsed_usage:
+                    usage = self._merge_usage(usage, event_parsed_usage)
+                    raw_usage = event_raw_usage
+
                 if event.type == "content_block_start":
                     block = event.content_block
                     if hasattr(block, "type") and block.type == "tool_use":
@@ -247,5 +273,83 @@ class AnthropicClient(BaseLLMClient):
             for tc in parsed.tool_calls:
                 yield LLMStreamEvent(type="tool_use", tool_call=tc)
             stop_reason = parsed.stop_reason
+            usage = parsed.usage
+            raw_usage = parsed.raw_usage
 
-        yield LLMStreamEvent(type="done", stop_reason=stop_reason)
+        yield LLMStreamEvent(
+            type="done",
+            stop_reason=stop_reason,
+            usage=usage,
+            raw_usage=raw_usage,
+            elapsed_ms=round((time.perf_counter() - start) * 1000, 2),
+        )
+
+    def _request_options(self) -> Dict[str, Any]:
+        """Return Anthropic Messages API parameters supported by this provider."""
+
+        config = getattr(self, "generation_config", None) or {}
+        anthropic_config = config.get("anthropic", {})
+        if not isinstance(anthropic_config, dict):
+            anthropic_config = {}
+
+        options: Dict[str, Any] = {
+            "max_tokens": int(config.get("max_tokens") or 4096),
+        }
+
+        for key in ("temperature", "top_p"):
+            value = config.get(key)
+            if value is not None:
+                options[key] = value
+
+        top_k = anthropic_config.get("top_k")
+        if top_k is not None:
+            options["top_k"] = int(top_k)
+
+        stop_sequences = config.get("stop_sequences")
+        if isinstance(stop_sequences, list) and stop_sequences:
+            options["stop_sequences"] = [str(item) for item in stop_sequences if str(item)]
+
+        return options
+
+    @staticmethod
+    def _parse_usage(raw_usage: Any) -> tuple[Dict[str, int], Optional[Dict[str, Any]]]:
+        if not raw_usage:
+            return {}, None
+
+        raw: Dict[str, Any]
+        if isinstance(raw_usage, dict):
+            raw = dict(raw_usage)
+        else:
+            dumped = raw_usage.model_dump() if hasattr(raw_usage, "model_dump") else None
+            if isinstance(dumped, dict):
+                raw = dumped
+            else:
+                raw = {
+                    key: getattr(raw_usage, key)
+                    for key in ("input_tokens", "output_tokens")
+                    if isinstance(getattr(raw_usage, key, None), (int, float))
+                }
+
+        if not raw:
+            return {}, None
+
+        usage = {}
+        if raw.get("input_tokens") is not None:
+            usage["input_tokens"] = int(raw["input_tokens"])
+        if raw.get("output_tokens") is not None:
+            usage["output_tokens"] = int(raw["output_tokens"])
+        if usage:
+            usage["total_tokens"] = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+
+        return usage, raw
+
+    @staticmethod
+    def _merge_usage(base: Dict[str, int], update: Dict[str, int]) -> Dict[str, int]:
+        merged = dict(base)
+        for key, value in update.items():
+            if key == "total_tokens" and ("input_tokens" in update or "output_tokens" in update):
+                continue
+            merged[key] = merged.get(key, 0) + int(value)
+        if "input_tokens" in merged or "output_tokens" in merged:
+            merged["total_tokens"] = merged.get("input_tokens", 0) + merged.get("output_tokens", 0)
+        return merged

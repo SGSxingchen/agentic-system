@@ -21,14 +21,31 @@ server:
     - "http://localhost:3000"
     - "http://localhost:3001"
 
-# LLM 默认配置 (可被环境变量覆盖: LLM_PROVIDER, LLM_API_KEY, LLM_MODEL, LLM_BASE_URL)
+# LLM 默认配置
+# 可被环境变量覆盖:
+#   LLM_PROVIDER, LLM_API_KEY, LLM_MODEL, LLM_BASE_URL,
+#   LLM_TEMPERATURE, LLM_TOP_P, LLM_MAX_TOKENS, LLM_STOP_SEQUENCES,
+#   OPENAI_MAX_COMPLETION_TOKENS, OPENAI_USE_LEGACY_MAX_TOKENS,
+#   OPENAI_PRESENCE_PENALTY, OPENAI_FREQUENCY_PENALTY,
+#   OPENAI_REASONING_EFFORT, OPENAI_SEED, ANTHROPIC_TOP_K
 llm:
   provider: "openai"             # openai | anthropic
   api_key: ""                    # 建议通过环境变量 LLM_API_KEY 设置
   model: "gpt-3.5-turbo"        # 默认模型
   base_url: ""                   # 自定义 API 地址（留空使用官方端点）
   temperature: 0.7
+  top_p: null
   max_tokens: 4096
+  stop_sequences: []
+  openai:
+    max_completion_tokens: null
+    use_legacy_max_tokens: false # 兼容旧式 OpenAI 代理时可开启
+    presence_penalty: null
+    frequency_penalty: null
+    reasoning_effort: ""         # minimal | low | medium | high
+    seed: null
+  anthropic:
+    top_k: null
 
 # 消息总线配置 (可被环境变量覆盖: BUS_QUEUE_SIZE, BUS_HISTORY_SIZE)
 bus:
@@ -44,6 +61,29 @@ memory:
 # 上下文管理配置
 context:
   persist_dir: "./data/context"  # 项目上下文持久化目录
+
+# 工具运行配置
+# 可被环境变量覆盖:
+#   WEB_SEARCH_PROVIDER, WEB_SEARCH_BASE_URL, WEB_SEARCH_API_KEY,
+#   WEB_SEARCH_MAX_RESULTS, WEB_SEARCH_TIMEOUT,
+#   WEB_FETCH_TIMEOUT, WEB_FETCH_MAX_CHARS,
+#   AGENTIC_WORKSPACE_ROOT, ENABLE_SHELL_TOOL, SHELL_TOOL_TIMEOUT
+tools:
+  web_search:
+    provider: "duckduckgo"       # duckduckgo | brave | serper
+    base_url: ""                 # 留空使用 provider 默认地址
+    api_key: ""                  # brave/serper 等需要 Key；建议用环境变量
+    max_results: 5
+    timeout: 10
+  web_fetch:
+    timeout: 10
+    max_chars: 4000
+  file:
+    workspace_root: ""           # 留空使用项目根目录
+  shell:
+    enabled: false               # 默认关闭，避免任意命令执行
+    timeout: 30
+  custom: {}                     # 未来工具的 URL/Key/extra 参数，Key 不会通过 API 明文返回
 
 # 工作流配置
 workflow:

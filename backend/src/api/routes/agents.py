@@ -32,6 +32,29 @@ def _clear_cache():
     clear_yaml_cache()
 
 
+def _agent_config_map():
+    data = load_single_yaml("agents.yaml")
+    agents = data.get("agents", [])
+    if not isinstance(agents, list):
+        return {}
+    return {
+        item.get("name"): item
+        for item in agents
+        if isinstance(item, dict) and item.get("name")
+    }
+
+
+def _agent_config_fields(name: str) -> dict:
+    config = _agent_config_map().get(name, {})
+    if not isinstance(config, dict):
+        return {}
+    return {
+        "system_prompt": config.get("system_prompt"),
+        "output_format": config.get("output_format"),
+        "max_iterations": config.get("max_iterations"),
+    }
+
+
 async def _reload_agents():
     fn = reload_agent_fn()
     if fn:
@@ -49,13 +72,18 @@ async def list_agents():
         return APIResponse(status="ok", data=[])
 
     agents = []
+    config_by_name = _agent_config_map()
     for meta in registry.list_all():
+        config = config_by_name.get(meta.name, {})
         agents.append(
             AgentInfo(
                 name=meta.name,
                 status=meta.status.value,
                 capabilities=meta.capabilities,
                 description=meta.description,
+                system_prompt=config.get("system_prompt") if isinstance(config, dict) else None,
+                output_format=config.get("output_format") if isinstance(config, dict) else None,
+                max_iterations=config.get("max_iterations") if isinstance(config, dict) else None,
             ).model_dump()
         )
 
@@ -79,6 +107,7 @@ async def get_agent(name: str):
         status=meta.status.value,
         capabilities=meta.capabilities,
         description=meta.description,
+        **_agent_config_fields(name),
     )
 
     return APIResponse(status="ok", data=info.model_dump())

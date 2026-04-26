@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,7 +15,11 @@ from fastapi.responses import StreamingResponse
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.agent import Agent, AgentRegistry
-from core.capability import CapabilityRegistry
+from core.capability import (
+    CapabilityRegistry,
+    apply_prompt_overrides,
+    load_dynamic_capabilities,
+)
 from core.capability.agent_adapter import AgentCapability
 from core.bus import UnifiedBus
 from core.config import load_config, load_yaml_configs
@@ -38,7 +43,9 @@ from .dependencies import (
 )
 from .routes import (
     agents_router,
+    chat_sessions_router,
     config_router,
+    evolution_router,
     memory_router,
     tasks_router,
     workflows_router,
@@ -112,6 +119,26 @@ def _discover_capabilities(cap_registry: CapabilityRegistry) -> None:
         print(f"[OK] discovered {count} capabilities")
     else:
         print(f"[WARN] capabilities directory missing: {capabilities_dir}")
+
+
+def _register_dynamic_capabilities(cap_registry: CapabilityRegistry) -> None:
+    """Register YAML-defined dynamic tools."""
+
+    ext_configs = _load_external_configs()
+    capability_defs = ext_configs.get("capabilities", [])
+    loaded = load_dynamic_capabilities(cap_registry, capability_defs)
+    if loaded:
+        print(f"[OK] loaded dynamic tools: {', '.join(loaded)}")
+
+
+def _apply_capability_prompt_overrides(cap_registry: CapabilityRegistry) -> None:
+    """Apply YAML-defined LLM-facing tool prompts."""
+
+    ext_configs = _load_external_configs()
+    capability_defs = ext_configs.get("capabilities", [])
+    applied = apply_prompt_overrides(cap_registry, capability_defs)
+    if applied:
+        print(f"[OK] applied tool prompt overrides: {', '.join(applied)}")
 
 
 def _create_agents_from_config(
@@ -189,6 +216,7 @@ async def reload_agents() -> None:
             api_key=llm_config.get("api_key", ""),
             model=llm_config.get("model", "gpt-3.5-turbo"),
             base_url=llm_config.get("base_url") or None,
+            generation_config=llm_config,
         )
         set_llm_client(llm_client)
 
@@ -256,6 +284,8 @@ async def lifespan(app: FastAPI):
 
     cap_registry = CapabilityRegistry()
     _discover_capabilities(cap_registry)
+    _register_dynamic_capabilities(cap_registry)
+    _apply_capability_prompt_overrides(cap_registry)
     set_capability_registry(cap_registry)
 
     await init_memory_system(config)
@@ -310,6 +340,8 @@ app.include_router(agents_router)
 app.include_router(workflows_router)
 app.include_router(memory_router)
 app.include_router(config_router)
+app.include_router(evolution_router)
+app.include_router(chat_sessions_router)
 
 
 @app.post("/api/chat")
@@ -325,9 +357,21 @@ async def chat_endpoint(req: dict):
         return {"status": "error", "message": "Assistant is not initialized"}
 
     try:
-        result = await cap_registry.execute("assistant", message=message)
+        payload = {"message": message}
+        if isinstance(req.get("messages"), list):
+            payload["messages"] = req["messages"]
+        elif isinstance(req.get("history"), list):
+            payload["history"] = req["history"]
+
+        start = time.perf_counter()
+        result = await cap_registry.execute("assistant", **payload)
         response_text = result.get("response", str(result))
-        return {"status": "ok", "response": response_text}
+        return {
+            "status": "ok",
+            "response": response_text,
+            "elapsed_ms": round((time.perf_counter() - start) * 1000, 2),
+            "usage": result.get("usage", {}),
+        }
     except Exception as exc:
         return {"status": "error", "message": f"processing failed: {str(exc)}"}
 
@@ -349,18 +393,29 @@ async def chat_stream_endpoint(req: dict):
     capability = cap_registry.get("assistant")
 
     async def event_generator():
+        request_started_at = time.perf_counter()
         try:
+            payload = {"message": message}
+            if isinstance(req.get("messages"), list):
+                payload["messages"] = req["messages"]
+            elif isinstance(req.get("history"), list):
+                payload["history"] = req["history"]
+
             if hasattr(capability, "execute_stream"):
-                async for event in capability.execute_stream(message=message):
+                async for event in capability.execute_stream(**payload):
+                    if isinstance(event, dict) and event.get("type") == "done":
+                        event = dict(event)
+                        event["elapsed_ms"] = round((time.perf_counter() - request_started_at) * 1000, 2)
                     yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
             else:
-                result = await cap_registry.execute("assistant", message=message)
+                result = await cap_registry.execute("assistant", **payload)
                 response_text = result.get("response", str(result))
                 yield (
                     f"data: {_json.dumps({'type': 'thinking', 'content': response_text}, ensure_ascii=False)}\n\n"
                 )
+                elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
                 yield (
-                    f"data: {_json.dumps({'type': 'done', 'content': result}, ensure_ascii=False)}\n\n"
+                    f"data: {_json.dumps({'type': 'done', 'content': result, 'usage': result.get('usage', {}), 'elapsed_ms': elapsed_ms}, ensure_ascii=False)}\n\n"
                 )
         except Exception as exc:
             yield (

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { Task, TaskStatus } from '../types'
 import './TaskPanel.css'
 
-const API = 'http://localhost:8001'
+const API = ''
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; color: string; label: string }> = {
   pending: { bg: '#F3F4F6', color: '#4B5563', label: '等待中' },

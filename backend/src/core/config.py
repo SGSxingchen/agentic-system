@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,12 @@ class LLMConfig(BaseModel):
     api_key: str = Field(default="", description="API Key")
     model: str = Field(default="gpt-3.5-turbo", description="模型名称")
     base_url: str = Field(default="", description="自定义 API 地址")
-    temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int = Field(default=4096, description="最大输出 token 数")
+    temperature: Optional[float] = Field(default=0.7, ge=0, le=2, description="采样温度")
+    top_p: Optional[float] = Field(default=None, ge=0, le=1, description="核采样概率")
+    max_tokens: int = Field(default=4096, ge=1, description="最大输出 token 数")
+    stop_sequences: List[str] = Field(default_factory=list, description="停止序列")
+    openai: Dict[str, Any] = Field(default_factory=dict, description="OpenAI 专属对话参数")
+    anthropic: Dict[str, Any] = Field(default_factory=dict, description="Anthropic 专属对话参数")
 
 
 class MemoryConfig(BaseModel):
@@ -70,6 +74,48 @@ class WorkflowConfig(BaseModel):
     default_timeout: float = Field(default=300.0, description="默认超时秒数")
 
 
+class WebSearchToolConfig(BaseModel):
+    """Web search tool configuration."""
+
+    provider: str = Field(default="duckduckgo", description="duckduckgo | brave | serper")
+    base_url: str = Field(default="", description="Optional provider API/search URL")
+    api_key: str = Field(default="", description="Provider API key")
+    max_results: int = Field(default=5, ge=1, le=10)
+    timeout: float = Field(default=10, gt=0)
+
+
+class WebFetchToolConfig(BaseModel):
+    """Web fetch tool configuration."""
+
+    timeout: float = Field(default=10, gt=0)
+    max_chars: int = Field(default=4000, ge=200, le=20000)
+
+
+class FileToolConfig(BaseModel):
+    """Workspace file tool configuration."""
+
+    workspace_root: str = Field(default="", description="Optional workspace root override")
+
+
+class ShellToolConfig(BaseModel):
+    """Shell tool configuration."""
+
+    enabled: bool = Field(default=False)
+    timeout: float = Field(default=30, gt=0)
+
+
+class ToolsConfig(BaseModel):
+    """Tool runtime configuration."""
+
+    model_config = ConfigDict(extra="allow")
+
+    web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
+    web_fetch: WebFetchToolConfig = Field(default_factory=WebFetchToolConfig)
+    file: FileToolConfig = Field(default_factory=FileToolConfig)
+    shell: ShellToolConfig = Field(default_factory=ShellToolConfig)
+    custom: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+
 class SystemConfig(BaseModel):
     """顶层系统配置。"""
 
@@ -78,6 +124,7 @@ class SystemConfig(BaseModel):
     bus: BusConfig = Field(default_factory=BusConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     agents: List[AgentConfig] = Field(default_factory=list)
 
 
@@ -132,6 +179,32 @@ def _apply_env_overrides(raw: Dict[str, Any]) -> Dict[str, Any]:
         llm["model"] = value
     if value := (os.getenv("LLM_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")):
         llm["base_url"] = value
+    if value := os.getenv("LLM_TEMPERATURE"):
+        llm["temperature"] = float(value)
+    if value := os.getenv("LLM_TOP_P"):
+        llm["top_p"] = float(value)
+    if value := os.getenv("LLM_MAX_TOKENS"):
+        llm["max_tokens"] = int(value)
+    if value := os.getenv("LLM_STOP_SEQUENCES"):
+        llm["stop_sequences"] = [item.strip() for item in value.split(",") if item.strip()]
+
+    openai = llm.setdefault("openai", {})
+    if value := os.getenv("OPENAI_MAX_COMPLETION_TOKENS"):
+        openai["max_completion_tokens"] = int(value)
+    if value := os.getenv("OPENAI_USE_LEGACY_MAX_TOKENS"):
+        openai["use_legacy_max_tokens"] = value.strip().lower() in {"1", "true", "yes", "on"}
+    if value := os.getenv("OPENAI_PRESENCE_PENALTY"):
+        openai["presence_penalty"] = float(value)
+    if value := os.getenv("OPENAI_FREQUENCY_PENALTY"):
+        openai["frequency_penalty"] = float(value)
+    if value := os.getenv("OPENAI_REASONING_EFFORT"):
+        openai["reasoning_effort"] = value
+    if value := os.getenv("OPENAI_SEED"):
+        openai["seed"] = int(value)
+
+    anthropic = llm.setdefault("anthropic", {})
+    if value := os.getenv("ANTHROPIC_TOP_K"):
+        anthropic["top_k"] = int(value)
 
     memory = raw.setdefault("memory", {})
     if value := os.getenv("MEMORY_BACKEND"):
@@ -144,6 +217,36 @@ def _apply_env_overrides(raw: Dict[str, Any]) -> Dict[str, Any]:
         bus["queue_size"] = int(value)
     if value := os.getenv("BUS_HISTORY_SIZE"):
         bus["history_size"] = int(value)
+
+    tools = raw.setdefault("tools", {})
+
+    web_search = tools.setdefault("web_search", {})
+    if value := os.getenv("WEB_SEARCH_PROVIDER"):
+        web_search["provider"] = value
+    if value := os.getenv("WEB_SEARCH_BASE_URL"):
+        web_search["base_url"] = value
+    if value := os.getenv("WEB_SEARCH_API_KEY"):
+        web_search["api_key"] = value
+    if value := os.getenv("WEB_SEARCH_MAX_RESULTS"):
+        web_search["max_results"] = int(value)
+    if value := os.getenv("WEB_SEARCH_TIMEOUT"):
+        web_search["timeout"] = float(value)
+
+    web_fetch = tools.setdefault("web_fetch", {})
+    if value := os.getenv("WEB_FETCH_TIMEOUT"):
+        web_fetch["timeout"] = float(value)
+    if value := os.getenv("WEB_FETCH_MAX_CHARS"):
+        web_fetch["max_chars"] = int(value)
+
+    file_tools = tools.setdefault("file", {})
+    if value := os.getenv("AGENTIC_WORKSPACE_ROOT"):
+        file_tools["workspace_root"] = value
+
+    shell = tools.setdefault("shell", {})
+    if value := os.getenv("ENABLE_SHELL_TOOL"):
+        shell["enabled"] = value.strip().lower() in {"1", "true", "yes", "on"}
+    if value := os.getenv("SHELL_TOOL_TIMEOUT"):
+        shell["timeout"] = float(value)
 
     return raw
 
@@ -255,3 +358,31 @@ def load_config(
         llm["api_key"] = os.getenv("OPENAI_API_KEY", "")
 
     return merged
+
+
+def get_tool_runtime_config(
+    tool_name: str,
+    config_path: Optional[Path] = None,
+    config_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Return merged runtime config for a tool.
+
+    Known/native tools usually live at `tools.<tool_name>`. User-defined tool
+    credentials from the settings UI live at `tools.custom.<tool_name>`.
+    Top-level tool config wins if both are present.
+    """
+
+    tools = load_config(config_path=config_path, config_dir=config_dir).get("tools", {})
+    if not isinstance(tools, dict):
+        return {}
+
+    custom_tools = tools.get("custom", {})
+    custom = {}
+    if isinstance(custom_tools, dict) and isinstance(custom_tools.get(tool_name), dict):
+        custom = dict(custom_tools[tool_name])
+
+    direct = tools.get(tool_name, {})
+    if isinstance(direct, dict):
+        return _deep_merge(custom, dict(direct))
+
+    return custom

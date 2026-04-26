@@ -84,22 +84,25 @@ class Agent:
         """
         self._status = AgentStatus.BUSY
         try:
-            messages: List[Dict[str, Any]] = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self._build_user_message(input_data)},
-            ]
+            messages = self._build_messages(input_data)
             tool_schemas = [t.get_schema() for t in self._tools]
+            total_usage: Dict[str, int] = {}
+            total_elapsed_ms = 0.0
 
             for iteration in range(self._max_iterations):
                 response = await self.llm.chat(
                     messages,
                     tools=tool_schemas if tool_schemas else None,
                 )
+                total_usage = self._merge_usage(total_usage, response.usage)
+                if response.elapsed_ms:
+                    total_elapsed_ms += response.elapsed_ms
 
                 # LLM 返回最终文本 → 结束循环
                 if response.stop_reason != "tool_use":
                     self._status = AgentStatus.IDLE
-                    return self._parse_output(response.content or "")
+                    result = self._parse_output(response.content or "")
+                    return self._attach_metrics(result, total_usage, total_elapsed_ms)
 
                 # LLM 请求工具调用 → 执行工具 → 继续循环
                 # 先添加 assistant 消息（含 tool_calls）
@@ -132,7 +135,8 @@ class Agent:
                 self.name,
                 self._max_iterations,
             )
-            return {"error": f"Agent '{self.name}' reached max iterations ({self._max_iterations})"}
+            result = {"error": f"Agent '{self.name}' reached max iterations ({self._max_iterations})"}
+            return self._attach_metrics(result, total_usage, total_elapsed_ms)
 
         except Exception as exc:
             self._status = AgentStatus.ERROR
@@ -152,11 +156,10 @@ class Agent:
         """
         self._status = AgentStatus.BUSY
         try:
-            messages: List[Dict[str, Any]] = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self._build_user_message(input_data)},
-            ]
+            messages = self._build_messages(input_data)
             tool_schemas = [t.get_schema() for t in self._tools]
+            total_usage: Dict[str, int] = {}
+            total_elapsed_ms = 0.0
 
             for iteration in range(self._max_iterations):
                 # 收集本轮流式输出
@@ -175,12 +178,20 @@ class Agent:
                         tool_calls.append(event.tool_call)
                     elif event.type == "done":
                         stop_reason = event.stop_reason or "end_turn"
+                        total_usage = self._merge_usage(total_usage, event.usage)
+                        if event.elapsed_ms:
+                            total_elapsed_ms += event.elapsed_ms
 
                 # LLM 返回最终文本 → 结束
                 if stop_reason != "tool_use":
                     self._status = AgentStatus.IDLE
                     result = self._parse_output(full_text)
-                    yield {"type": "done", "content": result}
+                    yield {
+                        "type": "done",
+                        "content": result,
+                        "usage": total_usage,
+                        "elapsed_ms": round(total_elapsed_ms, 2) if total_elapsed_ms else None,
+                    }
                     return
 
                 # 工具调用
@@ -201,7 +212,12 @@ class Agent:
 
             # 达到最大迭代
             self._status = AgentStatus.ERROR
-            yield {"type": "done", "content": {"error": f"Agent '{self.name}' reached max iterations"}}
+            yield {
+                "type": "done",
+                "content": {"error": f"Agent '{self.name}' reached max iterations"},
+                "usage": total_usage,
+                "elapsed_ms": round(total_elapsed_ms, 2) if total_elapsed_ms else None,
+            }
 
         except Exception as exc:
             self._status = AgentStatus.ERROR
@@ -209,8 +225,65 @@ class Agent:
 
     # ─── 消息构建 ───────────────────────────────────────────
 
+    def _build_messages(self, input_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Build LLM messages, preserving chat history when provided."""
+
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": self.system_prompt},
+        ]
+
+        conversation = self._coerce_conversation_messages(input_data)
+        if conversation:
+            messages.extend(conversation)
+        else:
+            messages.append({"role": "user", "content": self._build_user_message(input_data)})
+
+        return messages
+
+    @staticmethod
+    def _coerce_conversation_messages(input_data: Dict[str, Any]) -> List[Dict[str, str]]:
+        raw_messages = input_data.get("messages")
+        if raw_messages is None:
+            raw_messages = input_data.get("history")
+
+        conversation: List[Dict[str, str]] = []
+        if isinstance(raw_messages, list):
+            for item in raw_messages[-30:]:
+                if not isinstance(item, dict):
+                    continue
+
+                role = str(item.get("role") or item.get("type") or "").strip().lower()
+                if role not in {"user", "assistant"}:
+                    continue
+
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+
+                conversation.append({"role": role, "content": content})
+
+        current_message = str(input_data.get("message") or "").strip()
+        if current_message:
+            has_current = (
+                bool(conversation)
+                and conversation[-1]["role"] == "user"
+                and conversation[-1]["content"] == current_message
+            )
+            if not has_current:
+                conversation.append({"role": "user", "content": current_message})
+
+        return conversation
+
     def _build_user_message(self, input_data: Dict[str, Any]) -> str:
         """将 input_data 格式化为用户消息"""
+        if not input_data:
+            return ""
+
+        input_data = {
+            key: value
+            for key, value in input_data.items()
+            if key not in {"messages", "history"}
+        }
         if not input_data:
             return ""
 
@@ -287,6 +360,33 @@ class Agent:
             return json.dumps(result, ensure_ascii=False, indent=2)
         except (TypeError, ValueError):
             return str(result)
+
+    @staticmethod
+    def _attach_metrics(
+        result: Dict[str, Any],
+        usage: Dict[str, int],
+        elapsed_ms: float,
+    ) -> Dict[str, Any]:
+        enriched = dict(result)
+        if usage:
+            enriched["usage"] = usage
+        if elapsed_ms:
+            enriched["elapsed_ms"] = round(elapsed_ms, 2)
+        return enriched
+
+    @staticmethod
+    def _merge_usage(base: Dict[str, int], update: Optional[Dict[str, int]]) -> Dict[str, int]:
+        if not update:
+            return dict(base)
+
+        merged = dict(base)
+        for key, value in update.items():
+            if key == "total_tokens" and ("input_tokens" in update or "output_tokens" in update):
+                continue
+            merged[key] = merged.get(key, 0) + int(value)
+        if "input_tokens" in merged or "output_tokens" in merged:
+            merged["total_tokens"] = merged.get("input_tokens", 0) + merged.get("output_tokens", 0)
+        return merged
 
     # ─── 状态与元数据 ──────────────────────────────────────
 

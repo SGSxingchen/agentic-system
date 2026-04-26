@@ -6,9 +6,14 @@ import type {
   HealthStatus,
   SystemConfig,
   Task,
+  ChatSession,
+  ChatSessionSummary,
+  Message,
+  EvolutionGraph,
+  ToolPromptInfo,
 } from '../types'
 
-const API_BASE = 'http://localhost:8001'
+const API_BASE = ''
 
 // ===== 通用请求 helper =====
 
@@ -186,6 +191,39 @@ export async function listCapabilities(): Promise<APIResponse<{ name: string; de
   return get('/api/agents/capabilities/list')
 }
 
+// ===== 进化 API =====
+
+export async function getEvolutionGraph(): Promise<APIResponse<EvolutionGraph>> {
+  return get<EvolutionGraph>('/api/evolution/graph')
+}
+
+export async function createDynamicTool(data: {
+  name: string
+  description?: string
+  mode: 'template' | 'checklist' | 'regex_extract'
+  input_schema?: Record<string, unknown>
+  config?: Record<string, unknown>
+  attach_to_agents?: string[]
+  overwrite?: boolean
+}): Promise<APIResponse<unknown>> {
+  return post('/api/evolution/dynamic-tools', data)
+}
+
+export async function reloadEvolutionExtensions(): Promise<APIResponse<unknown>> {
+  return post('/api/evolution/reload')
+}
+
+export async function getToolPrompts(): Promise<APIResponse<ToolPromptInfo[]>> {
+  return get<ToolPromptInfo[]>('/api/evolution/tool-prompts')
+}
+
+export async function updateToolPrompt(
+  name: string,
+  prompt: string
+): Promise<APIResponse<unknown>> {
+  return put(`/api/evolution/tool-prompts/${encodeURIComponent(name)}`, { prompt })
+}
+
 // ===== 聊天 API =====
 
 export async function sendMessage(
@@ -194,6 +232,47 @@ export async function sendMessage(
   return post<{ response: string; memories_used?: number }>('/api/chat', {
     message,
   })
+}
+
+export async function listChatSessions(): Promise<APIResponse<ChatSessionSummary[]>> {
+  return get<ChatSessionSummary[]>('/api/chat-sessions')
+}
+
+export async function createChatSession(
+  title?: string
+): Promise<APIResponse<ChatSession>> {
+  return post<ChatSession>('/api/chat-sessions', { title })
+}
+
+export async function getChatSession(
+  sessionId: string
+): Promise<APIResponse<ChatSession>> {
+  return get<ChatSession>(`/api/chat-sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export async function updateChatSession(
+  sessionId: string,
+  title: string
+): Promise<APIResponse<ChatSession>> {
+  return put<ChatSession>(`/api/chat-sessions/${encodeURIComponent(sessionId)}`, {
+    title,
+  })
+}
+
+export async function deleteChatSession(
+  sessionId: string
+): Promise<APIResponse<void>> {
+  return del<void>(`/api/chat-sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export async function addChatSessionMessage(
+  sessionId: string,
+  message: Message
+): Promise<APIResponse<ChatSession>> {
+  return post<ChatSession>(
+    `/api/chat-sessions/${encodeURIComponent(sessionId)}/messages`,
+    message
+  )
 }
 
 // ===== 任务 API =====

@@ -59,7 +59,39 @@
       "provider": "openai",
       "model": "gpt-4",
       "api_key_set": true,
-      "base_url": ""
+      "base_url": "",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    },
+    "tools": {
+      "web_search": {
+        "provider": "duckduckgo",
+        "base_url": "",
+        "api_key_set": false,
+        "max_results": 5,
+        "timeout": 10
+      },
+      "web_fetch": {
+        "timeout": 10,
+        "max_chars": 4000
+      },
+      "file": {
+        "workspace_root": ""
+      },
+      "shell": {
+        "enabled": false,
+        "timeout": 30
+      },
+      "custom": {
+        "notion_search": {
+          "enabled": true,
+          "base_url": "https://api.notion.com",
+          "api_key_set": true,
+          "extra": {
+            "version": "2022-06-28"
+          }
+        }
+      }
     }
   }
 }
@@ -76,10 +108,35 @@
     "provider": "openai",
     "model": "gpt-4",
     "api_key": "sk-xxx",
-    "base_url": ""
+    "base_url": "",
+    "temperature": 0.7,
+    "max_tokens": 4096
+  },
+  "tools": {
+    "web_search": {
+      "provider": "duckduckgo",
+      "base_url": "",
+      "api_key": "",
+      "max_results": 5,
+      "timeout": 10
+    },
+    "web_fetch": {
+      "timeout": 10,
+      "max_chars": 4000
+    },
+    "file": {
+      "workspace_root": ""
+    },
+    "shell": {
+      "enabled": false,
+      "timeout": 30
+    },
+    "custom": {}
   }
 }
 ```
+
+`api_key` 留空会保留已有值；响应中只返回 `api_key_set`，不会明文返回 Key。
 
 **响应:**
 ```json
@@ -378,6 +435,117 @@
 ### POST /api/memory/forget
 
 触发记忆遗忘 (基于时间衰减)。
+
+---
+
+## 进化中心
+
+### GET /api/evolution/graph
+
+获取当前 Agent-Tool 能力网络，用于展示主 Agent、子 Agent、工具以及调用关系。
+
+**响应:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "summary": {
+      "agents": 4,
+      "tools": 8,
+      "dynamic_tools": 1,
+      "edges": 12,
+      "master_agent": "assistant"
+    },
+    "nodes": [
+      {
+        "id": "assistant",
+        "type": "agent",
+        "capabilities": ["memory_search", "planner", "coder"]
+      },
+      {
+        "id": "requirement_checklist",
+        "type": "dynamic_tool",
+        "mode": "checklist"
+      }
+    ],
+    "edges": [
+      {
+        "source": "assistant",
+        "target": "planner",
+        "kind": "delegates"
+      }
+    ],
+    "supported_dynamic_modes": ["checklist", "regex_extract", "template"]
+  }
+}
+```
+
+### POST /api/evolution/dynamic-tools
+
+运行时创建安全动态工具，并可立即挂载到指定 Agent。
+
+**请求体:**
+```json
+{
+  "name": "requirement_guard",
+  "description": "检查需求描述是否包含关键要素",
+  "mode": "checklist",
+  "config": {
+    "required_terms": ["目标", "输入", "输出", "验收"],
+    "forbidden_terms": ["随便", "都行"]
+  },
+  "attach_to_agents": ["assistant"],
+  "overwrite": false
+}
+```
+
+**动态工具模式:**
+- `template` — 根据 `config.template` 渲染 `{{text}}` 等占位符
+- `checklist` — 根据 `required_terms` / `forbidden_terms` 返回完整性评分
+- `regex_extract` — 根据 `config.patterns` 从文本中抽取结构化信息
+
+### POST /api/evolution/reload
+
+从 YAML 重新装载动态工具，并刷新 Agent 的工具绑定。
+
+### GET /api/evolution/tool-prompts
+
+获取所有非 Agent Tool 的提示词配置。`prompt` 可编辑，`schema` 是只读 JSON Schema，用于展示工具入参协议。
+
+**响应:**
+```json
+{
+  "status": "ok",
+  "data": [
+    {
+      "name": "calculator",
+      "type": "tool",
+      "prompt": "安全数学计算工具",
+      "prompt_source": "default",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string"
+          }
+        },
+        "required": ["expression"]
+      }
+    }
+  ]
+}
+```
+
+### PUT /api/evolution/tool-prompts/{name}
+
+更新 Tool 暴露给 LLM 的提示词。该接口只写入 `prompt` 字段，不允许修改 JSON Schema。
+
+**请求体:**
+```json
+{
+  "prompt": "用于精确计算数学表达式的工具。适合四则运算、幂运算和常见数学函数。"
+}
+```
 
 ---
 

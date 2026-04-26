@@ -1,45 +1,86 @@
-# 能力插件配置
-# 定义系统中可用的能力（工具）
-# 字段参考: backend/src/core/capability/base.py -> CapabilityBase, CapabilitySchema
-#           backend/src/core/capability/native.py -> CodeParserCapability, StaticAnalyzerCapability
-#
-# 能力类型:
-#   native  — 原生 Python 插件，进程内调用，高性能
-#   mcp     — MCP 服务器集成（跨进程，标准化协议）
-#   openapi — OpenAPI/HTTP 第三方服务集成
-
 capabilities:
-  # 原生能力 1: 代码解析器
-  - name: "code_parser"
-    type: "native"
-    class: "core.capability.native.CodeParserCapability"
-    description: "解析 Python 代码，提取函数、类、导入等 AST 信息"
-    config: {}
-
-  # 原生能力 2: 静态分析器
-  - name: "static_analyzer"
-    type: "native"
-    class: "core.capability.native.StaticAnalyzerCapability"
-    description: "基本代码质量检查：行长度、函数长度、未使用导入检测"
-    config:
-      max_line_length: 120
-      max_function_length: 50
-
-  # === 以下为预留扩展，当前未启用 ===
-
-  # MCP 服务器集成 (未来扩展)
-  # - name: "github_integration"
-  #   type: "mcp"
-  #   server:
-  #     command: "uvx"
-  #     args: ["mcp-server-github"]
-  #     env:
-  #       GITHUB_TOKEN: "${GITHUB_TOKEN}"
-
-  # OpenAPI 集成 (未来扩展)
-  # - name: "sonarqube_api"
-  #   type: "openapi"
-  #   spec_url: "https://sonarqube.example.com/api/openapi.json"
-  #   auth:
-  #     type: "bearer"
-  #     token: "${SONARQUBE_TOKEN}"
+- name: code_parser
+  type: native
+  class: core.capability.native.CodeParserCapability
+  description: 解析 Python 代码，提取函数、类、导入等 AST 信息
+  config: {}
+- name: static_analyzer
+  type: native
+  class: core.capability.native.StaticAnalyzerCapability
+  description: 基本代码质量检查：行长度、函数长度、未使用导入检测
+  config:
+    max_line_length: 120
+    max_function_length: 50
+- name: test_runner
+  type: native
+  class: capabilities.builtin.test_runner.TestRunnerCapability
+  description: 解析测试文件结构，提取测试用例、断言统计、fixture 信息
+- name: memory_search
+  type: native
+  class: capabilities.tools.memory_search.MemorySearchCapability
+  description: 搜索长期记忆系统
+- name: datetime_tool
+  type: native
+  class: capabilities.tools.datetime_tool.DateTimeCapability
+  description: 获取当前日期时间，支持 IANA 时区
+- name: calculator
+  type: native
+  class: capabilities.tools.calculator.CalculatorCapability
+  description: 安全数学计算工具
+  prompt: 安全数学计算工具：用于精确计算四则运算、幂、取模和常见数学函数。
+- name: web_fetch
+  type: native
+  class: capabilities.tools.web_fetch.WebFetchCapability
+  description: 读取 HTTP/HTTPS 网页内容并返回正文预览
+- name: web_search
+  type: native
+  class: capabilities.tools.web_search.WebSearchCapability
+  description: 搜索公开网页并返回标题、链接和摘要
+- name: file_search
+  type: native
+  class: capabilities.tools.file_search.FileSearchCapability
+  description: 在工作区内按文件名或文本内容搜索文件
+- name: read_file
+  type: native
+  class: capabilities.tools.read_file.ReadFileCapability
+  description: 读取工作区内文件
+- name: write_file
+  type: native
+  class: capabilities.tools.write_file.WriteFileCapability
+  description: 写入工作区内文件
+- name: json_tool
+  type: native
+  class: capabilities.tools.json_tool.JsonToolCapability
+  description: JSON 校验、格式化、压缩和路径查询
+- name: text_processor
+  type: native
+  class: capabilities.tools.text_processor.TextProcessorCapability
+  description: 文本统计、清洗、关键词提取和 slug 生成
+- name: create_dynamic_tool_config
+  type: native
+  class: capabilities.tools.evolution_config.CreateDynamicToolConfigCapability
+  description: 创建或更新 YAML 动态工具配置，并可挂载到指定 Agent
+- name: create_agent_config
+  type: native
+  class: capabilities.tools.evolution_config.CreateAgentConfigCapability
+  description: 创建或更新 YAML Agent 配置，并可挂载到 assistant
+- name: bash
+  type: native
+  class: capabilities.tools.bash.BashCapability
+  description: 工作区内 Shell 命令执行工具，默认关闭，需 ENABLE_SHELL_TOOL=true
+- name: requirement_checklist
+  type: dynamic
+  mode: checklist
+  description: 需求完整性检查工具：检查描述中是否包含目标、输入、输出、约束和验收标准
+  config:
+    required_terms:
+    - 目标
+    - 输入
+    - 输出
+    - 约束
+    - 验收
+    forbidden_terms:
+    - 随便
+    - 都行
+    - 看着办
+    case_sensitive: false

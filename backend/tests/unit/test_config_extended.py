@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from core.config import (
     _deep_merge,
     _apply_env_overrides,
+    get_tool_runtime_config,
     load_yaml_configs,
     load_system_config,
     SystemConfig,
@@ -177,6 +178,8 @@ class TestConfigModels:
         assert config.memory.backend == "memory"
         assert config.bus.queue_size == 1000
         assert config.workflow.max_iterations == 10
+        assert config.tools.web_search.provider == "duckduckgo"
+        assert config.tools.custom == {}
 
     def test_agent_config_required_name(self):
         with pytest.raises(Exception):
@@ -195,6 +198,35 @@ class TestConfigModels:
         ])
         assert len(config.agents) == 2
         assert config.agents[0].name == "planner"
+
+    def test_tool_runtime_config_merges_custom_and_direct(self, tmp_path):
+        (tmp_path / "system.yaml").write_text(yaml.dump({
+            "tools": {
+                "custom": {
+                    "ticket_api": {
+                        "enabled": True,
+                        "base_url": "https://custom.example",
+                        "api_key": "custom-key",
+                        "extra": {"project": "demo"},
+                    }
+                },
+                "ticket_api": {
+                    "base_url": "https://direct.example",
+                    "timeout": 5,
+                },
+            }
+        }))
+
+        config = get_tool_runtime_config(
+            "ticket_api",
+            config_path=tmp_path / "missing-runtime.yaml",
+            config_dir=tmp_path,
+        )
+
+        assert config["enabled"] is True
+        assert config["base_url"] == "https://direct.example"
+        assert config["api_key"] == "custom-key"
+        assert config["timeout"] == 5
 
 
 # =====================

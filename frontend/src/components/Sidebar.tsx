@@ -49,6 +49,18 @@ const Icons = {
       <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   ),
+  evolution: (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 2v5" />
+      <path d="M12 17v5" />
+      <path d="M4.22 4.22l3.54 3.54" />
+      <path d="M16.24 16.24l3.54 3.54" />
+      <path d="M2 12h5" />
+      <path d="M17 12h5" />
+      <circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1" />
+    </svg>
+  ),
   settings: (
     <svg viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="3" />
@@ -63,6 +75,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'agents', icon: Icons.agents, label: '智能体' },
   { key: 'workflow', icon: Icons.workflow, label: '工作流' },
   { key: 'memory', icon: Icons.memory, label: '记忆' },
+  { key: 'evolution', icon: Icons.evolution, label: '进化' },
   { key: 'monitor', icon: Icons.monitor, label: '监控' },
 ]
 

@@ -8,6 +8,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.capability.dynamic import DynamicToolCapability, load_dynamic_capabilities
+from core.capability.prompt_override import apply_prompt_override, unwrap_capability
 from core.capability.registry import CapabilityRegistry
 from core.capability.native import CodeParserCapability, StaticAnalyzerCapability
 
@@ -248,6 +250,83 @@ async def test_registry_execute():
     result = await registry.execute("code_parser", code="x = 1")
     assert "functions" in result
     assert "imports" in result
+
+
+# ─── DynamicToolCapability ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dynamic_template_tool():
+    """动态模板工具可渲染输入字段"""
+    tool = DynamicToolCapability(
+        name="story_tool",
+        mode="template",
+        config={"template": "需求: {{text}} / 风格: {{style}}"},
+    )
+    result = await tool.execute(text="创建登录接口", style="简洁")
+    assert result["text"] == "需求: 创建登录接口 / 风格: 简洁"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_checklist_tool():
+    """动态清单工具返回缺失项和评分"""
+    tool = DynamicToolCapability(
+        name="requirement_check",
+        mode="checklist",
+        config={
+            "required_terms": ["目标", "输入", "输出"],
+            "forbidden_terms": ["随便"],
+        },
+    )
+    result = await tool.execute(text="目标是生成 API，输入为用户信息")
+    assert result["passed"] is False
+    assert "输出" in result["missing_required"]
+    assert result["score"] < 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_regex_extract_tool():
+    """动态正则工具可抽取结构化信息"""
+    tool = DynamicToolCapability(
+        name="extract_contact",
+        mode="regex_extract",
+        config={"patterns": {"email": r"[\w.-]+@[\w.-]+"}},
+    )
+    result = await tool.execute(text="联系 dev@example.com")
+    assert result["matches"]["email"] == ["dev@example.com"]
+    assert result["summary"]["match_count"] == 1
+
+
+def test_load_dynamic_capabilities_registers_tools():
+    """从配置批量注册动态工具"""
+    registry = CapabilityRegistry()
+    loaded = load_dynamic_capabilities(
+        registry,
+        [
+            {
+                "name": "simple_template",
+                "type": "dynamic",
+                "mode": "template",
+                "config": {"template": "{{text}}"},
+            }
+        ],
+    )
+    assert loaded == ["simple_template"]
+    assert "simple_template" in registry
+
+
+def test_prompt_override_changes_schema_only(registry: CapabilityRegistry, parser):
+    """工具提示词覆盖只改变 description，不改变执行和 JSON Schema。"""
+    registry.register_native(parser)
+    before = registry.get("code_parser").get_schema()
+
+    assert apply_prompt_override(registry, "code_parser", "新的 Tool 提示词") is True
+
+    wrapped = registry.get("code_parser")
+    after = wrapped.get_schema()
+    assert after.description == "新的 Tool 提示词"
+    assert after.parameters == before.parameters
+    assert unwrap_capability(wrapped) is parser
 
 
 # ═══════════════════════════════════════════════════════════

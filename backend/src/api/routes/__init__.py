@@ -7,6 +7,8 @@ from .agents import router as agents_router
 from .workflows import router as workflows_router
 from .memory import router as memory_router
 from .config import router as config_router
+from .evolution import router as evolution_router
+from .chat_sessions import router as chat_sessions_router
 
 __all__ = [
     "tasks_router",
@@ -14,4 +16,6 @@ __all__ = [
     "workflows_router",
     "memory_router",
     "config_router",
+    "evolution_router",
+    "chat_sessions_router",
 ]

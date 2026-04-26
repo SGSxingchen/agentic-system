@@ -13,7 +13,41 @@ llm:
   model: "gpt-3.5-turbo"  # 模型名称
   provider: "openai"       # openai 或 anthropic
   temperature: 0.7
+  top_p:
   max_tokens: 4096
+  stop_sequences: []
+  openai:
+    max_completion_tokens:
+    use_legacy_max_tokens: false
+    presence_penalty:
+    frequency_penalty:
+    reasoning_effort: ""
+    seed:
+  anthropic:
+    top_k:
+
+# 工具运行配置
+tools:
+  web_search:
+    provider: "duckduckgo" # duckduckgo | brave | serper
+    base_url: ""
+    api_key: ""
+    max_results: 5
+    timeout: 10
+  web_fetch:
+    timeout: 10
+    max_chars: 4000
+  file:
+    workspace_root: ""
+  shell:
+    enabled: false
+    timeout: 30
+  custom:
+    example_tool:
+      enabled: true
+      base_url: ""
+      api_key: ""
+      extra: {}
 
 # 记忆系统配置
 memory:

@@ -1,5 +1,6 @@
 """OpenAI 客户端 — 支持 function calling (tool_use) + 流式传输"""
 import json
+import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -14,10 +15,12 @@ class OpenAIClient(BaseLLMClient):
         api_key: str,
         model: str = "gpt-3.5-turbo",
         base_url: Optional[str] = None,
+        generation_config: Optional[Dict[str, Any]] = None,
     ):
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+        self.generation_config = generation_config or {}
         try:
             from openai import AsyncOpenAI
 
@@ -38,13 +41,17 @@ class OpenAIClient(BaseLLMClient):
             "model": self.model,
             "messages": self._convert_messages(messages),
         }
+        kwargs.update(self._request_options())
 
         # 转换工具定义为 OpenAI 格式
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
 
-        response = await self.client.chat.completions.create(**kwargs)
-        return self._parse_response(response)
+        start = time.perf_counter()
+        response = await self._create_with_compat_retry(kwargs)
+        parsed = self._parse_response(response)
+        parsed.elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        return parsed
 
     @staticmethod
     def _convert_tools(schemas: List[Any]) -> List[Dict[str, Any]]:
@@ -75,11 +82,12 @@ class OpenAIClient(BaseLLMClient):
             tools.append(tool)
         return tools
 
-    @staticmethod
-    def _parse_response(response: Any) -> LLMResponse:
+    @classmethod
+    def _parse_response(cls, response: Any) -> LLMResponse:
         """将 OpenAI 响应转为统一的 LLMResponse"""
         choice = response.choices[0]
         message = choice.message
+        usage, raw_usage = cls._parse_usage(getattr(response, "usage", None))
 
         # 检查是否有 tool_calls
         if message.tool_calls:
@@ -101,11 +109,15 @@ class OpenAIClient(BaseLLMClient):
                 content=message.content,
                 tool_calls=tool_calls,
                 stop_reason="tool_use",
+                usage=usage,
+                raw_usage=raw_usage,
             )
 
         return LLMResponse(
             content=message.content or "",
             stop_reason="end_turn",
+            usage=usage,
+            raw_usage=raw_usage,
         )
 
     async def chat_stream(
@@ -119,15 +131,30 @@ class OpenAIClient(BaseLLMClient):
             "messages": self._convert_messages(messages),
             "stream": True,
         }
+        kwargs.update(self._request_options())
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
 
-        stream = await self.client.chat.completions.create(**kwargs)
+        kwargs["stream_options"] = {"include_usage": True}
+        start = time.perf_counter()
+        try:
+            stream = await self._create_with_compat_retry(kwargs)
+        except Exception:
+            # Some OpenAI-compatible gateways do not support stream_options.
+            kwargs.pop("stream_options", None)
+            stream = await self._create_with_compat_retry(kwargs)
 
         # 累积工具调用片段
         tool_call_buffers: Dict[int, Dict[str, Any]] = {}
+        usage: Dict[str, int] = {}
+        raw_usage: Optional[Dict[str, Any]] = None
 
         async for chunk in stream:
+            chunk_usage, chunk_raw_usage = self._parse_usage(getattr(chunk, "usage", None))
+            if chunk_usage:
+                usage = chunk_usage
+                raw_usage = chunk_raw_usage
+
             delta = chunk.choices[0].delta if chunk.choices else None
             if not delta:
                 continue
@@ -176,7 +203,13 @@ class OpenAIClient(BaseLLMClient):
             )
 
         stop = "tool_use" if tool_call_buffers else "end_turn"
-        yield LLMStreamEvent(type="done", stop_reason=stop)
+        yield LLMStreamEvent(
+            type="done",
+            stop_reason=stop,
+            usage=usage,
+            raw_usage=raw_usage,
+            elapsed_ms=round((time.perf_counter() - start) * 1000, 2),
+        )
 
     @classmethod
     def _convert_messages(cls, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -225,3 +258,94 @@ class OpenAIClient(BaseLLMClient):
                 "arguments": argument_text,
             },
         }
+
+    def _request_options(self) -> Dict[str, Any]:
+        """Return OpenAI Chat Completions parameters supported by this provider."""
+
+        config = getattr(self, "generation_config", None) or {}
+        openai_config = config.get("openai", {})
+        if not isinstance(openai_config, dict):
+            openai_config = {}
+
+        options: Dict[str, Any] = {}
+
+        for key in ("temperature", "top_p"):
+            value = config.get(key)
+            if value is not None:
+                options[key] = value
+
+        stop_sequences = config.get("stop_sequences")
+        if isinstance(stop_sequences, list) and stop_sequences:
+            options["stop"] = [str(item) for item in stop_sequences if str(item)]
+
+        max_completion_tokens = openai_config.get("max_completion_tokens")
+        if max_completion_tokens is None:
+            max_completion_tokens = config.get("max_tokens")
+        if max_completion_tokens:
+            token_key = "max_tokens" if openai_config.get("use_legacy_max_tokens") else "max_completion_tokens"
+            options[token_key] = int(max_completion_tokens)
+
+        for key in ("presence_penalty", "frequency_penalty"):
+            value = openai_config.get(key)
+            if value is not None:
+                options[key] = value
+
+        reasoning_effort = str(openai_config.get("reasoning_effort") or "").strip()
+        if reasoning_effort:
+            options["reasoning_effort"] = reasoning_effort
+
+        seed = openai_config.get("seed")
+        if seed is not None:
+            options["seed"] = int(seed)
+
+        return options
+
+    async def _create_with_compat_retry(self, kwargs: Dict[str, Any]) -> Any:
+        """Create a completion, retrying legacy token names for compatible gateways."""
+
+        try:
+            return await self.client.chat.completions.create(**kwargs)
+        except Exception:
+            if "max_completion_tokens" not in kwargs or "max_tokens" in kwargs:
+                raise
+            fallback = dict(kwargs)
+            fallback["max_tokens"] = fallback.pop("max_completion_tokens")
+            return await self.client.chat.completions.create(**fallback)
+
+    @staticmethod
+    def _parse_usage(raw_usage: Any) -> tuple[Dict[str, int], Optional[Dict[str, Any]]]:
+        if not raw_usage:
+            return {}, None
+
+        raw: Dict[str, Any]
+        if isinstance(raw_usage, dict):
+            raw = dict(raw_usage)
+        else:
+            dumped = raw_usage.model_dump() if hasattr(raw_usage, "model_dump") else None
+            if isinstance(dumped, dict):
+                raw = dumped
+            else:
+                raw = {
+                    key: getattr(raw_usage, key)
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                    if isinstance(getattr(raw_usage, key, None), (int, float))
+                }
+
+        if not raw:
+            return {}, None
+
+        input_tokens = raw.get("prompt_tokens")
+        output_tokens = raw.get("completion_tokens")
+        total_tokens = raw.get("total_tokens")
+
+        usage = {}
+        if input_tokens is not None:
+            usage["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            usage["output_tokens"] = int(output_tokens)
+        if total_tokens is not None:
+            usage["total_tokens"] = int(total_tokens)
+        elif usage:
+            usage["total_tokens"] = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+
+        return usage, raw

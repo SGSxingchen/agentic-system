@@ -23,19 +23,19 @@ class TestLLMFactory:
     def test_create_openai_client(self, mock_cls):
         mock_cls.return_value = MagicMock(spec=BaseLLMClient)
         client = create_llm_client("openai", "sk-test", "gpt-4")
-        mock_cls.assert_called_once_with("sk-test", "gpt-4", None)
+        mock_cls.assert_called_once_with("sk-test", "gpt-4", None, None)
 
     @patch("core.llm.factory.OpenAIClient")
     def test_create_openai_client_with_base_url(self, mock_cls):
         mock_cls.return_value = MagicMock(spec=BaseLLMClient)
         client = create_llm_client("openai", "sk-test", "gpt-4", "http://custom/v1")
-        mock_cls.assert_called_once_with("sk-test", "gpt-4", "http://custom/v1")
+        mock_cls.assert_called_once_with("sk-test", "gpt-4", "http://custom/v1", None)
 
     @patch("core.llm.factory.AnthropicClient")
     def test_create_anthropic_client(self, mock_cls):
         mock_cls.return_value = MagicMock(spec=BaseLLMClient)
         client = create_llm_client("anthropic", "sk-ant-test", "claude-3-opus")
-        mock_cls.assert_called_once_with("sk-ant-test", "claude-3-opus", None)
+        mock_cls.assert_called_once_with("sk-ant-test", "claude-3-opus", None, None)
 
     def test_create_unknown_provider(self):
         with pytest.raises(ValueError, match="不支持的 provider"):
@@ -99,6 +99,7 @@ class TestOpenAIClient:
         mock_choice.message = mock_message
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
+        mock_response.usage = MagicMock(prompt_tokens=12, completion_tokens=5, total_tokens=17)
 
         mock_client = AsyncMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
@@ -109,10 +110,61 @@ class TestOpenAIClient:
 
         assert result.content == "AI 回复"
         assert result.stop_reason == "end_turn"
+        assert result.usage == {
+            "input_tokens": 12,
+            "output_tokens": 5,
+            "total_tokens": 17,
+        }
+        assert result.elapsed_ms is not None
         mock_client.chat.completions.create.assert_called_once_with(
             model="gpt-4",
             messages=[{"role": "user", "content": "你好"}],
         )
+
+    @patch("openai.AsyncOpenAI")
+    async def test_chat_passes_openai_generation_options(self, mock_openai_cls):
+        from core.llm.openai_client import OpenAIClient
+
+        mock_message = MagicMock()
+        mock_message.content = "AI 回复"
+        mock_message.tool_calls = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = None
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        mock_openai_cls.return_value = mock_client
+
+        client = OpenAIClient(
+            "sk-test",
+            "gpt-4",
+            generation_config={
+                "temperature": 0.2,
+                "top_p": 0.8,
+                "max_tokens": 1234,
+                "stop_sequences": ["STOP"],
+                "openai": {
+                    "presence_penalty": 0.1,
+                    "frequency_penalty": 0.2,
+                    "reasoning_effort": "low",
+                    "seed": 42,
+                },
+            },
+        )
+        await client.chat([{"role": "user", "content": "你好"}])
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 0.2
+        assert call_kwargs["top_p"] == 0.8
+        assert call_kwargs["max_completion_tokens"] == 1234
+        assert call_kwargs["stop"] == ["STOP"]
+        assert call_kwargs["presence_penalty"] == 0.1
+        assert call_kwargs["frequency_penalty"] == 0.2
+        assert call_kwargs["reasoning_effort"] == "low"
+        assert call_kwargs["seed"] == 42
 
     @patch("openai.AsyncOpenAI")
     async def test_chat_multi_turn(self, mock_openai_cls):

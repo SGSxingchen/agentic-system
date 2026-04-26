@@ -1,6 +1,11 @@
 # 系统架构
 
-> 最后更新: 2026-04-23 | 与 CLAUDE.md 保持一致
+> 最后更新: 2026-04-26 | 与 CLAUDE.md 保持一致
+>
+> ⚠️ **编排层 v2 设计中**：本文档描述的是 v1 实现现状。新版编排层
+> （反应式 Agent 工具循环 + Task 抽象 + 子 Agent 派生 + Stop Hooks）
+> 见 [`./orchestrator-v2.md`](./orchestrator-v2.md)。落实后本文档将重写
+> "编排" 与 "数据流 / 任务流水线" 章节。
 
 ## 架构总览
 
@@ -107,12 +112,21 @@ triggers:
 
 ### 能力系统
 
-内置 3 个原生能力:
+能力系统由 `CapabilityRegistry` 统一管理，Agent、原生 Tool、动态 Tool 都以同一接口暴露。
+
+代码类能力:
 - `CodeParserCapability` — AST 代码解析
 - `StaticAnalyzerCapability` — 静态代码质量检查
-- `TestRunnerCapability` — 代码测试执行
+- `TestRunnerCapability` — 测试结构解析
 
-通过 `CapabilityRegistry` 管理，支持从 `config/capabilities.yaml` 动态加载。
+常规助理工具:
+- `memory_search`、`datetime_tool`、`calculator`、`web_fetch`
+- `file_search`、`read_file`、`write_file`、`json_tool`、`text_processor`
+- `bash` 默认关闭，需设置 `ENABLE_SHELL_TOOL=true`
+
+动态 Tool 支持 `template`、`checklist`、`regex_extract` 三种安全模式，可通过进化中心/API 创建并挂载到 Agent。
+
+Tool 提示词覆盖层只修改 `CapabilitySchema.description`，也就是模型看到的 Tool 说明；`parameters` JSON Schema 只读展示，不通过网页修改，避免破坏工具调用协议。
 
 ### 工作流编排
 

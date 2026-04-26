@@ -32,6 +32,9 @@ class LLMResponse:
     content: Optional[str] = None
     tool_calls: List[ToolCall] = field(default_factory=list)
     stop_reason: str = "end_turn"
+    usage: Dict[str, int] = field(default_factory=dict)
+    raw_usage: Optional[Dict[str, Any]] = None
+    elapsed_ms: Optional[float] = None
 
 
 @dataclass
@@ -49,6 +52,9 @@ class LLMStreamEvent:
     content: Optional[str] = None
     tool_call: Optional[ToolCall] = None
     stop_reason: Optional[str] = None
+    usage: Dict[str, int] = field(default_factory=dict)
+    raw_usage: Optional[Dict[str, Any]] = None
+    elapsed_ms: Optional[float] = None
 
 
 class BaseLLMClient(ABC):
@@ -86,4 +92,7 @@ class BaseLLMClient(ABC):
         yield LLMStreamEvent(
             type="done",
             stop_reason=response.stop_reason,
+            usage=response.usage,
+            raw_usage=response.raw_usage,
+            elapsed_ms=response.elapsed_ms,
         )

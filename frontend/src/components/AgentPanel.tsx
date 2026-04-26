@@ -36,6 +36,16 @@ interface CapabilityOption {
   description: string
 }
 
+interface AgentCardData {
+  name: string
+  status: string
+  description?: string
+  capabilities?: string[]
+  system_prompt?: string
+  output_format?: string
+  max_iterations?: number
+}
+
 export function AgentPanel() {
   const { state, dispatch } = useAppStore()
   const [loading, setLoading] = useState(true)
@@ -51,6 +61,7 @@ export function AgentPanel() {
   // 内联工具管理
   const [toolPanelAgent, setToolPanelAgent] = useState<string | null>(null)
   const [toolSaving, setToolSaving] = useState(false)
+  const [capabilityFilter, setCapabilityFilter] = useState('')
 
   const fetchAgents = useCallback(async () => {
     setLoading(true)
@@ -85,22 +96,36 @@ export function AgentPanel() {
     setEditingAgent('__new__')
     setForm({ ...EMPTY_FORM })
     setConfirmDelete(null)
+    setCapabilityFilter('')
     fetchCapabilities()
   }
 
   // 开始编辑
-  const startEdit = (agent: { name: string; status: string; description?: string; capabilities?: string[] }) => {
+  const startEdit = async (agent: AgentCardData) => {
     setEditingAgent(agent.name)
     setForm({
       name: agent.name,
       description: agent.description || '',
-      system_prompt: '', // 需要从后端获取完整配置
+      system_prompt: agent.system_prompt || '',
       tools: agent.capabilities || [],
-      output_format: 'text',
-      max_iterations: 10,
+      output_format: agent.output_format || 'text',
+      max_iterations: agent.max_iterations || 10,
     })
     setConfirmDelete(null)
+    setCapabilityFilter('')
     fetchCapabilities()
+
+    const res = await api.getAgent(agent.name)
+    if (res.status === 'ok' && res.data) {
+      setForm({
+        name: res.data.name,
+        description: res.data.description || '',
+        system_prompt: res.data.system_prompt || '',
+        tools: res.data.capabilities || [],
+        output_format: res.data.output_format || 'text',
+        max_iterations: res.data.max_iterations || 10,
+      })
+    }
   }
 
   const cancelEdit = () => {
@@ -185,94 +210,167 @@ export function AgentPanel() {
   // 渲染编辑表单
   const renderEditForm = () => {
     const isNew = editingAgent === '__new__'
+    const normalizedFilter = capabilityFilter.trim().toLowerCase()
+    const filteredCapabilities = capabilities.filter((cap) => {
+      if (!normalizedFilter) return true
+      return (
+        cap.name.toLowerCase().includes(normalizedFilter) ||
+        (cap.description || '').toLowerCase().includes(normalizedFilter)
+      )
+    })
+    const selectedAgentTools = form.tools.filter((tool) =>
+      state.agents.some((agent) => agent.name === tool)
+    ).length
+    const selectedNativeTools = Math.max(0, form.tools.length - selectedAgentTools)
 
     return (
       <div className="agent-card agent-card--editing">
         <div className="agent-form">
-          <h3 className="agent-form__title">{isNew ? '新建智能体' : `编辑: ${editingAgent}`}</h3>
-
-          <div className="form-group">
-            <label>名称</label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              disabled={!isNew}
-              placeholder="如: my_agent"
-            />
+          <div className="agent-form__hero">
+            <div>
+              <span className="agent-form__kicker">Agent Config</span>
+              <h3 className="agent-form__title">{isNew ? '新建智能体' : `编辑 ${editingAgent}`}</h3>
+              <p className="agent-form__subtitle">
+                配置角色、工具能力和调用边界。Agent 可以把工具或其他 Agent 当作能力使用。
+              </p>
+            </div>
+            <div className="agent-form__stats">
+              <span><strong>{form.tools.length}</strong> 已选能力</span>
+              <span><strong>{selectedAgentTools}</strong> 子 Agent</span>
+              <span><strong>{selectedNativeTools}</strong> 工具</span>
+            </div>
           </div>
 
-          <div className="form-group">
-            <label>描述</label>
-            <input
-              type="text"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="智能体功能描述"
-            />
+          <div className="agent-form__section">
+            <div className="agent-form__section-title">
+              <span>01</span>
+              <div>
+                <h4>基础信息</h4>
+                <p>名称用于调用，描述用于让主 Agent 判断什么时候委派它。</p>
+              </div>
+            </div>
+
+            <div className="agent-form__grid">
+              <div className="form-group">
+                <label>名称</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  disabled={!isNew}
+                  placeholder="如: my_agent"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>描述</label>
+                <input
+                  type="text"
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  placeholder="智能体功能描述"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>输出格式</label>
+                <select
+                  value={form.output_format}
+                  onChange={(e) => setForm({ ...form, output_format: e.target.value })}
+                >
+                  <option value="text">text（原样返回）</option>
+                  <option value="json">json（自动解析）</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>最大迭代次数</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={form.max_iterations}
+                  onChange={(e) => setForm({ ...form, max_iterations: parseInt(e.target.value) || 10 })}
+                />
+                <span className="form-hint">tool_use 循环上限</span>
+              </div>
+            </div>
           </div>
 
-          <div className="form-group">
-            <label>系统提示词 (System Prompt)</label>
-            <textarea
-              value={form.system_prompt}
-              onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
-              placeholder="定义智能体的角色、行为和输出格式..."
-              rows={8}
-              style={{ fontFamily: 'monospace', fontSize: '13px' }}
-            />
-            <span className="form-hint">定义 Agent 的角色和行为，支持 Markdown 格式</span>
+          <div className="agent-form__section">
+            <div className="agent-form__section-title">
+              <span>02</span>
+              <div>
+                <h4>系统提示词</h4>
+                <p>写清楚角色、工作流程、工具使用策略和输出约束。</p>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <textarea
+                className="prompt-editor"
+                value={form.system_prompt}
+                onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
+                placeholder="定义智能体的角色、行为和输出格式..."
+                rows={10}
+              />
+              <span className="form-hint">支持 Markdown。编辑已有 Agent 时会加载当前配置中的 Prompt。</span>
+            </div>
           </div>
 
-          <div className="form-group">
-            <label>可用工具</label>
+          <div className="agent-form__section">
+            <div className="agent-form__section-title agent-form__section-title--tools">
+              <span>03</span>
+              <div>
+                <h4>可用能力</h4>
+                <p>选择这个 Agent 可以调用的工具或子 Agent。</p>
+              </div>
+              <input
+                className="tool-search"
+                type="search"
+                value={capabilityFilter}
+                onChange={(e) => setCapabilityFilter(e.target.value)}
+                placeholder="搜索工具或 Agent"
+              />
+            </div>
+
             <div className="tools-selector">
-              {capabilities.length > 0 ? (
-                capabilities.map((cap) => (
-                  <label key={cap.name} className="tool-checkbox" title={cap.description}>
-                    <input
-                      type="checkbox"
-                      checked={form.tools.includes(cap.name)}
-                      onChange={() => toggleTool(cap.name)}
-                    />
-                    <span className="tool-name">{cap.name}</span>
-                    {cap.description && <span className="tool-desc">{cap.description}</span>}
-                  </label>
-                ))
+              {filteredCapabilities.length > 0 ? (
+                filteredCapabilities.map((cap) => {
+                  const active = form.tools.includes(cap.name)
+                  const isAgentTool = state.agents.some((agent) => agent.name === cap.name)
+                  return (
+                    <label
+                      key={cap.name}
+                      className={`tool-checkbox ${active ? 'tool-checkbox--active' : ''}`}
+                      title={cap.description}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => toggleTool(cap.name)}
+                      />
+                      <span className="tool-checkbox__mark" />
+                      <span className="tool-checkbox__body">
+                        <span className="tool-name">
+                          {cap.name}
+                          {isAgentTool && <span className="tool-kind-badge">Agent</span>}
+                        </span>
+                        {cap.description && <span className="tool-desc">{cap.description}</span>}
+                      </span>
+                    </label>
+                  )
+                })
               ) : (
-                <span className="form-hint">无可用工具（后端未启动或无插件）</span>
+                <span className="form-hint">没有匹配的工具或 Agent</span>
               )}
             </div>
-            <span className="form-hint">选择 Agent 可以调用的工具，LLM 会自主决定何时使用</span>
-          </div>
-
-          <div className="form-group form-group--row">
-            <div style={{ flex: 1 }}>
-              <label>输出格式</label>
-              <select
-                value={form.output_format}
-                onChange={(e) => setForm({ ...form, output_format: e.target.value })}
-              >
-                <option value="text">text（原样返回）</option>
-                <option value="json">json（自动解析）</option>
-              </select>
-            </div>
-            <div style={{ flex: 1 }}>
-              <label>最大迭代次数</label>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={form.max_iterations}
-                onChange={(e) => setForm({ ...form, max_iterations: parseInt(e.target.value) || 10 })}
-              />
-              <span className="form-hint">tool_use 循环上限</span>
-            </div>
+            <span className="form-hint">LLM 会根据 Prompt 和上下文自主决定何时使用这些能力。</span>
           </div>
 
           {error && <div className="agent-error">{error}</div>}
 
-          <div className="button-group">
+          <div className="button-group agent-form__actions">
             <button className="btn-primary" onClick={handleSave} disabled={saving}>
               {saving ? '保存中...' : '保存'}
             </button>
@@ -283,9 +381,13 @@ export function AgentPanel() {
     )
   }
 
-  const renderAgentCard = (agent: { name: string; status: string; description?: string; capabilities?: string[] }) => {
+  const renderAgentCard = (agent: AgentCardData) => {
     const statusCfg = STATUS_CONFIG[agent.status] || STATUS_CONFIG.stopped
     const isConfirming = confirmDelete === agent.name
+    const toolCount = agent.capabilities?.length || 0
+    const delegatedAgentCount = (agent.capabilities || []).filter((cap) =>
+      state.agents.some((item) => item.name === cap)
+    ).length
 
     return (
       <div key={agent.name} className="agent-card">
@@ -321,6 +423,12 @@ export function AgentPanel() {
         )}
 
         {agent.description && <p className="agent-description">{agent.description}</p>}
+
+        <div className="agent-card-meta">
+          <span>{toolCount} 个能力</span>
+          <span>{delegatedAgentCount} 个子 Agent</span>
+          <span>{agent.output_format || 'text'}</span>
+        </div>
 
         {/* 当前工具标签 + 管理按钮 */}
         <div className="agent-tools-section">

@@ -8,6 +8,7 @@ import { MemoryPanel } from './components/MemoryPanel'
 import { MonitorPanel } from './components/MonitorPanel'
 import { TaskPanel } from './components/TaskPanel'
 import { WorkflowPanel } from './components/WorkflowPanel'
+import { EvolutionPanel } from './components/EvolutionPanel'
 import { Settings } from './components/Settings'
 import type { WSEvent, Message } from './types'
 import './App.css'
@@ -81,6 +82,8 @@ function AppContent() {
         return <AgentPanel />
       case 'workflow':
         return <WorkflowPanel />
+      case 'evolution':
+        return <EvolutionPanel />
       case 'memory':
         return (
           <div className="memory-panel-inline">
