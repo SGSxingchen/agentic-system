@@ -40,3 +40,4 @@ dist/
 # Local artifacts
 frontend/multi-agent-frontend@0.1.0
 frontend/vite
+.worktrees
