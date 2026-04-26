@@ -25,7 +25,12 @@ from core.bus import UnifiedBus
 from core.config import load_config, load_yaml_configs
 from core.context import ContextStore
 from core.llm import create_llm_client
-from core.memory import MemoryFormation, MemoryRetriever, create_memory_store
+from core.memory import (
+    ConversationMemoryBuffer,
+    MemoryFormation,
+    MemoryRetriever,
+    create_memory_store,
+)
 from core.pipeline import Pipeline
 
 from .dependencies import (
@@ -35,6 +40,7 @@ from .dependencies import (
     set_capability_registry,
     set_context_store,
     set_llm_client,
+    set_memory_buffer,
     set_memory_formation,
     set_memory_retriever,
     set_memory_store,
@@ -51,6 +57,7 @@ from .routes import (
     workflows_router,
 )
 from .websocket.handlers import (
+    reflect_chat_exchange,
     register_bus_event_bridge,
     websocket_endpoint as ws_handler,
 )
@@ -101,10 +108,15 @@ async def init_memory_system(config: Dict[str, Any]):
     memory_store = create_memory_store(backend, **store_kwargs)
     memory_formation = MemoryFormation(store=memory_store)
     memory_retriever = MemoryRetriever(store=memory_store)
+    memory_buffer = ConversationMemoryBuffer(
+        min_turns=int(memory_config.get("reflection_min_turns", 3)),
+        max_window_messages=int(memory_config.get("reflection_max_messages", 12)),
+    )
 
     set_memory_store(memory_store)
     set_memory_formation(memory_formation)
     set_memory_retriever(memory_retriever)
+    set_memory_buffer(memory_buffer)
 
     print(f"[OK] memory initialized (backend={backend})")
     return memory_store, memory_formation, memory_retriever
@@ -366,6 +378,12 @@ async def chat_endpoint(req: dict):
         start = time.perf_counter()
         result = await cap_registry.execute("assistant", **payload)
         response_text = result.get("response", str(result))
+        await reflect_chat_exchange(
+            user_message=message,
+            assistant_text=response_text,
+            source="rest_chat",
+            session_id=req.get("session_id"),
+        )
         return {
             "status": "ok",
             "response": response_text,
@@ -410,6 +428,12 @@ async def chat_stream_endpoint(req: dict):
             else:
                 result = await cap_registry.execute("assistant", **payload)
                 response_text = result.get("response", str(result))
+                await reflect_chat_exchange(
+                    user_message=message,
+                    assistant_text=response_text,
+                    source="rest_chat_stream",
+                    session_id=req.get("session_id"),
+                )
                 yield (
                     f"data: {_json.dumps({'type': 'thinking', 'content': response_text}, ensure_ascii=False)}\n\n"
                 )

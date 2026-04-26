@@ -7,7 +7,14 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ..dependencies import get_capability_registry, get_memory_formation
+from core.memory import MemoryProcessor
+
+from ..dependencies import (
+    get_capability_registry,
+    get_llm_client,
+    get_memory_buffer,
+    get_memory_formation,
+)
 
 _BRIDGED_EVENT_TYPES = ("step_started", "step_completed")
 _REGISTERED_BUS_IDS: set[int] = set()
@@ -155,18 +162,12 @@ async def _handle_user_message(
             ),
         )
 
-        formation = get_memory_formation()
-        if formation:
-            try:
-                await formation.create_episodic(
-                    event_description=(
-                        f"User: {user_message}\nAssistant: {response_text[:200]}"
-                    ),
-                    source="assistant_agent",
-                    importance=0.4,
-                )
-            except Exception:
-                pass
+        await reflect_chat_exchange(
+            user_message=user_message,
+            assistant_text=response_text,
+            source="websocket_chat",
+            session_id=payload.get("session_id"),
+        )
     except Exception as exc:
         await manager.send_to(
             websocket,
@@ -178,6 +179,42 @@ async def _handle_user_message(
                 },
             ),
         )
+
+
+async def reflect_chat_exchange(
+    *,
+    user_message: str,
+    assistant_text: str,
+    source: str,
+    session_id: str | None = None,
+) -> None:
+    """Append a chat exchange and reflect it into structured memories when ready."""
+
+    buffer = get_memory_buffer()
+    formation = get_memory_formation()
+    llm_client = get_llm_client()
+    if not buffer or not formation or not llm_client:
+        return
+
+    try:
+        window = buffer.append_exchange(
+            user_message,
+            assistant_text,
+            source=source,
+            session_id=session_id,
+        )
+        if not window:
+            return
+
+        processor = MemoryProcessor(llm_client)
+        candidates = await processor.process_conversation(
+            window["turns"],
+            source_window=window["source_window"],
+        )
+        for candidate in candidates:
+            await formation.create_structured_memory(candidate)
+    except Exception as exc:
+        print(f"[WARN] memory reflection failed: {exc}")
 
 
 def register_bus_event_bridge(bus: Any) -> None:

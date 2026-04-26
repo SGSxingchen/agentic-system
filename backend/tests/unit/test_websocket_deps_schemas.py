@@ -22,6 +22,7 @@ from api.dependencies import (
     get_context_store,
     get_llm_client,
     get_memory_formation,
+    get_memory_buffer,
     get_memory_retriever,
     get_memory_store,
     get_pipeline,
@@ -32,6 +33,7 @@ from api.dependencies import (
     set_context_store,
     set_llm_client,
     set_memory_formation,
+    set_memory_buffer,
     set_memory_retriever,
     set_memory_store,
     set_pipeline,
@@ -68,7 +70,7 @@ def reset_app_state():
     # 保存原始值
     attrs = [
         "bus", "agent_registry", "current_llm_client",
-        "memory_store", "memory_formation", "memory_retriever", "reload_agent",
+        "memory_store", "memory_formation", "memory_retriever", "memory_buffer", "reload_agent",
         "context_store", "capability_registry", "pipeline",
     ]
     saved = {a: getattr(_state, a) for a in attrs}
@@ -112,6 +114,7 @@ class TestDependencies:
         assert get_llm_client() is None
         assert get_memory_store() is None
         assert get_memory_formation() is None
+        assert get_memory_buffer() is None
         assert get_memory_retriever() is None
         assert reload_agent_fn() is None
         assert get_context_store() is None
@@ -152,6 +155,11 @@ class TestDependencies:
         sentinel = object()
         set_memory_retriever(sentinel)
         assert get_memory_retriever() is sentinel
+
+    def test_set_get_memory_buffer(self):
+        sentinel = object()
+        set_memory_buffer(sentinel)
+        assert get_memory_buffer() is sentinel
 
     def test_set_get_reload_agent_fn(self):
         async def dummy():

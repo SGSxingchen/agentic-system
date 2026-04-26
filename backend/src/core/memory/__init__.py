@@ -5,6 +5,7 @@ from .retriever import MemoryRetriever
 from .formation import MemoryFormation
 from .embedding import EmbeddingClient, create_embedding_fn
 from .processor import MemoryProcessor, PRIVATE_MEMORY_SCHEMA_VERSION
+from .buffer import ConversationMemoryBuffer
 
 __all__ = [
     "Memory",
@@ -18,6 +19,7 @@ __all__ = [
     "MemoryFormation",
     "MemoryProcessor",
     "PRIVATE_MEMORY_SCHEMA_VERSION",
+    "ConversationMemoryBuffer",
     "EmbeddingClient",
     "create_embedding_fn",
 ]

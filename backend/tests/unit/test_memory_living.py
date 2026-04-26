@@ -10,6 +10,7 @@ import pytest
 
 from core.llm.base import BaseLLMClient, LLMResponse
 from core.memory import InMemoryStore, Memory, MemoryFormation, MemoryRetriever, MemoryType
+from core.memory.buffer import ConversationMemoryBuffer
 from core.memory.processor import MemoryProcessor
 
 
@@ -231,3 +232,31 @@ async def test_retrieve_with_scores_does_not_filter_by_source_session(store):
 
     assert len(results) == 1
     assert results[0]["memory"].metadata["source_window"]["session_id"] == "other-session"
+
+
+async def test_conversation_buffer_returns_reflection_window():
+    buffer = ConversationMemoryBuffer(min_turns=1)
+
+    window = buffer.append_exchange(
+        "我喜欢简洁回答",
+        "好的，我会保持简洁。",
+        source="rest_chat",
+        session_id="chat-1",
+    )
+
+    assert window is not None
+    assert len(window["turns"]) == 2
+    assert window["source_window"]["message_count"] == 2
+    assert window["source_window"]["session_id"] == "chat-1"
+    assert window["source_window"]["source"] == "rest_chat"
+
+
+async def test_conversation_buffer_waits_until_threshold():
+    buffer = ConversationMemoryBuffer(min_turns=2)
+
+    first = buffer.append_exchange("第一轮", "回复一", source="rest_chat")
+    second = buffer.append_exchange("第二轮", "回复二", source="rest_chat")
+
+    assert first is None
+    assert second is not None
+    assert second["source_window"]["message_count"] == 4
