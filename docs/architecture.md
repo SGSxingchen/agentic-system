@@ -6,6 +6,10 @@
 > （反应式 Agent 工具循环 + Task 抽象 + 子 Agent 派生 + Stop Hooks）
 > 见 [`./orchestrator-v2.md`](./orchestrator-v2.md)。落实后本文档将重写
 > "编排" 与 "数据流 / 任务流水线" 章节。
+>
+> 🧠 **记忆层 v2 设计中**：私人助理式全局长期记忆方案见
+> [`./superpowers/specs/2026-04-26-private-assistant-memory-lite-design.md`](./superpowers/specs/2026-04-26-private-assistant-memory-lite-design.md)。
+> 该方案不做 session/persona 隔离，重点补齐自动形成、结构化摘要、可解释召回和遗忘巩固。
 
 ## 架构总览
 
@@ -104,6 +108,8 @@ triggers:
 ### 记忆系统
 
 三种记忆类型: episodic / semantic / procedural
+
+v2 方向: 记忆系统将升级为私人助理式全局长期记忆层。所有记忆默认进入共享个人记忆池，`session_id` 仅作为来源追踪；新增自动对话反思、`canonical_summary` / `assistant_context` 双摘要、检索评分解释和近似去重。
 
 组件:
 - **MemoryStore** — InMemoryStore 或 ChromaStore

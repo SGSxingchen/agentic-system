@@ -6,6 +6,10 @@
 
 > 本文档面向后续 AI 和开发者，完整描述系统架构、模块关系和开发规范。
 > **所有内容基于实际代码审计，非理论设计。**
+>
+> 🧠 **记忆层 v2 设计中**：私人助理式全局长期记忆方案见
+> `docs/superpowers/specs/2026-04-26-private-assistant-memory-lite-design.md`。
+> 新方案不做 session/persona 隔离，重点补齐自动形成、结构化摘要、可解释召回和遗忘巩固。
 
 ---
 
@@ -277,6 +281,8 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 ### 3.6 记忆系统
 
 **三种类型:** episodic (情景) / semantic (语义) / procedural (程序)
+
+**v2 方向:** 升级为私人助理式全局长期记忆层。所有记忆默认进入共享个人记忆池，`session_id` 仅作为来源追踪；新增自动对话反思、`canonical_summary` / `assistant_context` 双摘要、检索评分解释和近似去重。
 
 **组件:**
 | 组件 | 职责 |
