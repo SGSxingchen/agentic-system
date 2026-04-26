@@ -7,6 +7,7 @@ JSON Schema immutable while allowing the prompt text to be configured.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from .base import CapabilityBase, CapabilitySchema
@@ -37,18 +38,16 @@ class PromptOverrideCapability(CapabilityBase):
 
     def get_schema(self) -> CapabilitySchema:
         schema = self._capability.get_schema()
-        return CapabilitySchema(
-            name=schema.name,
-            description=self._prompt,
-            parameters=schema.parameters,
-            returns=schema.returns,
-        )
+        return replace(schema, description=self._prompt)
 
     async def execute(self, **kwargs: Any) -> Any:
         return await self._capability.execute(**kwargs)
 
     def validate_input(self, **kwargs: Any) -> bool:
         return self._capability.validate_input(**kwargs)
+
+    def check_permissions(self, **kwargs: Any) -> dict[str, Any]:
+        return self._capability.check_permissions(**kwargs)
 
 
 def unwrap_capability(capability: CapabilityBase) -> CapabilityBase:

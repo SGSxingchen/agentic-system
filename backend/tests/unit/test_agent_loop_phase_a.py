@@ -203,6 +203,16 @@ async def test_concurrent_dispatch_runs_in_parallel() -> None:
     assert result.get("response") == "after"
 
 
+async def test_process_compatibility_delegates_to_run() -> None:
+    """旧编排入口 process() 应能调用当前通用 Agent。"""
+    llm = ScriptedLLM([_end("compat")])
+    agent = Agent(name="compat", llm_client=llm)
+
+    result = await agent.process({"message": "go"})
+
+    assert result == {"response": "compat"}
+
+
 async def test_serial_dispatch_for_unsafe_tools() -> None:
     """concurrency_safe=False 的工具应顺序执行，调用区间不重叠。"""
     tool_a = TimedTool("a", sleep_s=0.05, concurrency_safe=False)

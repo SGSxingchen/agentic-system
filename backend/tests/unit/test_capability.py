@@ -329,6 +329,48 @@ def test_prompt_override_changes_schema_only(registry: CapabilityRegistry, parse
     assert unwrap_capability(wrapped) is parser
 
 
+def test_prompt_override_preserves_execution_contract(registry: CapabilityRegistry):
+    """提示词覆盖不应丢失调度元数据和权限钩子。"""
+
+    class PermissionedCapability(CapabilityBase):
+        @property
+        def name(self):
+            return "permissioned"
+
+        @property
+        def description(self):
+            return "original prompt"
+
+        def get_schema(self):
+            return CapabilitySchema(
+                name=self.name,
+                description=self.description,
+                is_read_only=True,
+                is_concurrency_safe=True,
+                max_result_size=123,
+            )
+
+        def check_permissions(self, **kwargs):
+            return {"decision": "deny", "reason": "blocked in test"}
+
+        async def execute(self, **kwargs):
+            return {"ok": True}
+
+    capability = PermissionedCapability()
+    registry.register_native(capability)
+
+    assert apply_prompt_override(registry, "permissioned", "custom prompt") is True
+
+    wrapped = registry.get("permissioned")
+    schema = wrapped.get_schema()
+    assert schema.description == "custom prompt"
+    assert schema.is_read_only is True
+    assert schema.is_concurrency_safe is True
+    assert schema.max_result_size == 123
+    assert wrapped.check_permissions()["decision"] == "deny"
+    assert unwrap_capability(wrapped) is capability
+
+
 # ═══════════════════════════════════════════════════════════
 #  新版能力插件 (capabilities/builtin) 单元测试
 # ═══════════════════════════════════════════════════════════

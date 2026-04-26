@@ -165,6 +165,11 @@ class Agent:
             logger.error("Agent '%s' failed: %s", self.name, exc)
             raise
 
+    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Backward-compatible one-shot entrypoint used by legacy orchestrators."""
+
+        return await self.run(input_data)
+
     # ─── 流式主循环 ─────────────────────────────────────────
 
     async def run_stream(self, input_data: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:

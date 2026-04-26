@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import socket
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +24,7 @@ from capabilities.tools.file_search import FileSearchCapability
 from capabilities.tools.json_tool import JsonToolCapability
 from capabilities.tools.text_processor import TextProcessorCapability
 from capabilities.tools.web_fetch import WebFetchCapability
+from capabilities.tools._web_safety import validate_public_http_url
 from capabilities.tools.web_search import WebSearchCapability
 from core.capability.registry import CapabilityRegistry
 
@@ -50,6 +54,35 @@ class FakeResponse:
 
     def geturl(self) -> str:
         return "https://example.com/page"
+
+
+PUBLIC_ADDR = (
+    socket.AddressFamily.AF_INET,
+    socket.SocketKind.SOCK_STREAM,
+    6,
+    "",
+    ("93.184.216.34", 443),
+)
+NON_GLOBAL_ADDR = (
+    socket.AddressFamily.AF_INET,
+    socket.SocketKind.SOCK_STREAM,
+    6,
+    "",
+    ("100.64.0.1", 80),
+)
+
+
+def test_web_safety_rejects_non_global_resolved_addresses():
+    with (
+        patch("socket.getaddrinfo", return_value=[NON_GLOBAL_ADDR]),
+        pytest.raises(PermissionError),
+    ):
+        validate_public_http_url("http://example.com")
+
+
+def test_web_safety_rejects_invalid_ports():
+    with pytest.raises(PermissionError):
+        validate_public_http_url("http://example.com:99999")
 
 
 class TestCalculatorCapability:
@@ -201,7 +234,10 @@ class TestWebFetchCapability:
     async def test_fetches_and_strips_html(self):
         body = b"<html><title>Example</title><body><h1>Hello</h1><script>x</script></body></html>"
         tool = WebFetchCapability()
-        with patch("urllib.request.urlopen", return_value=FakeResponse(body)):
+        with (
+            patch("socket.getaddrinfo", return_value=[PUBLIC_ADDR]),
+            patch("urllib.request.OpenerDirector.open", return_value=FakeResponse(body)),
+        ):
             result = await tool.execute(url="https://example.com/page")
         assert result["title"] == "Example"
         assert "Hello" in result["text"]
@@ -212,6 +248,39 @@ class TestWebFetchCapability:
         tool = WebFetchCapability()
         result = await tool.execute(url="file:///etc/passwd")
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_blocks_private_network_targets_before_request(self):
+        tool = WebFetchCapability()
+        with patch("urllib.request.OpenerDirector.open") as opener_open:
+            result = await tool.execute(url="http://127.0.0.1:8001/internal")
+
+        assert "error" in result
+        assert "not allowed" in result["error"]
+        opener_open.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_does_not_block_event_loop(self):
+        tool = WebFetchCapability()
+
+        def slow_open(*args, **kwargs):
+            time.sleep(0.2)
+            return FakeResponse(b"<html><title>OK</title><body>done</body></html>")
+
+        with (
+            patch("socket.getaddrinfo", return_value=[PUBLIC_ADDR]),
+            patch("urllib.request.OpenerDirector.open", side_effect=slow_open),
+        ):
+            started = time.monotonic()
+            first, second = await asyncio.gather(
+                tool.execute(url="https://example.com/one"),
+                tool.execute(url="https://example.com/two"),
+            )
+            elapsed = time.monotonic() - started
+
+        assert first["title"] == "OK"
+        assert second["title"] == "OK"
+        assert elapsed < 0.35, f"expected non-blocking fetches, got {elapsed:.3f}s"
 
 
 class TestWebSearchCapability:
@@ -226,7 +295,10 @@ class TestWebSearchCapability:
         </div></div>
         """
         tool = WebSearchCapability()
-        with patch("urllib.request.urlopen", return_value=FakeResponse(html)):
+        with (
+            patch("socket.getaddrinfo", return_value=[PUBLIC_ADDR]),
+            patch("urllib.request.OpenerDirector.open", return_value=FakeResponse(html)),
+        ):
             result = await tool.execute(query="example doc")
 
         assert result["count"] == 1
@@ -239,6 +311,20 @@ class TestWebSearchCapability:
         tool = WebSearchCapability()
         result = await tool.execute(query="")
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_search_blocks_private_custom_endpoint_before_request(self):
+        tool = WebSearchCapability()
+        with patch("urllib.request.OpenerDirector.open") as opener_open:
+            result = await tool.execute(
+                query="agent",
+                provider="duckduckgo",
+                base_url="http://10.0.0.1/search",
+            )
+
+        assert "error" in result
+        assert "not allowed" in result["error"]
+        opener_open.assert_not_called()
 
 
 @pytest.mark.asyncio

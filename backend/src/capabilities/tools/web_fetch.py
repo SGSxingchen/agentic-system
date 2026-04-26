@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import html
 import re
+import asyncio
 import urllib.error
 import urllib.request
 from typing import Any
 from urllib.parse import urlparse
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+
+from ._web_safety import open_public_url, validate_public_http_url
 
 
 class WebFetchCapability(CapabilityBase):
@@ -63,6 +66,34 @@ class WebFetchCapability(CapabilityBase):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return {"error": "url must be a valid http(s) URL"}
 
+        try:
+            validate_public_http_url(url)
+        except PermissionError as exc:
+            return {"error": str(exc)}
+
+        try:
+            return await asyncio.to_thread(
+                self._fetch_sync,
+                url,
+                timeout,
+                max_chars,
+            )
+        except urllib.error.HTTPError as exc:
+            return {"error": f"HTTP {exc.code}: {exc.reason}"}
+        except urllib.error.URLError as exc:
+            return {"error": f"request failed: {exc.reason}"}
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": f"web_fetch failed: {str(exc)}"}
+
+    @classmethod
+    def _fetch_sync(
+        cls,
+        url: str,
+        timeout: float,
+        max_chars: int,
+    ) -> dict[str, Any]:
         request = urllib.request.Request(
             url,
             headers={
@@ -70,29 +101,23 @@ class WebFetchCapability(CapabilityBase):
                 "Accept": "text/html,text/plain,application/json,*/*;q=0.8",
             },
         )
-
-        try:
-            with urllib.request.urlopen(request, timeout=max(1, min(timeout, 30))) as response:
-                content_type = response.headers.get("Content-Type", "")
-                raw = response.read(max(1024, min(max_chars * 4, 2_000_000)))
-                charset = response.headers.get_content_charset() or "utf-8"
-                decoded = raw.decode(charset, errors="replace")
-                text = self._html_to_text(decoded) if "html" in content_type.lower() else decoded
-                text = text[: max(200, min(max_chars, 20000))]
-                return {
-                    "url": response.geturl(),
-                    "status": response.status,
-                    "content_type": content_type,
-                    "title": self._extract_title(decoded),
-                    "text": text,
-                    "chars": len(text),
-                }
-        except urllib.error.HTTPError as exc:
-            return {"error": f"HTTP {exc.code}: {exc.reason}"}
-        except urllib.error.URLError as exc:
-            return {"error": f"request failed: {exc.reason}"}
-        except Exception as exc:
-            return {"error": f"web_fetch failed: {str(exc)}"}
+        with open_public_url(request, timeout=timeout) as response:
+            final_url = response.geturl()
+            validate_public_http_url(final_url)
+            content_type = response.headers.get("Content-Type", "")
+            raw = response.read(max(1024, min(max_chars * 4, 2_000_000)))
+            charset = response.headers.get_content_charset() or "utf-8"
+            decoded = raw.decode(charset, errors="replace")
+            text = cls._html_to_text(decoded) if "html" in content_type.lower() else decoded
+            text = text[: max(200, min(max_chars, 20000))]
+            return {
+                "url": final_url,
+                "status": response.status,
+                "content_type": content_type,
+                "title": cls._extract_title(decoded),
+                "text": text,
+                "chars": len(text),
+            }
 
     @staticmethod
     def _extract_title(content: str) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import asyncio
 import json
 import re
 import urllib.error
@@ -11,6 +12,8 @@ from typing import Any, Dict, List
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+
+from ._web_safety import open_public_url
 
 
 class WebSearchCapability(CapabilityBase):
@@ -72,12 +75,41 @@ class WebSearchCapability(CapabilityBase):
 
         max_results = max(1, min(max_results, 10))
         if provider == "brave":
-            return self._search_brave(query, max_results, timeout, api_key, base_url)
+            return await asyncio.to_thread(
+                self._search_brave,
+                query,
+                max_results,
+                timeout,
+                api_key,
+                base_url,
+            )
         if provider == "serper":
-            return self._search_serper(query, max_results, timeout, api_key, base_url)
+            return await asyncio.to_thread(
+                self._search_serper,
+                query,
+                max_results,
+                timeout,
+                api_key,
+                base_url,
+            )
         if provider not in {"duckduckgo", "duckduckgo_html"}:
             return {"error": "unsupported provider; expected duckduckgo, brave, or serper"}
 
+        return await asyncio.to_thread(
+            self._search_duckduckgo,
+            query,
+            max_results,
+            timeout,
+            base_url,
+        )
+
+    def _search_duckduckgo(
+        self,
+        query: str,
+        max_results: int,
+        timeout: float,
+        base_url: str,
+    ) -> Dict[str, Any]:
         endpoint = base_url or "https://duckduckgo.com/html/"
         separator = "&" if "?" in endpoint else "?"
         search_url = f"{endpoint}{separator}q={quote_plus(query)}"
@@ -90,7 +122,7 @@ class WebSearchCapability(CapabilityBase):
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=max(1, min(timeout, 30))) as response:
+            with open_public_url(request, timeout=timeout) as response:
                 raw = response.read(1_000_000)
                 charset = response.headers.get_content_charset() or "utf-8"
                 content = raw.decode(charset, errors="replace")
@@ -105,6 +137,8 @@ class WebSearchCapability(CapabilityBase):
             return {"error": f"HTTP {exc.code}: {exc.reason}"}
         except urllib.error.URLError as exc:
             return {"error": f"request failed: {exc.reason}"}
+        except PermissionError as exc:
+            return {"error": str(exc)}
         except Exception as exc:
             return {"error": f"web_search failed: {str(exc)}"}
 
@@ -276,7 +310,7 @@ class WebSearchCapability(CapabilityBase):
             method="POST" if payload is not None else "GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=max(1, min(timeout, 30))) as response:
+            with open_public_url(request, timeout=timeout) as response:
                 raw = response.read(1_000_000)
                 charset = response.headers.get_content_charset() or "utf-8"
                 return json.loads(raw.decode(charset, errors="replace"))
@@ -284,5 +318,7 @@ class WebSearchCapability(CapabilityBase):
             return {"error": f"HTTP {exc.code}: {exc.reason}"}
         except urllib.error.URLError as exc:
             return {"error": f"request failed: {exc.reason}"}
+        except PermissionError as exc:
+            return {"error": str(exc)}
         except Exception as exc:
             return {"error": f"web_search failed: {str(exc)}"}
