@@ -9,7 +9,6 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ..bus import SimpleBus, Event
-from ..agent.base import BaseAgent
 from ..agent.registry import AgentRegistry
 from .trigger import Trigger
 from .registry import TriggerRegistry

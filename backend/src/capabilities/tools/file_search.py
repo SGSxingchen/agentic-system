@@ -67,6 +67,9 @@ class FileSearchCapability(CapabilityBase):
                 },
             },
             returns="匹配文件列表和可选命中片段",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> dict[str, Any]:

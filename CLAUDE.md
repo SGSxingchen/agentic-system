@@ -274,6 +274,11 @@ user_message → Assistant → assistant_completed → 前端 WebSocket
 plan_request → Planner → plan_created → Coder → code_generated → Reviewer → review_passed/failed
 ```
 
+> ✅ **v2 Phase A 已落地（2026-04-26）**：编排层从静态扳机调度迁移到反应式 Agent 工具循环。
+> `Agent.run / run_stream` 现已支持工具元数据驱动的并发分组、Tool Result Budget 截断、Token 预算闸门（nudge + 硬终止），WebSocket 流式下发 `agent_thinking / agent_tool_call / agent_tool_result / agent_done` 事件。
+> 旧的 `BaseAgent` ABC 与 `agents/*.py` 4 个子类已移除（生产路径加载 `config/agents.yaml` 中的 generic `Agent`）。
+> 详见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md) §11 Phase A 章节。
+
 ### 3.6 记忆系统
 
 **三种类型:** episodic (情景) / semantic (语义) / procedural (程序)

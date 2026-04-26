@@ -44,6 +44,9 @@ class WriteFileCapability(CapabilityBase):
                 "required": ["file_path", "content"],
             },
             returns="Write result metadata.",
+            is_read_only=False,
+            is_concurrency_safe=False,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> Any:

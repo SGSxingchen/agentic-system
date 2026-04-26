@@ -53,6 +53,9 @@ class WebSearchCapability(CapabilityBase):
                 "required": ["query"],
             },
             returns="搜索结果列表，每项包含 title、url、snippet、source",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:

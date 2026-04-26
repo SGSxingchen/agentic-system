@@ -59,6 +59,9 @@ class CodeParserCapability(CapabilityBase):
                 "required": ["code"],
             },
             returns="包含 functions, classes, imports, docstring, metrics 的字典",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:
@@ -379,6 +382,9 @@ class StaticAnalyzerCapability(CapabilityBase):
                 "required": ["code"],
             },
             returns="包含 issues 列表和 summary 统计的字典",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:
@@ -703,6 +709,9 @@ class TestRunnerCapability(CapabilityBase):
                 "required": ["code"],
             },
             returns="包含 test_cases, test_classes, assertions, fixtures, summary 的字典",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:

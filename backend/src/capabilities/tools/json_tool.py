@@ -43,6 +43,9 @@ class JsonToolCapability(CapabilityBase):
                 "required": ["text"],
             },
             returns="JSON 操作结果",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> dict[str, Any]:

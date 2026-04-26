@@ -61,7 +61,35 @@ class BashCapability(CapabilityBase):
                 "required": ["command"],
             },
             returns="Shell stdout, stderr, and return code.",
+            is_read_only=False,
+            is_concurrency_safe=False,
+            max_result_size=16000,
         )
+
+    def check_permissions(self, **kwargs: Any) -> dict[str, Any]:
+        """Reject obviously destructive commands and shell-disabled environments.
+
+        Runs before execute() so the agent loop can deny without forking a process.
+        execute() retains the same checks as defensive backup.
+        """
+        command = (kwargs.get("command", "") or "").strip()
+        if not command:
+            return {"decision": "deny", "reason": "command is required"}
+
+        try:
+            ensure_shell_tool_enabled()
+        except PermissionError as exc:
+            return {"decision": "deny", "reason": str(exc)}
+
+        lowered = command.lower()
+        for pattern in self._BLOCKED_PATTERNS:
+            if pattern in lowered:
+                return {
+                    "decision": "deny",
+                    "reason": f"Command blocked for safety: contains '{pattern}'",
+                }
+
+        return {"decision": "allow"}
 
     async def execute(self, **kwargs: Any) -> Any:
         command = (kwargs.get("command", "") or "").strip()

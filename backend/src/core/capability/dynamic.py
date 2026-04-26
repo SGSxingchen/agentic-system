@@ -65,6 +65,9 @@ class DynamicToolCapability(CapabilityBase):
             description=self.description,
             parameters=self._input_schema,
             returns="Structured dynamic tool result",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=8000,
         )
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:

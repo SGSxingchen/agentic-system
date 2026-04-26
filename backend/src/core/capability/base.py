@@ -17,11 +17,17 @@ class CapabilitySchema:
         description: 能力描述
         parameters: JSON Schema 格式的参数定义
         returns: 返回值描述
+        is_read_only: 工具是否纯读 / 无副作用（用于审计与并发分组的提示）
+        is_concurrency_safe: 同一轮多次调用是否可以并发执行（False 时必须串行）
+        max_result_size: 单次执行结果的字符上限（0 表示不限），超出时调度器会截断
     """
     name: str
     description: str = ""
     parameters: Dict[str, Any] = field(default_factory=dict)
     returns: str = ""
+    is_read_only: bool = False
+    is_concurrency_safe: bool = False
+    max_result_size: int = 8000
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -29,6 +35,9 @@ class CapabilitySchema:
             "description": self.description,
             "parameters": self.parameters,
             "returns": self.returns,
+            "is_read_only": self.is_read_only,
+            "is_concurrency_safe": self.is_concurrency_safe,
+            "max_result_size": self.max_result_size,
         }
 
 
@@ -85,3 +94,14 @@ class CapabilityBase(ABC):
             if param not in kwargs:
                 return False
         return True
+
+    def check_permissions(self, **kwargs: Any) -> Dict[str, Any]:
+        """运行时权限校验，由 Agent 调度器在 execute 前调用
+
+        默认放行；有副作用或敏感能力（如 bash / write_file）应覆盖此方法，
+        在拒绝时返回 {"decision": "deny", "reason": "..."}。
+
+        Returns:
+            {"decision": "allow"} 或 {"decision": "deny", "reason": str}
+        """
+        return {"decision": "allow"}

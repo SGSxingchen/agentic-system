@@ -92,6 +92,9 @@ class CreateDynamicToolConfigCapability(CapabilityBase):
                 "required": ["name", "description", "mode"],
             },
             returns="Created YAML config entry and reload instructions.",
+            is_read_only=False,
+            is_concurrency_safe=False,
+            max_result_size=4000,
         )
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:
@@ -257,6 +260,9 @@ class CreateAgentConfigCapability(CapabilityBase):
                 "required": ["name", "description", "system_prompt"],
             },
             returns="Created Agent config and reload instructions.",
+            is_read_only=False,
+            is_concurrency_safe=False,
+            max_result_size=4000,
         )
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:

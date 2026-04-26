@@ -71,6 +71,9 @@ class CalculatorCapability(CapabilityBase):
                 "required": ["expression"],
             },
             returns="计算结果",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=500,
         )
 
     async def execute(self, **kwargs: Any) -> dict[str, Any]:

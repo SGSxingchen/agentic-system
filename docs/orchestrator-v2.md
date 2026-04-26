@@ -456,18 +456,30 @@ LLM 输出 N 个 tool_use 块
 
 分四阶段，每阶段独立可验收。
 
-### Phase A：Agent 工具循环底盘（最关键）
+### Phase A：Agent 工具循环底盘（最关键） ✅ 已落地（2026-04-26）
 
-支柱 1 + 支柱 3 的最小集。目标：让 Assistant 能跑工具循环并调用现有的 `bash` / `read_file` / `web_fetch` 等工具。
+支柱 1 + 支柱 3 的最小集。**已实施改动**（探查后确认 LLM 流式接口与 generic `Agent.run/run_stream` 早已就位，因此 Phase A 主要补的是元数据驱动调度、Result Budget、Token 闸门、WebSocket 流式接入和过期代码清理）：
 
-- LLM Provider 加流式接口
-- BaseAgent.run() async generator
-- 资源闸门（max_turns / token_budget）
-- Tool 元数据字段（is_read_only / is_concurrency_safe / check_permissions）
-- Tool 调度器（并发/串行分组）
-- Tool Result Budget（输出落盘）
+- ✅ `CapabilitySchema` 增 `is_read_only / is_concurrency_safe / max_result_size` 字段
+- ✅ `CapabilityBase.check_permissions(**kwargs)` 默认实现（运行时函数，可返回 allow/deny + reason）
+- ✅ 12 个内置 tool 完成元数据标注；`bash.check_permissions` 走 `_safety` 校验
+- ✅ `Agent._dispatch_tool_calls` 按 `is_concurrency_safe` 切两组：可并发组 `asyncio.gather`，不可并发组串行
+- ✅ `Agent._execute_with_permission` 在执行前调 `check_permissions`，deny 时不调 `execute`，错误回写 LLM
+- ✅ `Agent._apply_result_budget` 单工具结果超 `max_result_size` 时截断 + 标记 `truncated: true`
+- ✅ `Agent` 增 `token_budget` / `token_budget_nudge_threshold` 参数：超 85% 阈值插 system 提醒，超 100% 强制终止
+- ✅ `_create_agents_from_config` 透传 `token_budget`；`config/agents.yaml` 给 assistant=120k、coder=200k
+- ✅ WebSocket `_handle_user_message` 接 `AgentCapability.execute_stream`，下发 `agent_thinking / agent_tool_call / agent_tool_result / agent_done`，保留 `assistant_response` 兼容旧前端
+- ✅ 删除 `BaseAgent` ABC、4 个死 Agent 子类（`agents/{assistant,planner,coder,reviewer}.py`）、`backend/config/agents.yaml`、`example_simple.py`、`core/agent/__init__.py` 的 `BaseAgent = Agent` 别名、`core/event/engine.py` 对 `BaseAgent` 的硬依赖
+- ✅ 新增 6 个单测覆盖并发分组 / 串行 / 截断 / 权限 deny / 预算硬终止 / 预算 nudge（`backend/tests/unit/test_agent_loop_phase_a.py`）
 
-**验收**：Assistant 能完成 "在 backend/src 下找到所有调用 LLM 的地方并总结" 这种需要 grep + read 反复迭代的任务。
+**验收**：573 个测试全绿；前端 WebSocket 现在收到流式工具调用事件；assistant 触达 120k token 自动收尾。
+
+**仍未做的（明确留给后续 Phase）**：
+- USD 上限、边际收益启发式（diminishing returns）→ Phase D
+- Tool result 落盘 + 可读引用 → Phase B（Task 抽象有 output_file）
+- Permission `modified(input)` 决策 + 前端弹窗 → Phase D
+- EventEngine / TriggerRegistry / `core/event/*` 整体清理 → Phase B（与 workflow 一起删）
+- `backend/config/{capabilities,system,triggers,workflows}.yaml` 过期副本清理 → Phase B
 
 ### Phase B：Task 抽象 + 进度
 

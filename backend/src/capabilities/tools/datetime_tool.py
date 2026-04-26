@@ -40,6 +40,9 @@ class DateTimeCapability(CapabilityBase):
                 },
             },
             returns="当前时间信息",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=1000,
         )
 
     async def execute(self, **kwargs: Any) -> dict[str, Any]:

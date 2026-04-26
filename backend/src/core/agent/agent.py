@@ -6,11 +6,13 @@
 - 支持流式传输：run_stream() 逐步 yield 中间事件
 - 新增 Agent 只需在 agents.yaml 加一条记录，零代码
 """
+import asyncio
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from ..llm.base import BaseLLMClient, LLMResponse, LLMStreamEvent, ToolCall
 from ..capability.base import CapabilityBase
@@ -61,6 +63,8 @@ class Agent:
         output_format: str = "text",
         max_iterations: int = 10,
         description: str = "",
+        token_budget: Optional[int] = None,
+        token_budget_nudge_threshold: float = 0.85,
     ):
         self.name = name
         self.llm = llm_client
@@ -69,6 +73,8 @@ class Agent:
         self._output_format = output_format
         self._max_iterations = max_iterations
         self._description = description
+        self._token_budget = token_budget if (token_budget and token_budget > 0) else None
+        self._token_budget_nudge_threshold = max(0.0, min(1.0, token_budget_nudge_threshold))
         self._status = AgentStatus.IDLE
 
     # ─── 主循环 ─────────────────────────────────────────────
@@ -88,6 +94,7 @@ class Agent:
             tool_schemas = [t.get_schema() for t in self._tools]
             total_usage: Dict[str, int] = {}
             total_elapsed_ms = 0.0
+            nudged = False
 
             for iteration in range(self._max_iterations):
                 response = await self.llm.chat(
@@ -104,15 +111,15 @@ class Agent:
                     result = self._parse_output(response.content or "")
                     return self._attach_metrics(result, total_usage, total_elapsed_ms)
 
-                # LLM 请求工具调用 → 执行工具 → 继续循环
+                # LLM 请求工具调用 → 按元数据分组并发/串行执行 → 继续循环
                 # 先添加 assistant 消息（含 tool_calls）
                 assistant_msg: Dict[str, Any] = {"role": "assistant", "tool_calls": response.tool_calls}
                 if response.content:
                     assistant_msg["content"] = response.content
                 messages.append(assistant_msg)
 
-                for tc in response.tool_calls:
-                    result = await self._execute_tool(tc)
+                dispatched = await self._dispatch_tool_calls(response.tool_calls)
+                for tc, result in dispatched:
                     messages.append(
                         {
                             "role": "tool",
@@ -127,6 +134,21 @@ class Agent:
                     iteration + 1,
                     len(response.tool_calls),
                 )
+
+                action, nudge_msg, nudged = self._token_budget_check(total_usage, nudged)
+                if action == "stop":
+                    self._status = AgentStatus.ERROR
+                    return self._attach_metrics(
+                        {
+                            "error": "token_budget_exceeded",
+                            "used": self._used_tokens(total_usage),
+                            "budget": self._token_budget,
+                        },
+                        total_usage,
+                        total_elapsed_ms,
+                    )
+                if nudge_msg:
+                    messages.append({"role": "system", "content": nudge_msg})
 
             # 达到最大迭代次数
             self._status = AgentStatus.ERROR
@@ -160,6 +182,7 @@ class Agent:
             tool_schemas = [t.get_schema() for t in self._tools]
             total_usage: Dict[str, int] = {}
             total_elapsed_ms = 0.0
+            nudged = False
 
             for iteration in range(self._max_iterations):
                 # 收集本轮流式输出
@@ -194,21 +217,50 @@ class Agent:
                     }
                     return
 
-                # 工具调用
+                # 工具调用：先按 LLM 原顺序逐个 yield tool_call，再并发/串行分组执行
                 assistant_msg: Dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
                 if full_text:
                     assistant_msg["content"] = full_text
                 messages.append(assistant_msg)
 
                 for tc in tool_calls:
-                    yield {"type": "tool_call", "tool": tc.name, "args": tc.arguments}
-                    result = await self._execute_tool(tc)
-                    yield {"type": "tool_result", "tool": tc.name, "result": result}
+                    yield {
+                        "type": "tool_call",
+                        "tool": tc.name,
+                        "args": tc.arguments,
+                        "concurrent": self._is_concurrent_safe(tc),
+                    }
+
+                dispatched = await self._dispatch_tool_calls(tool_calls)
+                for tc, result in dispatched:
+                    yield {
+                        "type": "tool_result",
+                        "tool": tc.name,
+                        "result": result,
+                        "truncated": isinstance(result, dict) and bool(result.get("truncated")),
+                    }
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": self._serialize_tool_result(result),
                     })
+
+                action, nudge_msg, nudged = self._token_budget_check(total_usage, nudged)
+                if action == "stop":
+                    self._status = AgentStatus.ERROR
+                    yield {
+                        "type": "done",
+                        "content": {
+                            "error": "token_budget_exceeded",
+                            "used": self._used_tokens(total_usage),
+                            "budget": self._token_budget,
+                        },
+                        "usage": total_usage,
+                        "elapsed_ms": round(total_elapsed_ms, 2) if total_elapsed_ms else None,
+                    }
+                    return
+                if nudge_msg:
+                    messages.append({"role": "system", "content": nudge_msg})
 
             # 达到最大迭代
             self._status = AgentStatus.ERROR
@@ -332,10 +384,171 @@ class Agent:
         except json.JSONDecodeError:
             return {"raw_response": content, "parse_error": True}
 
-    # ─── 工具执行 ───────────────────────────────────────────
+    # ─── Token 预算闸门 ────────────────────────────────────
+
+    def _token_budget_check(
+        self,
+        total_usage: Dict[str, int],
+        nudged: bool,
+    ) -> Tuple[str, Optional[str], bool]:
+        """检查是否触达 token 预算上限或 nudge 阈值。
+
+        Returns:
+            (action, nudge_message, new_nudged)
+            - action: "continue" 或 "stop"
+            - nudge_message: 非 None 时表示要在下一轮采样前 append 一条 system 消息
+            - new_nudged: 更新后的 nudged 状态（避免重复插入）
+        """
+        if not self._token_budget:
+            return "continue", None, nudged
+
+        used = (total_usage.get("input_tokens", 0) or 0) + (total_usage.get("output_tokens", 0) or 0)
+        if used >= self._token_budget:
+            return "stop", None, nudged
+
+        threshold = self._token_budget * self._token_budget_nudge_threshold
+        if not nudged and used >= threshold:
+            msg = (
+                f"⚠️ 已用 {used} tokens / 预算 {self._token_budget}。"
+                "请尽快总结并结束本次任务，避免被强制终止。"
+            )
+            return "continue", msg, True
+
+        return "continue", None, nudged
+
+    @staticmethod
+    def _used_tokens(total_usage: Dict[str, int]) -> int:
+        return (total_usage.get("input_tokens", 0) or 0) + (total_usage.get("output_tokens", 0) or 0)
+
+    # ─── 工具调度（并发分组 + 权限校验 + Result Budget）──────
+
+    async def _dispatch_tool_calls(
+        self,
+        tool_calls: List[ToolCall],
+    ) -> List[Tuple[ToolCall, Any]]:
+        """按 schema.is_concurrency_safe 分组执行 LLM 一轮请求的所有 tool_calls。
+
+        - 可并发组用 ``asyncio.gather`` 并发执行
+        - 串行组顺序执行（含找不到 tool 的项）
+        - 返回值按 LLM 原始 ``tool_calls`` 顺序排列，方便消息历史保持稳定
+        """
+        if not tool_calls:
+            return []
+
+        tool_by_name: Dict[str, CapabilityBase] = {t.name: t for t in self._tools}
+
+        concurrent: List[Tuple[int, ToolCall]] = []
+        serial: List[Tuple[int, ToolCall]] = []
+        for idx, tc in enumerate(tool_calls):
+            tool = tool_by_name.get(tc.name)
+            if tool is not None and self._safe_is_concurrent(tool):
+                concurrent.append((idx, tc))
+            else:
+                serial.append((idx, tc))
+
+        results: Dict[int, Any] = {}
+
+        if concurrent:
+            gathered = await asyncio.gather(
+                *[self._execute_with_permission(tc, tool_by_name) for _, tc in concurrent]
+            )
+            for (idx, _), res in zip(concurrent, gathered):
+                results[idx] = res
+
+        for idx, tc in serial:
+            results[idx] = await self._execute_with_permission(tc, tool_by_name)
+
+        return [(tc, results[idx]) for idx, tc in enumerate(tool_calls)]
+
+    async def _execute_with_permission(
+        self,
+        tool_call: ToolCall,
+        tool_by_name: Dict[str, CapabilityBase],
+    ) -> Any:
+        """权限闸门 + 执行 + Result Budget 截断"""
+        tool = tool_by_name.get(tool_call.name)
+        if tool is None:
+            return {"error": f"Tool '{tool_call.name}' not found"}
+
+        try:
+            schema = tool.get_schema()
+        except Exception as exc:  # pragma: no cover — schema 异常视为不可执行
+            return {"error": f"Tool '{tool_call.name}' schema unavailable: {exc}"}
+
+        permit = await self._call_check_permissions(tool, tool_call.arguments)
+        if permit.get("decision") != "allow":
+            return {
+                "error": f"Permission denied: {permit.get('reason') or 'denied by tool policy'}",
+                "permission_denied": True,
+            }
+
+        try:
+            raw = await tool.execute(**tool_call.arguments)
+        except Exception as exc:
+            logger.error(
+                "Agent '%s' tool '%s' failed: %s",
+                self.name,
+                tool_call.name,
+                exc,
+            )
+            return {"error": f"Tool '{tool_call.name}' execution failed: {exc}"}
+
+        return self._apply_result_budget(raw, schema.max_result_size)
+
+    @staticmethod
+    async def _call_check_permissions(
+        tool: CapabilityBase,
+        arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """调用 ``tool.check_permissions``，兼容同步与异步实现。"""
+        fn = getattr(tool, "check_permissions", None)
+        if fn is None:
+            return {"decision": "allow"}
+        try:
+            outcome = fn(**arguments)
+            if inspect.isawaitable(outcome):
+                outcome = await outcome
+        except Exception as exc:
+            return {"decision": "deny", "reason": f"check_permissions raised: {exc}"}
+
+        if not isinstance(outcome, dict):
+            return {"decision": "allow"}
+        return outcome
+
+    @staticmethod
+    def _apply_result_budget(result: Any, max_chars: int) -> Any:
+        """单次工具结果超过预算时截断 + 标记 truncated。"""
+        if not max_chars or max_chars <= 0:
+            return result
+        serialized = Agent._serialize_tool_result(result)
+        if len(serialized) <= max_chars:
+            return result
+        return {
+            "truncated": True,
+            "original_size": len(serialized),
+            "max_size": max_chars,
+            "content": serialized[:max_chars]
+            + f"\n... [truncated, original size {len(serialized)} chars]",
+        }
+
+    def _is_concurrent_safe(self, tool_call: ToolCall) -> bool:
+        """供事件流标记 tool_call 是否在并发组里。"""
+        for tool in self._tools:
+            if tool.name == tool_call.name:
+                return self._safe_is_concurrent(tool)
+        return False
+
+    @staticmethod
+    def _safe_is_concurrent(tool: CapabilityBase) -> bool:
+        try:
+            return bool(tool.get_schema().is_concurrency_safe)
+        except Exception:
+            return False
+
+    # ─── 单次工具执行（向后兼容旧 API；run/run_stream 已改用 _dispatch_tool_calls）──────
 
     async def _execute_tool(self, tool_call: ToolCall) -> Any:
-        """查找并执行工具"""
+        """单次执行某个工具（无权限闸门、无 Result Budget；保留供测试或外部调用）。"""
         for tool in self._tools:
             if tool.name == tool_call.name:
                 try:

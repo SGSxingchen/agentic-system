@@ -48,6 +48,9 @@ class WebFetchCapability(CapabilityBase):
                 "required": ["url"],
             },
             returns="网页标题、正文预览、状态码和内容类型",
+            is_read_only=True,
+            is_concurrency_safe=True,
+            max_result_size=16000,
         )
 
     async def execute(self, **kwargs: Any) -> dict[str, Any]:

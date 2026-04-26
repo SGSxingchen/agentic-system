@@ -177,6 +177,10 @@ def _create_agents_from_config(
             output_format=agent_def.get("output_format", "text"),
             max_iterations=agent_def.get("max_iterations", 10),
             description=agent_def.get("description", ""),
+            token_budget=agent_def.get("token_budget"),
+            token_budget_nudge_threshold=agent_def.get(
+                "token_budget_nudge_threshold", 0.85
+            ),
         )
         agents.append(agent)
 
