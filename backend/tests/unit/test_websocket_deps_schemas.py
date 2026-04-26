@@ -57,7 +57,22 @@ from api.schemas import (
     WorkflowStepSchema,
     WorkflowTemplate,
 )
+from api.websocket import handlers as ws_handlers
 from api.websocket.handlers import ConnectionManager
+
+
+def test_stream_done_event_copies_memory_usage_into_content():
+    """SSE done 事件要兼容前端从 content 读取 memories_used 的路径。"""
+
+    from api.main import _attach_stream_memory_usage
+
+    event = {"type": "done", "content": {"response": "ok"}}
+
+    enriched = _attach_stream_memory_usage(event, memories_used=2)
+
+    assert enriched["memories_used"] == 2
+    assert enriched["content"]["memories_used"] == 2
+    assert event["content"] == {"response": "ok"}
 
 
 # ============================================================
@@ -607,3 +622,37 @@ class TestConnectionManager:
         manager.disconnect(ws)
         manager.disconnect(ws)
         assert manager.active_count == 0
+
+    @pytest.mark.asyncio
+    async def test_user_message_forwards_session_id_to_reflection(self, monkeypatch):
+        """WebSocket 聊天反思应使用前端传入的 session_id。"""
+
+        class FakeCapabilityRegistry:
+            def __contains__(self, name):
+                return name == "assistant"
+
+            async def execute(self, name, **kwargs):
+                return {"response": "ok"}
+
+        ws = _mock_ws()
+        reflect = AsyncMock()
+        monkeypatch.setattr(ws_handlers, "manager", ConnectionManager())
+        monkeypatch.setattr(
+            ws_handlers,
+            "get_capability_registry",
+            lambda: FakeCapabilityRegistry(),
+        )
+        monkeypatch.setattr(
+            ws_handlers,
+            "build_memory_context",
+            AsyncMock(return_value=("", 0)),
+        )
+        monkeypatch.setattr(ws_handlers, "reflect_chat_exchange", reflect)
+
+        await ws_handlers._handle_user_message(
+            ws,
+            {"message": "hello", "session_id": "chat-1"},
+        )
+
+        reflect.assert_awaited_once()
+        assert reflect.await_args.kwargs["session_id"] == "chat-1"

@@ -17,9 +17,7 @@ class ConversationMemoryBuffer:
     ) -> None:
         self.min_turns = max(1, min_turns)
         self.max_window_messages = max(2, max_window_messages)
-        self._messages: list[dict[str, Any]] = []
-        self._last_summarized_index = 0
-        self._next_index = 0
+        self._scopes: dict[str, dict[str, Any]] = {}
 
     def append_exchange(
         self,
@@ -31,16 +29,32 @@ class ConversationMemoryBuffer:
     ) -> Optional[dict[str, Any]]:
         """Append one user/assistant exchange and maybe return a reflection window."""
 
-        user_message = self._make_message("user", user_text, source, session_id)
-        assistant_message = self._make_message("assistant", assistant_text, source, session_id)
-        self._messages.extend([user_message, assistant_message])
+        state = self._scope_state(source=source, session_id=session_id)
+        messages = state["messages"]
+        user_message = self._make_message(
+            "user",
+            user_text,
+            source,
+            session_id,
+            index=state["next_index"],
+        )
+        state["next_index"] += 1
+        assistant_message = self._make_message(
+            "assistant",
+            assistant_text,
+            source,
+            session_id,
+            index=state["next_index"],
+        )
+        state["next_index"] += 1
+        messages.extend([user_message, assistant_message])
 
-        pending = self._messages[self._last_summarized_index :]
+        pending = messages[state["last_summarized_index"] :]
         if len(pending) < self.min_turns * 2:
             return None
 
         window = pending[-self.max_window_messages :]
-        self._last_summarized_index = len(self._messages)
+        state["last_summarized_index"] = len(messages)
         return {
             "turns": [
                 {
@@ -67,9 +81,11 @@ class ConversationMemoryBuffer:
         content: str,
         source: str,
         session_id: Optional[str],
+        *,
+        index: int,
     ) -> dict[str, Any]:
         message = {
-            "index": self._next_index,
+            "index": index,
             "role": role,
             "content": str(content),
             "timestamp": datetime.utcnow().isoformat(),
@@ -77,5 +93,14 @@ class ConversationMemoryBuffer:
         }
         if session_id:
             message["session_id"] = session_id
-        self._next_index += 1
         return message
+
+    def _scope_state(self, *, source: str, session_id: Optional[str]) -> dict[str, Any]:
+        key = f"session:{session_id}" if session_id else f"source:{source}"
+        if key not in self._scopes:
+            self._scopes[key] = {
+                "messages": [],
+                "last_summarized_index": 0,
+                "next_index": 0,
+            }
+        return self._scopes[key]

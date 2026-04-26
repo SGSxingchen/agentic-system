@@ -89,6 +89,22 @@ def clear_yaml_cache() -> None:
     _yaml_configs = {}
 
 
+def _attach_stream_memory_usage(
+    event: dict[str, Any],
+    *,
+    memories_used: int,
+) -> dict[str, Any]:
+    """Attach memory usage to stream events without mutating the original."""
+
+    enriched = dict(event)
+    enriched["memories_used"] = memories_used
+    if enriched.get("type") == "done" and isinstance(enriched.get("content"), dict):
+        content = dict(enriched["content"])
+        content.setdefault("memories_used", memories_used)
+        enriched["content"] = content
+    return enriched
+
+
 async def init_memory_system(config: Dict[str, Any]):
     """Initialize the configured memory backend."""
 
@@ -435,7 +451,10 @@ async def chat_stream_endpoint(req: dict):
                     if isinstance(event, dict) and event.get("type") == "done":
                         event = dict(event)
                         event["elapsed_ms"] = round((time.perf_counter() - request_started_at) * 1000, 2)
-                        event["memories_used"] = memories_used
+                        event = _attach_stream_memory_usage(
+                            event,
+                            memories_used=memories_used,
+                        )
                         content = event.get("content")
                         if isinstance(content, dict):
                             final_response = str(content.get("response") or content)

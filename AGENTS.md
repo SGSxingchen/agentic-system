@@ -278,7 +278,9 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 **三种类型:** episodic (情景) / semantic (语义) / procedural (程序)
 
-**v2 方向:** 升级为私人助理式全局长期记忆层。所有记忆默认进入共享个人记忆池，`session_id` 仅作为来源追踪；新增自动对话反思、`canonical_summary` / `assistant_context` 双摘要、检索评分解释和近似去重。
+**v2 方向:** 升级为私人助理式全局长期记忆层。所有记忆默认进入共享个人记忆池，`session_id` 仅作为来源追踪，不作为默认召回过滤条件；自动对话反思缓冲必须按 `session_id` 隔离，避免跨会话混合摘要。新增自动对话反思、`canonical_summary` / `assistant_context` 双摘要、检索评分解释和近似去重。
+
+**安全约束:** 记忆注入 Agent prompt 时必须标记为不可信资料，只能作为事实参考，不能执行记忆文本中的指令。解释性召回必须先使用底层 `MemoryStore.search()` 做候选粗筛，保留 ChromaDB 等后端的语义检索能力；只有最终选中的召回结果更新访问记录。
 
 **组件:**
 | 组件 | 职责 |

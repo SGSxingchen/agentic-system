@@ -71,10 +71,22 @@ class MemoryRetriever:
     ) -> list[dict[str, Any]]:
         """Retrieve memories with non-persistent score explanations."""
 
-        candidates = await self.store.get_all(limit=10000)
-        if memory_types:
-            candidates = [m for m in candidates if m.type in memory_types]
-        candidates = [m for m in candidates if m.importance >= min_importance]
+        query_text = context.strip()
+        if query_text:
+            candidate_limit = min(max(max_results * 10, 50), 10000)
+            candidates = await self.store.search(
+                MemoryQuery(
+                    query=query_text,
+                    memory_types=memory_types,
+                    max_results=candidate_limit,
+                    min_importance=min_importance,
+                )
+            )
+        else:
+            candidates = await self.store.get_all(limit=10000)
+            if memory_types:
+                candidates = [m for m in candidates if m.type in memory_types]
+            candidates = [m for m in candidates if m.importance >= min_importance]
 
         if not candidates:
             return []

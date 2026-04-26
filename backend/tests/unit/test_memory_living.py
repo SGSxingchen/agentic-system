@@ -12,6 +12,7 @@ from core.llm.base import BaseLLMClient, LLMResponse
 from core.memory import InMemoryStore, Memory, MemoryFormation, MemoryRetriever, MemoryType
 from core.memory.buffer import ConversationMemoryBuffer
 from core.memory.processor import MemoryProcessor
+from core.memory.types import MemoryQuery
 
 
 @pytest.fixture
@@ -33,6 +34,18 @@ class FakeReflectionLLM(BaseLLMClient):
     ) -> LLMResponse:
         self.calls.append(messages)
         return LLMResponse(content=self.content, stop_reason="end_turn")
+
+
+class RecordingSearchStore(InMemoryStore):
+    """In-memory store that records search queries."""
+
+    def __init__(self):
+        super().__init__()
+        self.search_queries: List[MemoryQuery] = []
+
+    async def search(self, query: MemoryQuery) -> list[Memory]:
+        self.search_queries.append(query)
+        return await super().search(query)
 
 
 async def test_processor_parses_markdown_json_candidates():
@@ -234,6 +247,25 @@ async def test_retrieve_with_scores_does_not_filter_by_source_session(store):
     assert results[0]["memory"].metadata["source_window"]["session_id"] == "other-session"
 
 
+async def test_retrieve_with_scores_uses_store_search_for_context_candidates():
+    store = RecordingSearchStore()
+    retriever = MemoryRetriever(store)
+    await store.save(
+        Memory(
+            content="用户正在准备本科毕设",
+            metadata={"assistant_context": "本科毕设项目上下文"},
+            importance=0.8,
+        )
+    )
+
+    results = await retriever.retrieve_with_scores("毕设", max_results=3)
+
+    assert results
+    assert len(store.search_queries) == 1
+    assert store.search_queries[0].query == "毕设"
+    assert store.search_queries[0].max_results >= 3
+
+
 async def test_conversation_buffer_returns_reflection_window():
     buffer = ConversationMemoryBuffer(min_turns=1)
 
@@ -260,3 +292,22 @@ async def test_conversation_buffer_waits_until_threshold():
     assert first is None
     assert second is not None
     assert second["source_window"]["message_count"] == 4
+
+
+async def test_conversation_buffer_isolates_reflection_windows_by_session():
+    buffer = ConversationMemoryBuffer(min_turns=2)
+
+    first_a = buffer.append_exchange("A 第一轮", "A 回复一", source="rest_chat", session_id="a")
+    first_b = buffer.append_exchange("B 第一轮", "B 回复一", source="rest_chat", session_id="b")
+    second_a = buffer.append_exchange("A 第二轮", "A 回复二", source="rest_chat", session_id="a")
+
+    assert first_a is None
+    assert first_b is None
+    assert second_a is not None
+    assert second_a["source_window"]["session_id"] == "a"
+    assert [turn["content"] for turn in second_a["turns"]] == [
+        "A 第一轮",
+        "A 回复一",
+        "A 第二轮",
+        "A 回复二",
+    ]

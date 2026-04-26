@@ -150,11 +150,12 @@ async def _handle_user_message(
 
     try:
         memory_context, memories_used = await build_memory_context(user_message)
-        payload = {"message": user_message}
+        session_id = payload.get("session_id") or payload.get("chat_session_id")
+        assistant_payload = {"message": user_message}
         if memory_context:
-            payload["memory_context"] = memory_context
+            assistant_payload["memory_context"] = memory_context
 
-        result = await cap_registry.execute("assistant", **payload)
+        result = await cap_registry.execute("assistant", **assistant_payload)
         response_text = result.get("response", str(result))
 
         await manager.send_to(
@@ -173,7 +174,7 @@ async def _handle_user_message(
             user_message=user_message,
             assistant_text=response_text,
             source="websocket_chat",
-            session_id=payload.get("session_id"),
+            session_id=str(session_id) if session_id else None,
         )
     except Exception as exc:
         await manager.send_to(
