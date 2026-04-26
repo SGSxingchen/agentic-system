@@ -430,6 +430,23 @@ class TestAgentStatusAndLifecycle:
             {"role": "user", "content": "继续"},
         ]
 
+    async def test_run_injects_memory_context_into_system_prompt(self):
+        """memory_context 只注入 system prompt，不作为用户字段展开。"""
+        llm = RecordingLLMClient(LLMResponse(content="ok", stop_reason="end_turn"))
+        agent = Agent(name="assistant", llm_client=llm, system_prompt="base")
+
+        await agent.run(
+            {
+                "message": "hello",
+                "memory_context": "- 用户喜欢简洁回答。",
+            }
+        )
+
+        assert llm.calls[0] == [
+            {"role": "system", "content": "base\n\n[长期记忆]\n- 用户喜欢简洁回答。"},
+            {"role": "user", "content": "hello"},
+        ]
+
     async def test_run_json_output(self):
         """json 模式 run() 解析 JSON 输出"""
         llm = MockLLMClient(

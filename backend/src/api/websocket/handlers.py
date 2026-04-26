@@ -14,6 +14,7 @@ from ..dependencies import (
     get_llm_client,
     get_memory_buffer,
     get_memory_formation,
+    get_memory_retriever,
 )
 
 _BRIDGED_EVENT_TYPES = ("step_started", "step_completed")
@@ -148,7 +149,12 @@ async def _handle_user_message(
         return
 
     try:
-        result = await cap_registry.execute("assistant", message=user_message)
+        memory_context, memories_used = await build_memory_context(user_message)
+        payload = {"message": user_message}
+        if memory_context:
+            payload["memory_context"] = memory_context
+
+        result = await cap_registry.execute("assistant", **payload)
         response_text = result.get("response", str(result))
 
         await manager.send_to(
@@ -158,6 +164,7 @@ async def _handle_user_message(
                 {
                     "response": response_text,
                     "original_message": user_message,
+                    "memories_used": memories_used,
                 },
             ),
         )
@@ -179,6 +186,48 @@ async def _handle_user_message(
                 },
             ),
         )
+
+
+async def build_memory_context(
+    query: str,
+    *,
+    max_results: int = 3,
+    max_chars: int = 1200,
+) -> tuple[str, int]:
+    """Build a compact memory block for Assistant system prompt injection."""
+
+    retriever = get_memory_retriever()
+    if not retriever or not query.strip():
+        return "", 0
+
+    try:
+        if hasattr(retriever, "retrieve_with_scores"):
+            scored = await retriever.retrieve_with_scores(query, max_results=max_results)
+            memories = [item["memory"] for item in scored]
+        else:
+            memories = await retriever.retrieve(query, max_results=max_results)
+    except Exception as exc:
+        print(f"[WARN] memory recall failed: {exc}")
+        return "", 0
+
+    lines: list[str] = []
+    remaining = max_chars
+    for memory in memories:
+        metadata = memory.metadata or {}
+        text = str(
+            metadata.get("assistant_context")
+            or metadata.get("canonical_summary")
+            or memory.content
+        ).strip()
+        if not text:
+            continue
+        line = f"- {text}"
+        if len(line) > remaining:
+            break
+        lines.append(line)
+        remaining -= len(line)
+
+    return "\n".join(lines), len(lines)
 
 
 async def reflect_chat_exchange(

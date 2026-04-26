@@ -228,8 +228,13 @@ class Agent:
     def _build_messages(self, input_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Build LLM messages, preserving chat history when provided."""
 
+        system_prompt = self.system_prompt
+        memory_context = str(input_data.get("memory_context") or "").strip()
+        if memory_context:
+            system_prompt = f"{system_prompt}\n\n[长期记忆]\n{memory_context}"
+
         messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": system_prompt},
         ]
 
         conversation = self._coerce_conversation_messages(input_data)
@@ -282,7 +287,7 @@ class Agent:
         input_data = {
             key: value
             for key, value in input_data.items()
-            if key not in {"messages", "history"}
+            if key not in {"messages", "history", "memory_context"}
         }
         if not input_data:
             return ""

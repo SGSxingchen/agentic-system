@@ -57,6 +57,7 @@ from .routes import (
     workflows_router,
 )
 from .websocket.handlers import (
+    build_memory_context,
     reflect_chat_exchange,
     register_bus_event_bridge,
     websocket_endpoint as ws_handler,
@@ -375,6 +376,10 @@ async def chat_endpoint(req: dict):
         elif isinstance(req.get("history"), list):
             payload["history"] = req["history"]
 
+        memory_context, memories_used = await build_memory_context(message)
+        if memory_context:
+            payload["memory_context"] = memory_context
+
         start = time.perf_counter()
         result = await cap_registry.execute("assistant", **payload)
         response_text = result.get("response", str(result))
@@ -387,6 +392,7 @@ async def chat_endpoint(req: dict):
         return {
             "status": "ok",
             "response": response_text,
+            "memories_used": memories_used,
             "elapsed_ms": round((time.perf_counter() - start) * 1000, 2),
             "usage": result.get("usage", {}),
         }
@@ -419,12 +425,30 @@ async def chat_stream_endpoint(req: dict):
             elif isinstance(req.get("history"), list):
                 payload["history"] = req["history"]
 
+            memory_context, memories_used = await build_memory_context(message)
+            if memory_context:
+                payload["memory_context"] = memory_context
+
             if hasattr(capability, "execute_stream"):
+                final_response = ""
                 async for event in capability.execute_stream(**payload):
                     if isinstance(event, dict) and event.get("type") == "done":
                         event = dict(event)
                         event["elapsed_ms"] = round((time.perf_counter() - request_started_at) * 1000, 2)
+                        event["memories_used"] = memories_used
+                        content = event.get("content")
+                        if isinstance(content, dict):
+                            final_response = str(content.get("response") or content)
+                        else:
+                            final_response = str(content or "")
                     yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+                if final_response:
+                    await reflect_chat_exchange(
+                        user_message=message,
+                        assistant_text=final_response,
+                        source="rest_chat_stream",
+                        session_id=req.get("session_id"),
+                    )
             else:
                 result = await cap_registry.execute("assistant", **payload)
                 response_text = result.get("response", str(result))
