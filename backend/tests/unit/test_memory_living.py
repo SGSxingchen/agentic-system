@@ -5,8 +5,16 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+import pytest
+
 from core.llm.base import BaseLLMClient, LLMResponse
+from core.memory import InMemoryStore, MemoryFormation, MemoryType
 from core.memory.processor import MemoryProcessor
+
+
+@pytest.fixture
+def store():
+    return InMemoryStore()
 
 
 class FakeReflectionLLM(BaseLLMClient):
@@ -93,3 +101,68 @@ async def test_processor_rejects_low_quality_candidates():
     )
 
     assert result == []
+
+
+async def test_formation_creates_structured_private_memory(store):
+    formation = MemoryFormation(store)
+
+    memory = await formation.create_structured_memory(
+        {
+            "content": "用户偏好简洁回答。",
+            "memory_type": "semantic",
+            "importance": 0.8,
+            "metadata": {
+                "memory_kind": "preference",
+                "canonical_summary": "用户偏好简洁回答。",
+                "assistant_context": "回答要简洁。",
+                "summary_quality": 0.9,
+                "confidence": 0.9,
+            },
+        }
+    )
+
+    assert memory.type == MemoryType.SEMANTIC
+    assert memory.content == "用户偏好简洁回答。"
+    assert memory.importance == 0.8
+    assert memory.metadata["schema_version"] == "private_memory_v1"
+    assert memory.metadata["source"] == "chat_reflection"
+    assert memory.metadata["assistant_context"] == "回答要简洁。"
+
+
+async def test_formation_deduplicates_similar_private_memories(store):
+    formation = MemoryFormation(store)
+    candidate = {
+        "content": "用户偏好简洁回答。",
+        "memory_type": "semantic",
+        "importance": 0.6,
+        "metadata": {
+            "memory_kind": "preference",
+            "canonical_summary": "用户偏好简洁回答。",
+            "assistant_context": "回答要简洁。",
+            "topics": ["沟通"],
+            "key_facts": ["偏好简洁"],
+            "summary_quality": 0.9,
+            "confidence": 0.9,
+        },
+    }
+
+    first = await formation.create_structured_memory(candidate)
+    second = await formation.create_structured_memory(
+        {
+            **candidate,
+            "importance": 0.7,
+            "metadata": {
+                **candidate["metadata"],
+                "topics": ["沟通", "回答风格"],
+                "key_facts": ["偏好简洁", "不喜欢冗长"],
+            },
+        }
+    )
+
+    assert first.id == second.id
+    assert await store.count() == 1
+    merged = await store.get(first.id)
+    assert merged is not None
+    assert merged.importance > 0.6
+    assert merged.metadata["topics"] == ["沟通", "回答风格"]
+    assert merged.metadata["key_facts"] == ["偏好简洁", "不喜欢冗长"]
