@@ -74,22 +74,46 @@ export interface MemoryStats {
   newest_memory?: string
 }
 
-// ===== 任务和工作流 =====
+// ===== 任务和管线 =====
 
-export type TaskStatus = 'pending' | 'planning' | 'coding' | 'reviewing' | 'running' | 'completed' | 'failed'
+// v2 Phase B 起规范状态：pending | running | completed | failed | killed
+// planning/coding/reviewing 是旧 routes/tasks.py 残留，保留为 union 项以容忍升级前的旧后端响应。
+export type TaskStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'killed'
+  | 'planning'
+  | 'coding'
+  | 'reviewing'
+
+export interface TaskProgress {
+  tool_count: number
+  total_tokens: number
+  activity?: string
+  last_tool?: string | null
+  current_step?: string | null
+}
 
 export interface Task {
   id: string
   task_id?: string
-  name: string
+  name?: string
   status: TaskStatus
   requirement?: string
   agent?: string
+  pipeline?: string
   input?: any
   output?: any
   plan?: any
   code?: any
   review?: any
+  error?: string | null
+  progress?: TaskProgress
+  output_file?: string | null
+  parent_id?: string | null
+  ended_at?: string | null
   created_at: string
   updated_at?: string
 }
@@ -224,7 +248,7 @@ export interface ToolPromptInfo {
 
 // ===== 视图类型 =====
 
-export type PanelType = 'chat' | 'tasks' | 'agents' | 'memory' | 'monitor' | 'workflow' | 'evolution'
+export type PanelType = 'chat' | 'tasks' | 'agents' | 'memory' | 'monitor' | 'pipeline' | 'evolution'
 
 // ===== 视图类型（新 Layout 导航） =====
 

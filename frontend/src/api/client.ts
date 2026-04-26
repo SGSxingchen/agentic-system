@@ -312,23 +312,23 @@ export async function invokeAgent(
   return post<any>(`/api/agents/${name}/invoke`, { input })
 }
 
-// ===== 工作流 API =====
+// ===== 管线（Pipeline）API =====
 
-export interface WorkflowTemplate {
+export interface PipelineTemplate {
   id: string
   name: string
   description: string
-  steps: WorkflowStep[]
+  steps: PipelineStep[]
 }
 
-export interface WorkflowStep {
+export interface PipelineStep {
   name: string
   agent?: string
   description?: string
   order: number
 }
 
-export interface WorkflowExecution {
+export interface PipelineExecution {
   id: string
   template_id: string
   status: 'pending' | 'running' | 'completed' | 'failed'
@@ -347,31 +347,31 @@ export interface StepStatus {
   output?: any
 }
 
-export async function getWorkflowTemplates(): Promise<APIResponse<WorkflowTemplate[]>> {
-  return get<WorkflowTemplate[]>('/api/workflows/templates')
+export async function getPipelineTemplates(): Promise<APIResponse<PipelineTemplate[]>> {
+  return get<PipelineTemplate[]>('/api/pipelines/templates')
 }
 
-export async function executeWorkflow(
+export async function executePipeline(
   templateId: string,
   input: Record<string, unknown>
-): Promise<APIResponse<WorkflowExecution>> {
-  return post<WorkflowExecution>('/api/workflows/execute', {
+): Promise<APIResponse<PipelineExecution>> {
+  return post<PipelineExecution>('/api/pipelines/execute', {
     template_name: templateId,
     requirement: input.user_requirement || input.requirement || '',
     options: input,
   })
 }
 
-export async function createWorkflow(data: {
+export async function createPipeline(data: {
   name: string
   description?: string
   mode?: string
   steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number }[]
 }): Promise<APIResponse<unknown>> {
-  return post('/api/workflows', data)
+  return post('/api/pipelines', data)
 }
 
-export async function updateWorkflow(
+export async function updatePipeline(
   name: string,
   data: {
     description?: string
@@ -379,19 +379,19 @@ export async function updateWorkflow(
     steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number }[]
   }
 ): Promise<APIResponse<unknown>> {
-  return put(`/api/workflows/${name}`, data)
+  return put(`/api/pipelines/${name}`, data)
 }
 
-export async function deleteWorkflow(name: string): Promise<APIResponse<void>> {
-  return del<void>(`/api/workflows/${name}`)
+export async function deletePipeline(name: string): Promise<APIResponse<void>> {
+  return del<void>(`/api/pipelines/${name}`)
 }
 
-export async function getWorkflowExecution(
+export async function getPipelineExecution(
   executionId: string
-): Promise<APIResponse<WorkflowExecution>> {
-  return get<WorkflowExecution>(`/api/workflows/executions/${executionId}`)
+): Promise<APIResponse<PipelineExecution>> {
+  return get<PipelineExecution>(`/api/pipelines/executions/${executionId}`)
 }
 
-export async function getWorkflowExecutions(): Promise<APIResponse<WorkflowExecution[]>> {
-  return get<WorkflowExecution[]>('/api/workflows/executions')
+export async function getPipelineExecutions(): Promise<APIResponse<PipelineExecution[]>> {
+  return get<PipelineExecution[]>('/api/pipelines/executions')
 }

@@ -481,18 +481,27 @@ LLM 输出 N 个 tool_use 块
 - EventEngine / TriggerRegistry / `core/event/*` 整体清理 → Phase B（与 workflow 一起删）
 - `backend/config/{capabilities,system,triggers,workflows}.yaml` 过期副本清理 → Phase B
 
-### Phase B：Task 抽象 + 进度
+### Phase B：Task 抽象 + 进度 ✅ 已落地（2026-04-26）
 
-支柱 2 + 支柱 5 + 拆掉旧 workflow。
+支柱 2 + 支柱 5 + 拆掉旧 workflow + Workflow→Pipeline 重命名。**已落地（2026-04-26）**：
 
-- 新建 `core/task/` 模块
-- TaskRegistry + TaskState
-- AgentProgress 事件流
-- 删除 `core/workflow/` 和 `config/workflows.yaml`
-- 重写 `routes/tasks.py`
-- 前端 TaskPanel 改造
+- ✅ 新建 `core/task/` 模块：`TaskState`、`TaskStatus`、`TaskType`、`AgentProgress`、`TaskRegistry`、`TranscriptWriter` / `read_transcript`
+- ✅ `Pipeline.execute()` 增 `on_step_event` 回调，每步骤 started/completed/failed/skipped 时触发；不破坏现有 bus 通知路径
+- ✅ 重写 `routes/tasks.py`：用 TaskRegistry 替代旧 `_tasks` 字典；DELETE 真正 cancel asyncio.Task；新增 `GET /api/tasks/{id}/transcript`
+- ✅ Transcript 落盘：`data/tasks/{task_id}.jsonl`，含 created/started/step_*/done/killed/error 事件
+- ✅ 前端 `TaskPanel` 增强：显示 `progress`（tool_count / total_tokens / current_step / activity）+ 取消按钮；轮询保留 5s
+- ✅ Workflow → Pipeline 重命名（破坏性）：路由 `/api/workflows/*` → `/api/pipelines/*`、配置 `config/workflows.yaml` → `config/pipelines.yaml`（顶层 key `workflows:` → `pipelines:`）、前端 `WorkflowPanel.{tsx,css}` → `PipelinePanel.*`、`Sidebar` "工作流" → "管线"、Schemas `Workflow*` → `Pipeline*`、`SystemConfig.workflow` → `SystemConfig.pipeline`
+- ✅ 死代码清理：删除 `backend/src/core/workflow/`、`backend/src/core/event/`、`backend/config/`（5 个过期 yaml）、`config/triggers.yaml`；解除 `core/event/engine.py` 的所有依赖
+- ✅ 测试：新增 `test_task_registry.py`（7 用例）、`test_transcript_writer.py`（4 用例），改造 `test_pipeline_and_workflow.py` → `test_pipeline.py`（去掉 Workflow 部分）；587 通过零退化
 
-**验收**：前端能实时看到主会话 Agent 跑工具的全过程。
+**仍未做的（明确留给后续 Phase）**：
+- chat 不进 Task（用户决议）；TaskPanel 仅显示 pipeline 任务，不显示 WebSocket 对话
+- WebSocket 推送 progress（仍 5s 轮询）→ Phase C
+- Transcript GC（evict_after）→ Phase D
+- 子 Agent 派生 / `<task-notification>` 回注 → Phase C
+- TaskState `ended_at` 与 `output_file` 已落字段，但 GC / 大文件压缩留 Phase D
+
+**验收**：通过 `POST /api/tasks` 提交任务 → `GET /api/tasks/{id}` 看到 `progress.current_step` 推进 → `GET /api/tasks/{id}/transcript` 拿到 step_* 事件流 → `DELETE /api/tasks/{id}` 取消时状态变 `killed`。
 
 ### Phase C：子 Agent 派生 + Notification 回注
 

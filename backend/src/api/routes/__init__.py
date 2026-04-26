@@ -4,7 +4,7 @@
 """
 from .tasks import router as tasks_router
 from .agents import router as agents_router
-from .workflows import router as workflows_router
+from .pipelines import router as pipelines_router
 from .memory import router as memory_router
 from .config import router as config_router
 from .evolution import router as evolution_router
@@ -13,7 +13,7 @@ from .chat_sessions import router as chat_sessions_router
 __all__ = [
     "tasks_router",
     "agents_router",
-    "workflows_router",
+    "pipelines_router",
     "memory_router",
     "config_router",
     "evolution_router",

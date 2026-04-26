@@ -7,7 +7,7 @@ import { AgentPanel } from './components/AgentPanel'
 import { MemoryPanel } from './components/MemoryPanel'
 import { MonitorPanel } from './components/MonitorPanel'
 import { TaskPanel } from './components/TaskPanel'
-import { WorkflowPanel } from './components/WorkflowPanel'
+import { PipelinePanel } from './components/PipelinePanel'
 import { EvolutionPanel } from './components/EvolutionPanel'
 import { Settings } from './components/Settings'
 import type { WSEvent, Message } from './types'
@@ -80,8 +80,8 @@ function AppContent() {
         return <TaskPanel />
       case 'agents':
         return <AgentPanel />
-      case 'workflow':
-        return <WorkflowPanel />
+      case 'pipeline':
+        return <PipelinePanel />
       case 'evolution':
         return <EvolutionPanel />
       case 'memory':

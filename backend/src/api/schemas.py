@@ -27,21 +27,20 @@ class APIResponse(BaseModel):
 
 
 class TaskStatus(str, Enum):
-    """任务状态枚举"""
+    """任务状态枚举（v2 Phase B：与 core.task.types.TaskStatus 一致）"""
 
     PENDING = "pending"
-    PLANNING = "planning"
-    CODING = "coding"
-    REVIEWING = "reviewing"
+    RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    KILLED = "killed"
 
 
 class TaskSubmitRequest(BaseModel):
     """提交任务请求"""
 
     requirement: str = Field(..., min_length=1, description="用户需求描述")
-    workflow: str = Field(default="auto", description="工作流类型")
+    pipeline: str = Field(default="auto", description="管线模板名称（auto 自动选择默认模板）")
 
 
 class TaskResponse(BaseModel):
@@ -81,22 +80,22 @@ class AgentInvokeRequest(BaseModel):
 
 
 # ========================
-# 工作流相关
+# 管线（Pipeline）相关
 # ========================
 
 
-class WorkflowExecuteRequest(BaseModel):
-    """执行工作流请求"""
+class PipelineExecuteRequest(BaseModel):
+    """执行管线请求"""
 
-    workflow_type: str = Field(default="plan_code_review", description="工作流类型")
-    template_name: Optional[str] = Field(default=None, description="YAML 工作流模板名称（优先级高于 workflow_type）")
+    pipeline_type: str = Field(default="plan_code_review", description="管线类型")
+    template_name: Optional[str] = Field(default=None, description="YAML 管线模板名称（优先级高于 pipeline_type）")
     requirement: str = Field(default="", description="需求描述")
     input: Optional[str] = Field(default=None, description="输入（别名，等价于 requirement）")
     options: dict[str, Any] = Field(default_factory=dict, description="额外选项")
 
 
-class WorkflowTemplate(BaseModel):
-    """工作流模板"""
+class PipelineTemplate(BaseModel):
+    """管线模板"""
 
     name: str
     description: str
@@ -217,12 +216,12 @@ class AgentUpdateRequest(BaseModel):
 
 
 # ========================
-# 工作流 CRUD
+# 管线（Pipeline）CRUD
 # ========================
 
 
-class WorkflowStepSchema(BaseModel):
-    """工作流步骤"""
+class PipelineStepSchema(BaseModel):
+    """管线步骤"""
 
     name: str = Field(..., min_length=1)
     agent: str = Field(..., min_length=1)
@@ -233,21 +232,21 @@ class WorkflowStepSchema(BaseModel):
     timeout: Optional[float] = Field(default=None, gt=0, description="步骤超时秒数")
 
 
-class WorkflowCreateRequest(BaseModel):
-    """创建工作流请求"""
+class PipelineCreateRequest(BaseModel):
+    """创建管线请求"""
 
-    name: str = Field(..., min_length=1, description="工作流名称（英文下划线格式）")
-    description: str = Field(default="", description="工作流描述")
+    name: str = Field(..., min_length=1, description="管线名称（英文下划线格式）")
+    description: str = Field(default="", description="管线描述")
     mode: str = Field(default="sequential", description="执行模式: sequential | parallel")
-    steps: list[WorkflowStepSchema] = Field(default_factory=list, description="步骤列表")
+    steps: list[PipelineStepSchema] = Field(default_factory=list, description="步骤列表")
 
 
-class WorkflowUpdateRequest(BaseModel):
-    """更新工作流请求（部分更新）"""
+class PipelineUpdateRequest(BaseModel):
+    """更新管线请求（部分更新）"""
 
     description: Optional[str] = None
     mode: Optional[str] = None
-    steps: Optional[list[WorkflowStepSchema]] = None
+    steps: Optional[list[PipelineStepSchema]] = None
 
 
 # ========================

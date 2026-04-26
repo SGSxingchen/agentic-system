@@ -1,17 +1,19 @@
 """Pipeline — 统一的任务编排引擎
 
-替代旧版三套编排机制（bus 订阅链 / EventEngine / WorkflowOrchestrator），
-提供单一的 Pipeline.execute() 入口。
-
-所有执行通过 CapabilityRegistry.execute() 路由，
-Agent 和工具能力对 Pipeline 来说是统一的。
+v2 Phase B 起为唯一编排器；旧版 bus 订阅链 / EventEngine / WorkflowOrchestrator
+已删除。所有执行通过 CapabilityRegistry.execute() 路由，Agent 和工具
+能力对 Pipeline 来说是统一的。
 """
 import asyncio
+import inspect
 import logging
 import re
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+
+StepEventCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 
 from ..capability.registry import CapabilityRegistry
 from .types import (
@@ -75,12 +77,16 @@ class Pipeline:
         self,
         config: PipelineConfig,
         initial_context: Optional[Dict[str, Any]] = None,
+        on_step_event: Optional[StepEventCallback] = None,
     ) -> PipelineResult:
         """执行管线
 
         Args:
             config: 管线配置
             initial_context: 初始上下文变量
+            on_step_event: 可选回调，每次步骤 started/completed/failed 时被调用，
+                           接收一个 dict（含 type / step / capability / status / duration_ms 等）。
+                           回调失败不影响管线执行。
 
         Returns:
             PipelineResult 包含所有步骤结果和最终上下文
@@ -96,9 +102,9 @@ class Pipeline:
 
         try:
             if config.mode == "parallel":
-                await self._execute_parallel(config.steps, result)
+                await self._execute_parallel(config.steps, result, on_step_event)
             else:
-                await self._execute_sequential(config.steps, result)
+                await self._execute_sequential(config.steps, result, on_step_event)
         except Exception as exc:
             result.status = PipelineStatus.FAILED
             result.error = str(exc)
@@ -121,11 +127,14 @@ class Pipeline:
     # ─── 顺序执行 ─────────────────────────────────────────
 
     async def _execute_sequential(
-        self, steps: List[PipelineStep], result: PipelineResult
+        self,
+        steps: List[PipelineStep],
+        result: PipelineResult,
+        on_step_event: Optional[StepEventCallback] = None,
     ) -> None:
         """顺序执行步骤"""
         for step in steps:
-            step_result = await self._execute_step(step, result.context)
+            step_result = await self._execute_step(step, result.context, on_step_event)
             result.step_results.append(step_result)
 
             if step_result.status == PipelineStatus.FAILED:
@@ -140,10 +149,13 @@ class Pipeline:
     # ─── 并行执行 ─────────────────────────────────────────
 
     async def _execute_parallel(
-        self, steps: List[PipelineStep], result: PipelineResult
+        self,
+        steps: List[PipelineStep],
+        result: PipelineResult,
+        on_step_event: Optional[StepEventCallback] = None,
     ) -> None:
         """并行执行步骤"""
-        coros = [self._execute_step(step, result.context) for step in steps]
+        coros = [self._execute_step(step, result.context, on_step_event) for step in steps]
         step_results = await asyncio.gather(*coros, return_exceptions=True)
 
         has_failure = False
@@ -168,7 +180,10 @@ class Pipeline:
     # ─── 单步执行 ─────────────────────────────────────────
 
     async def _execute_step(
-        self, step: PipelineStep, context: Dict[str, Any]
+        self,
+        step: PipelineStep,
+        context: Dict[str, Any],
+        on_step_event: Optional[StepEventCallback] = None,
     ) -> StepResult:
         """执行单个步骤"""
         step_result = StepResult(
@@ -184,13 +199,22 @@ class Pipeline:
                 step_result.completed_at = datetime.now()
                 step_result.duration_ms = (time.monotonic() - start_time) * 1000
                 logger.info("Step '%s' skipped (condition not met)", step.name)
+                await self._notify(
+                    "step_skipped",
+                    {"step": step.name, "capability": step.capability},
+                    on_step_event,
+                )
                 return step_result
 
         # 解析输入变量
         input_data = self._resolve_variables(step.input_data or {}, context)
 
         # 通知前端
-        await self._notify("step_started", {"step": step.name, "capability": step.capability})
+        await self._notify(
+            "step_started",
+            {"step": step.name, "capability": step.capability},
+            on_step_event,
+        )
 
         # 重试执行
         step_result.status = PipelineStatus.RUNNING
@@ -238,12 +262,15 @@ class Pipeline:
 
         # 通知前端
         await self._notify(
-            "step_completed",
+            "step_completed" if step_result.status == PipelineStatus.COMPLETED else "step_failed",
             {
                 "step": step.name,
                 "status": step_result.status.value,
                 "duration_ms": step_result.duration_ms,
+                "error": step_result.error,
+                "output": step_result.output,
             },
+            on_step_event,
         )
 
         return step_result
@@ -334,17 +361,32 @@ class Pipeline:
 
     # ─── 通知 ────────────────────────────────────────────
 
-    async def _notify(self, event_type: str, data: Dict[str, Any]) -> None:
-        """通过 bus 广播状态更新给前端"""
-        if not self._bus:
-            return
-        try:
-            from ..bus.types import Event
+    async def _notify(
+        self,
+        event_type: str,
+        data: Dict[str, Any],
+        on_step_event: Optional[StepEventCallback] = None,
+    ) -> None:
+        """通过 bus 广播 + 可选回调（按 task_id 写 transcript / 更新 TaskState）。
 
-            event = Event(source="pipeline", event_type=event_type, data=data)
-            await self._bus.publish(event)
-        except Exception:
-            pass  # 通知失败不影响执行
+        bus 失败或回调失败均不影响管线执行。
+        """
+        if self._bus:
+            try:
+                from ..bus.types import Event
+
+                event = Event(source="pipeline", event_type=event_type, data=data)
+                await self._bus.publish(event)
+            except Exception:
+                pass  # 通知失败不影响执行
+
+        if on_step_event is not None:
+            try:
+                outcome = on_step_event({"type": event_type, **data})
+                if inspect.isawaitable(outcome):
+                    await outcome
+            except Exception as exc:  # pragma: no cover — 回调异常不应影响管线
+                logger.warning("on_step_event callback failed for %s: %s", event_type, exc)
 
 
 # ─── 辅助函数 ─────────────────────────────────────────────

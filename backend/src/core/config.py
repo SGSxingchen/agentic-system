@@ -67,8 +67,8 @@ class AgentConfig(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="智能体私有配置")
 
 
-class WorkflowConfig(BaseModel):
-    """工作流配置。"""
+class PipelineConfig(BaseModel):
+    """管线配置。"""
 
     max_iterations: int = Field(default=10, description="全局最大迭代次数")
     default_timeout: float = Field(default=300.0, description="默认超时秒数")
@@ -123,7 +123,7 @@ class SystemConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     bus: BusConfig = Field(default_factory=BusConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
-    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     agents: List[AgentConfig] = Field(default_factory=list)
 

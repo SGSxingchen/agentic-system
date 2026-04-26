@@ -12,6 +12,7 @@ const STATUS_STYLES: Record<TaskStatus, { bg: string; color: string; label: stri
   running: { bg: '#DBEAFE', color: '#1E40AF', label: '运行中' },
   completed: { bg: '#DCFCE7', color: '#166534', label: '已完成' },
   failed: { bg: '#FEE2E2', color: '#991B1B', label: '失败' },
+  killed: { bg: '#F3F4F6', color: '#374151', label: '已终止' },
 }
 
 export function TaskPanel() {
@@ -80,6 +81,29 @@ export function TaskPanel() {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       handleSubmit()
     }
+  }
+
+  const handleCancel = async (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!taskId) return
+    try {
+      const resp = await fetch(`${API}/api/tasks/${taskId}`, { method: 'DELETE' })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      await fetchTasks()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '取消任务失败')
+    }
+  }
+
+  const formatProgress = (task: Task): string => {
+    const p = task.progress
+    if (!p) return ''
+    const segs: string[] = []
+    if (p.tool_count) segs.push(`${p.tool_count} 工具`)
+    if (p.total_tokens) segs.push(`${p.total_tokens} tokens`)
+    if (p.current_step) segs.push(`步骤: ${p.current_step}`)
+    if (p.activity && !p.current_step) segs.push(p.activity)
+    return segs.join(' · ')
   }
 
   return (
@@ -160,12 +184,27 @@ export function TaskPanel() {
                       {task.name || task.requirement || '未命名任务'}
                     </span>
                   </div>
-                  <span
-                    className="task-status-badge"
-                    style={{ backgroundColor: style.bg, color: style.color }}
-                  >
-                    {style.label}
-                  </span>
+                  <div className="task-card-actions">
+                    <span
+                      className="task-status-badge"
+                      style={{ backgroundColor: style.bg, color: style.color }}
+                    >
+                      {style.label}
+                    </span>
+                    {(task.status === 'pending' ||
+                      task.status === 'running' ||
+                      task.status === 'planning' ||
+                      task.status === 'coding' ||
+                      task.status === 'reviewing') && (
+                      <button
+                        className="task-cancel-btn"
+                        onClick={(e) => handleCancel(taskId, e)}
+                        title="取消任务"
+                      >
+                        取消
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {task.requirement && (
@@ -174,7 +213,11 @@ export function TaskPanel() {
 
                 <div className="task-meta">
                   <span>{new Date(task.created_at).toLocaleString('zh-CN')}</span>
+                  {task.pipeline && <span>管线: {task.pipeline}</span>}
                   {task.agent && <span>{task.agent}</span>}
+                  {formatProgress(task) && (
+                    <span className="task-progress">{formatProgress(task)}</span>
+                  )}
                 </div>
 
                 {/* 展开详情 */}

@@ -57,7 +57,7 @@ def _create_test_app():
         tasks_router,
         agents_router,
         chat_sessions_router,
-        workflows_router,
+        pipelines_router,
         memory_router,
         config_router,
         evolution_router,
@@ -78,7 +78,7 @@ def _create_test_app():
 
     test_app.include_router(tasks_router)
     test_app.include_router(agents_router)
-    test_app.include_router(workflows_router)
+    test_app.include_router(pipelines_router)
     test_app.include_router(memory_router)
     test_app.include_router(config_router)
     test_app.include_router(evolution_router)
@@ -458,13 +458,14 @@ class TestTasksAPI:
         )
         task_id = resp1.json()["data"]["task_id"]
 
-        # 删除
+        # v2 Phase B：DELETE 请求 cancel；任务记录保留并标记 killed
         resp2 = await client.delete(f"/api/tasks/{task_id}")
         assert resp2.status_code == 200
 
-        # 确认已删除
+        # 任务详情仍可查；状态最终会变为 killed（也允许还在过渡到 killed 的时间窗）
         resp3 = await client.get(f"/api/tasks/{task_id}")
-        assert resp3.status_code == 404
+        assert resp3.status_code == 200
+        assert resp3.json()["data"]["status"] in {"killed", "running", "failed"}
 
     async def test_delete_nonexistent_task(self, client):
         resp = await client.delete("/api/tasks/nonexistent-id")

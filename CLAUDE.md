@@ -167,8 +167,9 @@ agentic-system/
 
 ## 3. 核心架构
 
-> ⚠️ **编排层 v2 设计中**：本节描述的是 v1 实现现状。新版编排层（反应式 Agent 工具循环 + Task 抽象 + 子 Agent 派生）见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md)。
-> 落实后将删除 §3.8 工作流编排、§3.4 事件引擎扳机调度部分；本节会重写。
+> ✅ **编排层 v2 Phase A + B 已落地**（2026-04-26）：Agent 反应式工具循环底盘 + Task 抽象 + Pipeline 编排（替换原 Workflow）。
+> §3.5 含 v2 Phase A 的 Agent 流式工具循环说明；§3.8 Pipeline 编排是当前唯一的多步骤编排引擎；§3.9 是 v2 Phase B 新增的 Task 抽象层。
+> 仍未落地的 Phase C（子 Agent 派生）/ Phase D（snip 压缩 / stop hooks / 边际收益）见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md) §11。
 
 ### 3.1 系统分层
 
@@ -325,21 +326,41 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - 保持 `parameters` JSON Schema 只读不变
 - 保存到 `config/capabilities.yaml` 的 `prompt` 字段
 
-### 3.8 工作流编排（v1，待废弃）
+### 3.8 Pipeline 编排（v2 Phase B 起为唯一编排引擎）
 
-> ⚠️ **该模块已被 v2 设计替代**，详见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md)。
-> v2 实施时将删除 `core/workflow/` 模块、`config/workflows.yaml`、前端 WorkflowPanel；
-> 静态 DAG 的能力由 Agent 反应式工具循环 + 子 Agent 派生覆盖。
+> ✅ **v2 Phase B 已落地（2026-04-26）**：旧 `core/workflow/` 模块、`core/event/`、`config/triggers.yaml`、`backend/config/` 已删除；`config/workflows.yaml` 改名 `config/pipelines.yaml`，`/api/workflows/*` 改名 `/api/pipelines/*`，前端 `WorkflowPanel` 改名 `PipelinePanel`。
 
-`WorkflowOrchestrator` 支持:
-- 顺序执行 (`execute_sequential`)
-- 并行执行 (`execute_parallel`)
-- YAML 模板驱动 (从 `config/workflows.yaml` 加载)
+`core.pipeline.Pipeline` 是当前唯一的多步骤编排引擎：
+- 通过 CapabilityRegistry 统一调度 Agent 与 Tool（不区分两者）
+- 顺序 / 并行执行模式；支持 `${var}` 变量替换、条件表达式、`max_retries`、`timeout`
+- 新增 `on_step_event` 回调钩子：每步骤 started/completed/failed/skipped 时触发；`routes/tasks.py` 用它把进度写入 TaskState 与磁盘 transcript
 
-预定义工作流:
+预定义模板（`config/pipelines.yaml`）:
 1. `code_generation_and_review` — 规划 → 编码 → 审查 → 条件修复
 2. `task_decompose_and_execute` — 分解 → 编码
 3. `full_pipeline` — 规划 → 编码 → 审查 → 修复 → 再审查
+
+### 3.9 Task 抽象（v2 Phase B 新增）
+
+`core.task` 模块提供异步任务的统一抽象，落在 `routes/tasks.py` 之上：
+
+| 组件 | 职责 |
+|------|------|
+| `TaskState` | 单任务的状态快照：id/type/status/requirement/pipeline_name/progress/plan/code/review/output/output_file/timestamps |
+| `TaskStatus` 枚举 | `pending → running → {completed | failed | killed}` |
+| `TaskType` 枚举 | 当前仅 `pipeline`；预留 `sub_agent` / `shell`（Phase C/D） |
+| `AgentProgress` | 增量进度：tool_count（累加）/ total_tokens（累加）/ activity / last_tool / current_step |
+| `TaskRegistry` | 进程级单例：create / attach asyncio.Task / get / list / set_progress / mark_done / kill |
+| `TranscriptWriter` + `read_transcript` | 每任务一份 JSONL 文件（`data/tasks/{task_id}.jsonl`），写 created/started/step_*/done/killed/error |
+
+**API**:
+- `POST /api/tasks { requirement, pipeline }` — 提交任务，返回 task_id（v1 字段 `workflow` 重命名为 `pipeline`）
+- `GET /api/tasks` — 按 created_at 倒序列出
+- `GET /api/tasks/{id}` — 详情含 progress
+- `GET /api/tasks/{id}/transcript` — 读取 JSONL 事件流（数组返回）
+- `DELETE /api/tasks/{id}` — 真正 cancel 后台 asyncio.Task；状态终态化为 `killed`，记录保留可查
+
+**前端**：`TaskPanel` 5s 轮询 `/api/tasks`；卡片显示 progress 摘要 + 取消按钮。WebSocket 推送 progress 留 Phase C。
 
 ---
 

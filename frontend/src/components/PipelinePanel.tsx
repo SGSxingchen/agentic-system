@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, DragEvent } from 'react'
 import * as api from '../api/client'
-import './WorkflowPanel.css'
+import './PipelinePanel.css'
 
-interface WorkflowStep {
+interface PipelineStep {
   name: string
   agent: string
   input?: Record<string, string>
@@ -11,16 +11,16 @@ interface WorkflowStep {
   max_iterations?: number
 }
 
-interface WorkflowTemplate {
+interface PipelineTemplate {
   name: string
   description: string
   mode: string
-  steps: WorkflowStep[]
+  steps: PipelineStep[]
 }
 
-interface WorkflowExecution {
+interface PipelineExecution {
   id: string
-  workflow_id: string
+  pipeline_id: string
   status: 'running' | 'completed' | 'failed'
   current_step?: number
   results?: Record<string, unknown>
@@ -37,7 +37,7 @@ interface StepFormData {
   max_iterations: number
 }
 
-interface WorkflowFormData {
+interface PipelineFormData {
   name: string
   description: string
   mode: string
@@ -53,19 +53,19 @@ const EMPTY_STEP: StepFormData = {
   max_iterations: 1,
 }
 
-export function WorkflowPanel() {
-  const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
-  const [executions, setExecutions] = useState<WorkflowExecution[]>([])
+export function PipelinePanel() {
+  const [templates, setTemplates] = useState<PipelineTemplate[]>([])
+  const [executions, setExecutions] = useState<PipelineExecution[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [selectedWorkflow, setSelectedWorkflow] = useState<string | null>(null)
+  const [selectedPipeline, setSelectedPipeline] = useState<string | null>(null)
   const [inputText, setInputText] = useState('')
   const [executing, setExecuting] = useState(false)
   const [apiAvailable, setApiAvailable] = useState(true)
 
   // CRUD 状态
-  const [editingWorkflow, setEditingWorkflow] = useState<string | null>(null)
-  const [form, setForm] = useState<WorkflowFormData>({ name: '', description: '', mode: 'sequential', steps: [] })
+  const [editingPipeline, setEditingPipeline] = useState<string | null>(null)
+  const [form, setForm] = useState<PipelineFormData>({ name: '', description: '', mode: 'sequential', steps: [] })
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [availableAgents, setAvailableAgents] = useState<string[]>([])
@@ -78,17 +78,17 @@ export function WorkflowPanel() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.getWorkflowTemplates()
+      const res = await api.getPipelineTemplates()
       if (res.status === 'ok' && res.data) {
         const data = res.data as unknown
-        let parsed: WorkflowTemplate[] = []
+        let parsed: PipelineTemplate[] = []
         if (Array.isArray(data)) {
           parsed = (data as Record<string, unknown>[]).map((item) => ({
             name: (item.name as string) || (item.id as string) || '',
             description: (item.description as string) || '',
             mode: (item.mode as string) || 'sequential',
             steps: ((item.steps as unknown[]) || []).map((s: unknown) =>
-              typeof s === 'string' ? { name: s, agent: s } : (s as WorkflowStep)
+              typeof s === 'string' ? { name: s, agent: s } : (s as PipelineStep)
             ),
           }))
         }
@@ -128,14 +128,14 @@ export function WorkflowPanel() {
   // ─── CRUD ──────────────────────────────────────────
 
   const startCreate = () => {
-    setEditingWorkflow('__new__')
+    setEditingPipeline('__new__')
     setForm({ name: '', description: '', mode: 'sequential', steps: [{ ...EMPTY_STEP }] })
-    setSelectedWorkflow(null)
+    setSelectedPipeline(null)
     setConfirmDelete(null)
   }
 
-  const startEdit = (tpl: WorkflowTemplate) => {
-    setEditingWorkflow(tpl.name)
+  const startEdit = (tpl: PipelineTemplate) => {
+    setEditingPipeline(tpl.name)
     setForm({
       name: tpl.name,
       description: tpl.description,
@@ -149,12 +149,12 @@ export function WorkflowPanel() {
         max_iterations: s.max_iterations || 1,
       })),
     })
-    setSelectedWorkflow(null)
+    setSelectedPipeline(null)
     setConfirmDelete(null)
   }
 
   const cancelEdit = () => {
-    setEditingWorkflow(null)
+    setEditingPipeline(null)
     setError('')
   }
 
@@ -178,15 +178,15 @@ export function WorkflowPanel() {
     })
 
     let res
-    if (editingWorkflow === '__new__') {
+    if (editingPipeline === '__new__') {
       if (!form.name.trim()) {
         setError('名称不能为空')
         setSaving(false)
         return
       }
-      res = await api.createWorkflow({ name: form.name.trim(), description: form.description, mode: form.mode, steps })
+      res = await api.createPipeline({ name: form.name.trim(), description: form.description, mode: form.mode, steps })
     } else {
-      res = await api.updateWorkflow(editingWorkflow!, { description: form.description, mode: form.mode, steps })
+      res = await api.updatePipeline(editingPipeline!, { description: form.description, mode: form.mode, steps })
     }
 
     if (res.status === 'ok') {
@@ -199,7 +199,7 @@ export function WorkflowPanel() {
   }
 
   const handleDelete = async (name: string) => {
-    const res = await api.deleteWorkflow(name)
+    const res = await api.deletePipeline(name)
     if (res.status === 'ok') {
       setConfirmDelete(null)
       await fetchTemplates()
@@ -268,19 +268,19 @@ export function WorkflowPanel() {
   // ─── 执行 ──────────────────────────────────────────
 
   const handleExecute = async () => {
-    if (!selectedWorkflow || !inputText.trim()) return
+    if (!selectedPipeline || !inputText.trim()) return
     setExecuting(true)
     setError('')
     try {
-      const res = await api.executeWorkflow(selectedWorkflow, { user_requirement: inputText.trim() })
+      const res = await api.executePipeline(selectedPipeline, { user_requirement: inputText.trim() })
       if (res.status === 'ok' && res.data) {
-        setExecutions((prev) => [res.data as unknown as WorkflowExecution, ...prev])
+        setExecutions((prev) => [res.data as unknown as PipelineExecution, ...prev])
         setInputText('')
       } else {
         setError(res.message || '执行失败')
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '执行工作流失败')
+      setError(e instanceof Error ? e.message : '执行管线失败')
     } finally {
       setExecuting(false)
     }
@@ -289,13 +289,13 @@ export function WorkflowPanel() {
   // ─── 渲染编辑表单 ──────────────────────────────────
 
   const renderEditForm = () => {
-    const isNew = editingWorkflow === '__new__'
+    const isNew = editingPipeline === '__new__'
 
     return (
-      <div className="workflow-form">
-        <h3 className="workflow-form__title">{isNew ? '新建工作流' : `编辑: ${editingWorkflow}`}</h3>
+      <div className="pipeline-form">
+        <h3 className="pipeline-form__title">{isNew ? '新建管线' : `编辑: ${editingPipeline}`}</h3>
 
-        <div className="workflow-form__fields">
+        <div className="pipeline-form__fields">
           <div className="form-group">
             <label>名称</label>
             <input
@@ -303,7 +303,7 @@ export function WorkflowPanel() {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               disabled={!isNew}
-              placeholder="英文下划线格式，如 my_workflow"
+              placeholder="英文下划线格式，如 my_pipeline"
             />
           </div>
 
@@ -313,7 +313,7 @@ export function WorkflowPanel() {
               type="text"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="工作流功能描述"
+              placeholder="管线功能描述"
             />
           </div>
 
@@ -418,7 +418,7 @@ export function WorkflowPanel() {
           <button className="step-editor__add" onClick={addStep}>+ 添加步骤</button>
         </div>
 
-        {error && <div className="workflow-error">{error}</div>}
+        {error && <div className="pipeline-error">{error}</div>}
 
         <div className="button-group">
           <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存'}</button>
@@ -431,36 +431,36 @@ export function WorkflowPanel() {
   // ─── 主渲染 ────────────────────────────────────────
 
   return (
-    <div className="workflow-panel">
+    <div className="pipeline-panel">
       <div className="panel-header">
-        <h2>工作流</h2>
+        <h2>管线</h2>
         <div className="panel-header__actions">
-          <button className="btn-primary-sm" onClick={startCreate} disabled={editingWorkflow !== null}>+ 新建工作流</button>
+          <button className="btn-primary-sm" onClick={startCreate} disabled={editingPipeline !== null}>+ 新建管线</button>
           <button className="refresh-btn" onClick={fetchTemplates}>刷新</button>
         </div>
       </div>
 
       {!apiAvailable && (
-        <div className="workflow-error" style={{ borderColor: 'rgba(217, 119, 6, 0.2)', background: 'rgba(217, 119, 6, 0.06)', color: 'var(--color-warning)' }}>
-          未连接到后端，无法加载工作流模板
+        <div className="pipeline-error" style={{ borderColor: 'rgba(217, 119, 6, 0.2)', background: 'rgba(217, 119, 6, 0.06)', color: 'var(--color-warning)' }}>
+          未连接到后端，无法加载管线模板
         </div>
       )}
 
-      {error && !editingWorkflow && <div className="workflow-error">{error}</div>}
+      {error && !editingPipeline && <div className="pipeline-error">{error}</div>}
 
       {/* 编辑表单 */}
-      {editingWorkflow && renderEditForm()}
+      {editingPipeline && renderEditForm()}
 
-      {/* 工作流模板 */}
-      {!editingWorkflow && (
+      {/* 管线模板 */}
+      {!editingPipeline && (
         <>
           {loading ? (
-            <div className="workflow-loading">
+            <div className="pipeline-loading">
               <div className="loading-spinner" />
               <span>加载中...</span>
             </div>
           ) : templates.length === 0 ? (
-            <div className="workflow-empty">
+            <div className="pipeline-empty">
               <div className="placeholder-icon">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="16 3 21 3 21 8" />
@@ -470,22 +470,22 @@ export function WorkflowPanel() {
                   <line x1="4" y1="4" x2="9" y2="9" />
                 </svg>
               </div>
-              <h3>暂无工作流模板</h3>
-              <p>点击上方「新建工作流」按钮创建</p>
+              <h3>暂无管线模板</h3>
+              <p>点击上方「新建管线」按钮创建</p>
             </div>
           ) : (
-            <div className="workflow-templates">
+            <div className="pipeline-templates">
               <h3 className="section-title">模板列表</h3>
               <div className="template-grid">
                 {templates.map((tpl) => (
                   <div
                     key={tpl.name}
-                    className={`template-card ${selectedWorkflow === tpl.name ? 'selected' : ''}`}
+                    className={`template-card ${selectedPipeline === tpl.name ? 'selected' : ''}`}
                   >
                     <div className="template-header">
                       <span
                         className="template-name"
-                        onClick={() => setSelectedWorkflow(selectedWorkflow === tpl.name ? null : tpl.name)}
+                        onClick={() => setSelectedPipeline(selectedPipeline === tpl.name ? null : tpl.name)}
                         style={{ cursor: 'pointer' }}
                       >
                         {tpl.name.replace(/_/g, ' ')}
@@ -539,18 +539,18 @@ export function WorkflowPanel() {
           )}
 
           {/* 执行区域 */}
-          {selectedWorkflow && (
-            <div className="workflow-execute-area">
-              <h3 className="section-title">执行工作流: {selectedWorkflow.replace(/_/g, ' ')}</h3>
+          {selectedPipeline && (
+            <div className="pipeline-execute-area">
+              <h3 className="section-title">执行管线: {selectedPipeline.replace(/_/g, ' ')}</h3>
               <textarea
-                className="workflow-input"
+                className="pipeline-input"
                 placeholder="输入需求描述..."
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 rows={3}
               />
               <button
-                className="workflow-execute-btn"
+                className="pipeline-execute-btn"
                 onClick={handleExecute}
                 disabled={executing || !inputText.trim()}
               >
@@ -561,7 +561,7 @@ export function WorkflowPanel() {
 
           {/* 执行历史 */}
           {executions.length > 0 && (
-            <div className="workflow-history">
+            <div className="pipeline-history">
               <h3 className="section-title">执行历史</h3>
               {executions.map((exec, idx) => (
                 <div key={idx} className={`execution-card status-${exec.status}`}>

@@ -229,3 +229,30 @@
   font-size: 14px;
   border: 1px solid rgba(220, 38, 38, 0.15);
 }
+
+/* v2 Phase B：取消按钮 + 进度摘要 */
+.task-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-cancel-btn {
+  background: transparent;
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  color: var(--color-danger, #b91c1c);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.task-cancel-btn:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.task-progress {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}

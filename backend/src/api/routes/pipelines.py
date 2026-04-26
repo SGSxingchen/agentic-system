@@ -1,11 +1,11 @@
-"""工作流/管线管理路由
+"""管线（Pipeline）管理路由
 
 端点:
-- GET    /api/workflows/templates     — 获取管线模板列表
-- POST   /api/workflows               — 创建管线模板
-- PUT    /api/workflows/{name}        — 更新管线模板
-- DELETE /api/workflows/{name}        — 删除管线模板
-- POST   /api/workflows/execute       — 执行管线
+- GET    /api/pipelines/templates     — 获取管线模板列表
+- POST   /api/pipelines               — 创建管线模板
+- PUT    /api/pipelines/{name}        — 更新管线模板
+- DELETE /api/pipelines/{name}        — 删除管线模板
+- POST   /api/pipelines/execute       — 执行管线
 """
 from typing import Any, Dict
 
@@ -13,14 +13,16 @@ from fastapi import APIRouter
 
 from ..schemas import (
     APIResponse,
-    WorkflowExecuteRequest,
-    WorkflowCreateRequest,
-    WorkflowUpdateRequest,
+    PipelineExecuteRequest,
+    PipelineCreateRequest,
+    PipelineUpdateRequest,
 )
 from ..dependencies import get_pipeline
 from core.config import load_single_yaml, save_yaml_config
 
-router = APIRouter(prefix="/api/workflows", tags=["workflows"])
+router = APIRouter(prefix="/api/pipelines", tags=["pipelines"])
+
+_PIPELINES_YAML = "pipelines.yaml"
 
 
 # ─── 辅助函数 ─────────────────────────────────────────────
@@ -54,6 +56,11 @@ def _format_template(name: str, tpl: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _load_pipelines_from_yaml() -> Dict[str, Any]:
+    data = load_single_yaml(_PIPELINES_YAML)
+    return data.get("pipelines", {}) or {}
+
+
 # ─── 读取端点 ─────────────────────────────────────────────
 
 
@@ -69,14 +76,9 @@ async def get_templates():
             templates.append(_format_template(name, tpl))
 
     if not templates:
-        # 从 YAML 文件直接读取作为 fallback
-        for yaml_name in ["pipelines.yaml", "workflows.yaml"]:
-            data = load_single_yaml(yaml_name)
-            workflows = data.get("pipelines", data.get("workflows", {}))
-            if workflows:
-                for name, tpl in workflows.items():
-                    templates.append(_format_template(name, tpl))
-                break
+        # fallback: 直接从 YAML 文件读取
+        for name, tpl in _load_pipelines_from_yaml().items():
+            templates.append(_format_template(name, tpl))
 
     return APIResponse(status="ok", data=templates)
 
@@ -85,47 +87,46 @@ async def get_templates():
 
 
 @router.post("", response_model=APIResponse)
-async def create_workflow(req: WorkflowCreateRequest):
+async def create_pipeline(req: PipelineCreateRequest):
     """创建新管线模板，写入 YAML"""
-    data = load_single_yaml("workflows.yaml")
-    workflows = data.get("pipelines", data.get("workflows", {}))
+    data = load_single_yaml(_PIPELINES_YAML)
+    pipelines = data.get("pipelines", {}) or {}
 
-    if req.name in workflows:
+    if req.name in pipelines:
         return APIResponse(status="error", message=f"管线 '{req.name}' 已存在")
 
-    new_wf: Dict[str, Any] = {
+    new_pipeline: Dict[str, Any] = {
         "description": req.description,
         "mode": req.mode,
         "steps": [s.model_dump(exclude_none=True) for s in req.steps],
     }
-    workflows[req.name] = new_wf
-    data["workflows"] = workflows
+    pipelines[req.name] = new_pipeline
+    data["pipelines"] = pipelines
 
-    save_yaml_config("workflows.yaml", data)
+    save_yaml_config(_PIPELINES_YAML, data)
     _clear_cache()
 
-    # 更新 Pipeline 运行时模板
     pipeline = get_pipeline()
     if pipeline:
-        pipeline.load_templates(dict(workflows))
+        pipeline.load_templates(dict(pipelines))
 
     return APIResponse(
         status="ok",
         message=f"管线 '{req.name}' 已创建",
-        data=_format_template(req.name, new_wf),
+        data=_format_template(req.name, new_pipeline),
     )
 
 
 @router.put("/{name}", response_model=APIResponse)
-async def update_workflow(name: str, req: WorkflowUpdateRequest):
+async def update_pipeline(name: str, req: PipelineUpdateRequest):
     """更新管线模板，写入 YAML"""
-    data = load_single_yaml("workflows.yaml")
-    workflows = data.get("pipelines", data.get("workflows", {}))
+    data = load_single_yaml(_PIPELINES_YAML)
+    pipelines = data.get("pipelines", {}) or {}
 
-    if name not in workflows:
+    if name not in pipelines:
         return APIResponse(status="error", message=f"管线 '{name}' 不存在")
 
-    target = workflows[name]
+    target = pipelines[name]
 
     if req.description is not None:
         target["description"] = req.description
@@ -134,15 +135,15 @@ async def update_workflow(name: str, req: WorkflowUpdateRequest):
     if req.steps is not None:
         target["steps"] = [s.model_dump(exclude_none=True) for s in req.steps]
 
-    workflows[name] = target
-    data["workflows"] = workflows
+    pipelines[name] = target
+    data["pipelines"] = pipelines
 
-    save_yaml_config("workflows.yaml", data)
+    save_yaml_config(_PIPELINES_YAML, data)
     _clear_cache()
 
     pipeline = get_pipeline()
     if pipeline:
-        pipeline.load_templates(dict(workflows))
+        pipeline.load_templates(dict(pipelines))
 
     return APIResponse(
         status="ok",
@@ -152,23 +153,23 @@ async def update_workflow(name: str, req: WorkflowUpdateRequest):
 
 
 @router.delete("/{name}", response_model=APIResponse)
-async def delete_workflow(name: str):
+async def delete_pipeline(name: str):
     """删除管线模板，写入 YAML"""
-    data = load_single_yaml("workflows.yaml")
-    workflows = data.get("pipelines", data.get("workflows", {}))
+    data = load_single_yaml(_PIPELINES_YAML)
+    pipelines = data.get("pipelines", {}) or {}
 
-    if name not in workflows:
+    if name not in pipelines:
         return APIResponse(status="error", message=f"管线 '{name}' 不存在")
 
-    del workflows[name]
-    data["workflows"] = workflows
+    del pipelines[name]
+    data["pipelines"] = pipelines
 
-    save_yaml_config("workflows.yaml", data)
+    save_yaml_config(_PIPELINES_YAML, data)
     _clear_cache()
 
     pipeline = get_pipeline()
     if pipeline:
-        pipeline.load_templates(dict(workflows))
+        pipeline.load_templates(dict(pipelines))
 
     return APIResponse(status="ok", message=f"管线 '{name}' 已删除")
 
@@ -177,7 +178,7 @@ async def delete_workflow(name: str):
 
 
 @router.post("/execute", response_model=APIResponse)
-async def execute_workflow(req: WorkflowExecuteRequest):
+async def execute_pipeline(req: PipelineExecuteRequest):
     """执行管线
 
     通过 Pipeline 同步执行完整流水线并返回结果。
@@ -186,7 +187,7 @@ async def execute_workflow(req: WorkflowExecuteRequest):
     if not requirement:
         return APIResponse(status="error", message="缺少 requirement 或 input")
 
-    template_name = req.template_name or req.workflow_type
+    template_name = req.template_name or req.pipeline_type
     pipeline = get_pipeline()
 
     if not pipeline:

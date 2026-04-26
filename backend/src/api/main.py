@@ -47,8 +47,8 @@ from .routes import (
     config_router,
     evolution_router,
     memory_router,
+    pipelines_router,
     tasks_router,
-    workflows_router,
 )
 from .websocket.handlers import (
     register_bus_event_bridge,
@@ -297,7 +297,7 @@ async def lifespan(app: FastAPI):
 
     pipeline = Pipeline(cap_registry, bus)
     ext_configs = _load_external_configs()
-    pipeline_templates = ext_configs.get("pipelines") or ext_configs.get("workflows")
+    pipeline_templates = ext_configs.get("pipelines")
     if isinstance(pipeline_templates, dict):
         pipeline.load_templates(pipeline_templates)
         print(f"[OK] pipeline initialized with {len(pipeline_templates)} templates")
@@ -341,7 +341,7 @@ app.add_middleware(
 
 app.include_router(tasks_router)
 app.include_router(agents_router)
-app.include_router(workflows_router)
+app.include_router(pipelines_router)
 app.include_router(memory_router)
 app.include_router(config_router)
 app.include_router(evolution_router)

@@ -51,9 +51,9 @@ from api.schemas import (
     TaskStatus,
     TaskSubmitRequest,
     ToolsConfigRequest,
-    WorkflowExecuteRequest,
-    WorkflowStepSchema,
-    WorkflowTemplate,
+    PipelineExecuteRequest,
+    PipelineStepSchema,
+    PipelineTemplate,
 )
 from api.websocket.handlers import ConnectionManager
 
@@ -226,7 +226,7 @@ class TestAPIResponse:
 
 class TestTaskStatus:
     def test_all_values(self):
-        expected = {"pending", "planning", "coding", "reviewing", "completed", "failed"}
+        expected = {"pending", "running", "completed", "failed", "killed"}
         actual = {s.value for s in TaskStatus}
         assert actual == expected
 
@@ -242,11 +242,11 @@ class TestTaskSubmitRequest:
     def test_valid_request(self):
         r = TaskSubmitRequest(requirement="build a calculator")
         assert r.requirement == "build a calculator"
-        assert r.workflow == "auto"
+        assert r.pipeline == "auto"
 
-    def test_custom_workflow(self):
-        r = TaskSubmitRequest(requirement="x", workflow="plan_code_review")
-        assert r.workflow == "plan_code_review"
+    def test_custom_pipeline(self):
+        r = TaskSubmitRequest(requirement="x", pipeline="plan_code_review")
+        assert r.pipeline == "plan_code_review"
 
     def test_empty_requirement_rejected(self):
         with pytest.raises(Exception):
@@ -261,7 +261,7 @@ class TestTaskResponse:
     def test_full_response(self):
         r = TaskResponse(
             task_id="t-1",
-            status=TaskStatus.CODING,
+            status=TaskStatus.RUNNING,
             requirement="test",
             plan={"steps": []},
             code={"files": []},
@@ -270,7 +270,7 @@ class TestTaskResponse:
             updated_at="2026-03-28T00:00:00",
         )
         assert r.task_id == "t-1"
-        assert r.status == TaskStatus.CODING
+        assert r.status == TaskStatus.RUNNING
         assert r.plan == {"steps": []}
         assert r.review is None
 
@@ -308,18 +308,18 @@ class TestAgentInvokeRequest:
         assert r.data["code"] == "print(1)"
 
 
-class TestWorkflowExecuteRequest:
+class TestPipelineExecuteRequest:
     def test_defaults(self):
-        r = WorkflowExecuteRequest()
-        assert r.workflow_type == "plan_code_review"
+        r = PipelineExecuteRequest()
+        assert r.pipeline_type == "plan_code_review"
         assert r.template_name is None
         assert r.requirement == ""
         assert r.input is None
         assert r.options == {}
 
     def test_custom_values(self):
-        r = WorkflowExecuteRequest(
-            workflow_type="custom",
+        r = PipelineExecuteRequest(
+            pipeline_type="custom",
             template_name="full_pipeline",
             requirement="build API",
             input="alt input",
@@ -329,19 +329,19 @@ class TestWorkflowExecuteRequest:
         assert r.options["retry"] is True
 
 
-class TestWorkflowStepSchema:
+class TestPipelineStepSchema:
     def test_accepts_timeout(self):
-        step = WorkflowStepSchema(name="review", agent="reviewer", timeout=2.5)
+        step = PipelineStepSchema(name="review", agent="reviewer", timeout=2.5)
         assert step.timeout == 2.5
 
     def test_rejects_non_positive_timeout(self):
         with pytest.raises(Exception):
-            WorkflowStepSchema(name="review", agent="reviewer", timeout=0)
+            PipelineStepSchema(name="review", agent="reviewer", timeout=0)
 
 
-class TestWorkflowTemplate:
+class TestPipelineTemplate:
     def test_valid_template(self):
-        t = WorkflowTemplate(name="basic", description="A basic flow", steps=["plan", "code"])
+        t = PipelineTemplate(name="basic", description="A basic flow", steps=["plan", "code"])
         assert t.name == "basic"
         assert len(t.steps) == 2
 

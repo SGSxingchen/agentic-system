@@ -1,18 +1,18 @@
-# 工作流模板配置
-# 定义可复用的工作流模板，由 WorkflowOrchestrator 加载执行
-# 字段参考: backend/src/core/workflow/types.py -> Task
-#           backend/src/core/workflow/orchestrator.py -> execute_workflow()
+# 管线（Pipeline）模板配置
+# 定义可复用的管线模板，由 core.pipeline.Pipeline 加载执行
+# 字段参考: backend/src/core/pipeline/types.py
+#           backend/src/core/pipeline/pipeline.py
 #
 # 每个 step 的字段:
 #   name           — 步骤名称（唯一标识）
 #   agent          — 负责执行的智能体名称
 #   input          — 输入数据，支持 ${variable} 引用上游输出
-#   output_key     — 输出键名，结果存入工作流上下文
+#   output_key     — 输出键名，结果存入管线上下文
 #   condition      — 条件表达式（Python），为空则无条件执行
 #   max_iterations — 最大迭代次数（用于修复循环），默认 1
 #   timeout        — 超时秒数（可选）
 
-workflows:
+pipelines:
   # 工作流 1: 代码生成与审查
   # 流程: 规划 → 编码 → 审查 → 条件修复
   code_generation_and_review:

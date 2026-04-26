@@ -27,7 +27,7 @@ const Icons = {
       <path d="M20 21a8 8 0 1 0-16 0" />
     </svg>
   ),
-  workflow: (
+  pipeline: (
     <svg viewBox="0 0 24 24">
       <polyline points="16 3 21 3 21 8" />
       <line x1="4" y1="20" x2="21" y2="3" />
@@ -73,7 +73,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'chat', icon: Icons.chat, label: '对话' },
   { key: 'tasks', icon: Icons.tasks, label: '任务' },
   { key: 'agents', icon: Icons.agents, label: '智能体' },
-  { key: 'workflow', icon: Icons.workflow, label: '工作流' },
+  { key: 'pipeline', icon: Icons.pipeline, label: '管线' },
   { key: 'memory', icon: Icons.memory, label: '记忆' },
   { key: 'evolution', icon: Icons.evolution, label: '进化' },
   { key: 'monitor', icon: Icons.monitor, label: '监控' },

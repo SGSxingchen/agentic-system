@@ -64,8 +64,8 @@ bus:
 context:
   persist_dir: "./data/context"
 
-# 工作流配置
-workflow:
+# 管线配置
+pipeline:
   max_iterations: 10
   default_timeout: 300.0
 

@@ -2,10 +2,10 @@
 
 > 最后更新: 2026-04-26 | 与 CLAUDE.md 保持一致
 >
-> ⚠️ **编排层 v2 设计中**：本文档描述的是 v1 实现现状。新版编排层
-> （反应式 Agent 工具循环 + Task 抽象 + 子 Agent 派生 + Stop Hooks）
-> 见 [`./orchestrator-v2.md`](./orchestrator-v2.md)。落实后本文档将重写
-> "编排" 与 "数据流 / 任务流水线" 章节。
+> ✅ **编排层 v2 Phase A + B 已落地（2026-04-26）**：Agent 反应式工具循环底盘 +
+> Task 抽象 + Pipeline 替换 Workflow + 工具元数据驱动并发 / 权限 / 预算闸门。
+> 详见 [`./orchestrator-v2.md`](./orchestrator-v2.md) §11；CLAUDE.md §3.5 / §3.8 / §3.9 是当前实现的权威描述。
+> 本文档的"编排"和"数据流"章节描述的是历史 v1 视角，待 Phase C 落地后整体重写。
 
 ## 架构总览
 
