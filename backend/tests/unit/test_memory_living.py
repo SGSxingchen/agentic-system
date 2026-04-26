@@ -1,6 +1,7 @@
 """Private assistant memory behavior tests."""
 import sys
 from pathlib import Path
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -8,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import pytest
 
 from core.llm.base import BaseLLMClient, LLMResponse
-from core.memory import InMemoryStore, MemoryFormation, MemoryType
+from core.memory import InMemoryStore, Memory, MemoryFormation, MemoryRetriever, MemoryType
 from core.memory.processor import MemoryProcessor
 
 
@@ -166,3 +167,67 @@ async def test_formation_deduplicates_similar_private_memories(store):
     assert merged.importance > 0.6
     assert merged.metadata["topics"] == ["沟通", "回答风格"]
     assert merged.metadata["key_facts"] == ["偏好简洁", "不喜欢冗长"]
+
+
+async def test_retrieve_with_scores_uses_metadata_and_last_accessed(store):
+    retriever = MemoryRetriever(store)
+    old_memory = Memory(
+        content="用户喜欢简洁回答",
+        metadata={
+            "memory_kind": "preference",
+            "canonical_summary": "用户喜欢简洁回答",
+            "assistant_context": "回答要简洁",
+            "topics": ["沟通"],
+        },
+        importance=0.9,
+        created_at=datetime.now() - timedelta(days=30),
+        last_accessed=datetime.now() - timedelta(days=20),
+    )
+    recent_memory = Memory(
+        content="用户喜欢简洁回答",
+        metadata={
+            "memory_kind": "preference",
+            "canonical_summary": "用户喜欢简洁回答",
+            "assistant_context": "回答要非常简洁",
+            "topics": ["沟通"],
+        },
+        importance=0.6,
+        created_at=datetime.now() - timedelta(days=30),
+        last_accessed=datetime.now(),
+    )
+    await store.save(old_memory)
+    await store.save(recent_memory)
+
+    results = await retriever.retrieve_with_scores("请简洁回答", max_results=1)
+
+    assert len(results) == 1
+    assert results[0]["memory"].id == recent_memory.id
+    retrieval = results[0]["retrieval"]
+    assert retrieval["score"] > 0
+    assert set(retrieval["breakdown"]) == {
+        "relevance",
+        "importance",
+        "recency",
+        "frequency",
+    }
+    assert retrieval["deduped_similar_ids"] == [old_memory.id]
+
+
+async def test_retrieve_with_scores_does_not_filter_by_source_session(store):
+    retriever = MemoryRetriever(store)
+    await store.save(
+        Memory(
+            content="用户正在准备本科毕设",
+            metadata={
+                "memory_kind": "project_context",
+                "canonical_summary": "用户正在准备本科毕设",
+                "source_window": {"session_id": "other-session"},
+            },
+            importance=0.8,
+        )
+    )
+
+    results = await retriever.retrieve_with_scores("毕设", max_results=3)
+
+    assert len(results) == 1
+    assert results[0]["memory"].metadata["source_window"]["session_id"] == "other-session"

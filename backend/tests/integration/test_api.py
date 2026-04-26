@@ -295,6 +295,10 @@ class TestMemoryAPI:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "ok"
+        assert body["data"]
+        assert "retrieval" in body["data"][0]
+        assert "score" in body["data"][0]["retrieval"]
+        assert "breakdown" in body["data"][0]["retrieval"]
 
     async def test_delete_nonexistent_memory(self, client):
         resp = await client.delete("/api/memory/fake-id-12345")

@@ -56,15 +56,30 @@ class MemorySearchCapability(CapabilityBase):
             if not retriever:
                 return {"memories": [], "message": "记忆系统未初始化"}
 
-            memories = await retriever.retrieve(context=query, max_results=limit)
+            if hasattr(retriever, "retrieve_with_scores"):
+                scored = await retriever.retrieve_with_scores(context=query, max_results=limit)
+            else:
+                scored = [
+                    {"memory": memory, "retrieval": {}}
+                    for memory in await retriever.retrieve(context=query, max_results=limit)
+                ]
 
             results = []
-            for m in memories:
+            for item in scored:
+                m = item["memory"]
+                metadata = getattr(m, "metadata", {}) or {}
                 results.append(
                     {
                         "type": m.type.value if hasattr(m.type, "value") else str(m.type),
                         "content": m.content,
+                        "assistant_context": (
+                            metadata.get("assistant_context")
+                            or metadata.get("canonical_summary")
+                            or m.content
+                        ),
                         "importance": getattr(m, "importance", 0),
+                        "metadata": metadata,
+                        "retrieval": item.get("retrieval", {}),
                     }
                 )
 
