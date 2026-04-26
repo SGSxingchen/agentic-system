@@ -16,6 +16,11 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from ..llm.base import BaseLLMClient, LLMResponse, LLMStreamEvent, ToolCall
 from ..capability.base import CapabilityBase
+from ..task.context import (
+    set_notification_box,
+    reset_notification_box,
+)
+from ..task.notifications import make_user_message
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +94,8 @@ class Agent:
             处理结果字典
         """
         self._status = AgentStatus.BUSY
+        notification_box: List[Dict[str, Any]] = []
+        box_token = set_notification_box(notification_box)
         try:
             messages = self._build_messages(input_data)
             tool_schemas = [t.get_schema() for t in self._tools]
@@ -97,6 +104,7 @@ class Agent:
             nudged = False
 
             for iteration in range(self._max_iterations):
+                await self._drain_notifications(notification_box, messages)
                 response = await self.llm.chat(
                     messages,
                     tools=tool_schemas if tool_schemas else None,
@@ -164,6 +172,8 @@ class Agent:
             self._status = AgentStatus.ERROR
             logger.error("Agent '%s' failed: %s", self.name, exc)
             raise
+        finally:
+            reset_notification_box(box_token)
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Backward-compatible one-shot entrypoint used by legacy orchestrators."""
@@ -182,6 +192,8 @@ class Agent:
         - {"type": "done", "content": "..."} — 最终结果
         """
         self._status = AgentStatus.BUSY
+        notification_box: List[Dict[str, Any]] = []
+        box_token = set_notification_box(notification_box)
         try:
             messages = self._build_messages(input_data)
             tool_schemas = [t.get_schema() for t in self._tools]
@@ -190,6 +202,8 @@ class Agent:
             nudged = False
 
             for iteration in range(self._max_iterations):
+                await self._drain_notifications(notification_box, messages)
+
                 # 收集本轮流式输出
                 full_text = ""
                 tool_calls: List[ToolCall] = []
@@ -279,6 +293,8 @@ class Agent:
         except Exception as exc:
             self._status = AgentStatus.ERROR
             yield {"type": "done", "content": {"error": str(exc)}}
+        finally:
+            reset_notification_box(box_token)
 
     # ─── 消息构建 ───────────────────────────────────────────
 
@@ -388,6 +404,27 @@ class Agent:
             return {"data": result}
         except json.JSONDecodeError:
             return {"raw_response": content, "parse_error": True}
+
+    # ─── Notification 回注（v2 Phase C 支柱 8）─────────────
+
+    @staticmethod
+    async def _drain_notifications(
+        notification_box: List[Dict[str, Any]],
+        messages: List[Dict[str, Any]],
+    ) -> None:
+        """把累积的 dispatch_agent 完成事件转 `<task-notification>` user 消息塞回 messages。
+
+        每轮 LLM 采样前调用；调用后清空 box。
+        通过 ``await asyncio.sleep(0)`` 主动让出事件循环，给已派发的子任务一次
+        推进/收尾的机会，避免必须等到下一轮 chat 才能看到 notification。
+        """
+        await asyncio.sleep(0)
+        if not notification_box:
+            return
+        pending = list(notification_box)
+        notification_box.clear()
+        for payload in pending:
+            messages.append(make_user_message(payload))
 
     # ─── Token 预算闸门 ────────────────────────────────────
 

@@ -2,10 +2,11 @@
 
 > 最后更新: 2026-04-26 | 与 CLAUDE.md 保持一致
 >
-> ✅ **编排层 v2 Phase A + B 已落地（2026-04-26）**：Agent 反应式工具循环底盘 +
-> Task 抽象 + Pipeline 替换 Workflow + 工具元数据驱动并发 / 权限 / 预算闸门。
+> ✅ **编排层 v2 Phase A + B + C 已落地（2026-04-26）**：Agent 反应式工具循环底盘 +
+> Task 抽象 + Pipeline 替换 Workflow + 非阻塞子 Agent 派生 + `<task-notification>` 回注 +
+> 工具元数据驱动并发 / 权限 / 预算闸门 + 可选 git worktree 隔离。
 > 详见 [`./orchestrator-v2.md`](./orchestrator-v2.md) §11；CLAUDE.md §3.5 / §3.8 / §3.9 是当前实现的权威描述。
-> 本文档的"编排"和"数据流"章节描述的是历史 v1 视角，待 Phase C 落地后整体重写。
+> 本文档的"编排"和"数据流"章节描述的是历史 v1 视角，整体重写待 Phase D 后一并处理。
 
 ## 架构总览
 

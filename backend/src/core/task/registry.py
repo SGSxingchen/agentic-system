@@ -144,16 +144,32 @@ class TaskRegistry:
     # ─── 取消 ─────────────────────────────────────────────
 
     def kill(self, task_id: str) -> bool:
-        """对关联的 asyncio.Task 发出 cancel；返回是否成功定位。
+        """对关联的 asyncio.Task 发出 cancel；级联取消所有未终态的子任务。
 
-        实际状态切换由 _run_pipeline_task 的 except CancelledError 完成。
+        Returns:
+            是否成功定位 task_id（无论是否级联了子任务）。
         """
         if task_id not in self._tasks:
             return False
+
+        # 先递归 kill 子任务（避免遗留孤儿）
+        terminal = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.KILLED}
+        for child in list(self._tasks.values()):
+            if child.parent_id == task_id and child.status not in terminal:
+                self.kill(child.id)
+
         asyncio_task = self._asyncio_tasks.get(task_id)
         if asyncio_task is not None and not asyncio_task.done():
             asyncio_task.cancel()
         return True
+
+    def list_children(self, parent_id: str) -> List[TaskState]:
+        """列出某个父任务的所有子任务（按 created_at 倒序）。"""
+        return sorted(
+            (t for t in self._tasks.values() if t.parent_id == parent_id),
+            key=lambda t: t.created_at,
+            reverse=True,
+        )
 
     # ─── 内部：progress 合并 ──────────────────────────────
 

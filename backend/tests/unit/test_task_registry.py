@@ -117,3 +117,52 @@ async def test_kill_cancels_attached_asyncio_task() -> None:
 def test_kill_unknown_task_returns_false() -> None:
     registry = TaskRegistry()
     assert registry.kill("does-not-exist") is False
+
+
+async def test_kill_cascades_to_child_tasks() -> None:
+    """Phase C：kill 父任务时，所有未终态的子任务也应被 cancel。"""
+    registry = TaskRegistry()
+
+    parent = registry.create(requirement="p", pipeline_name="x")
+    child = registry.create(
+        requirement="c", pipeline_name="x", parent_id=parent.id
+    )
+
+    cancellations = {parent.id: asyncio.Event(), child.id: asyncio.Event()}
+
+    async def _runner(tid: str) -> None:
+        try:
+            await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            cancellations[tid].set()
+            raise
+
+    parent_task = asyncio.create_task(_runner(parent.id))
+    child_task = asyncio.create_task(_runner(child.id))
+    registry.attach(parent.id, parent_task)
+    registry.attach(child.id, child_task)
+
+    await asyncio.sleep(0.01)
+
+    assert registry.kill(parent.id) is True
+
+    for t in (parent_task, child_task):
+        with pytest.raises(asyncio.CancelledError):
+            await t
+
+    assert cancellations[parent.id].is_set()
+    assert cancellations[child.id].is_set()
+
+
+def test_list_children_returns_only_direct_children() -> None:
+    registry = TaskRegistry()
+    p = registry.create(requirement="p", pipeline_name="x")
+    c1 = registry.create(requirement="c1", pipeline_name="x", parent_id=p.id)
+    c2 = registry.create(requirement="c2", pipeline_name="x", parent_id=p.id)
+    other = registry.create(requirement="other", pipeline_name="x")
+
+    children = registry.list_children(p.id)
+    ids = {c.id for c in children}
+
+    assert ids == {c1.id, c2.id}
+    assert other.id not in ids

@@ -15,8 +15,8 @@ class TaskType(str, Enum):
     """Task 类型枚举"""
 
     PIPELINE = "pipeline"
-    # 预留：未来 Phase C/D 实装
-    # SUB_AGENT = "sub_agent"
+    SUB_AGENT = "sub_agent"
+    # 预留：未来 Phase D 实装
     # SHELL = "shell"
 
 

@@ -28,6 +28,8 @@ from core.task import (
     TaskType,
     TranscriptWriter,
     read_transcript,
+    reset_parent_task_id,
+    set_parent_task_id,
     transcript_path,
 )
 
@@ -159,6 +161,7 @@ async def _run_pipeline_task(
 
     writer.write("started", {"requirement": requirement})
 
+    parent_token = set_parent_task_id(task_id)
     try:
         result = await pipeline.execute(
             config,
@@ -187,6 +190,8 @@ async def _run_pipeline_task(
         logger.exception("Task '%s' pipeline failed", task_id)
         _registry.mark_done(task_id, TaskStatus.FAILED, error=str(exc))
         writer.write("error", {"error": str(exc)})
+    finally:
+        reset_parent_task_id(parent_token)
 
 
 async def _run_single_agent_fallback(
@@ -199,6 +204,7 @@ async def _run_single_agent_fallback(
     writer.write("started", {"mode": "fallback_single_agent"})
     _registry.set_progress(task_id, current_step="planner", activity="single-agent fallback")
 
+    parent_token = set_parent_task_id(task_id)
     try:
         result = await cap_registry.execute("planner", requirement=requirement)
         _registry.mark_done(task_id, TaskStatus.COMPLETED, output=result)
@@ -212,6 +218,8 @@ async def _run_single_agent_fallback(
         logger.exception("Task '%s' single-agent fallback failed", task_id)
         _registry.mark_done(task_id, TaskStatus.FAILED, error=str(exc))
         writer.write("error", {"error": str(exc)})
+    finally:
+        reset_parent_task_id(parent_token)
 
 
 # ─── 查询 ─────────────────────────────────────────────

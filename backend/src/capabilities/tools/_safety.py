@@ -7,7 +7,23 @@ from pathlib import Path
 
 
 def get_workspace_root() -> Path:
-    """Return the allowed workspace root for tool access."""
+    """Return the allowed workspace root for tool access.
+
+    优先级:
+    1. ``core.task.context._workspace_root_cv`` 设置的 worktree 路径（Phase C 子 Agent 隔离）
+    2. ``AGENTIC_WORKSPACE_ROOT`` 环境变量
+    3. ``core.config.get_tool_runtime_config("file").workspace_root``
+    4. 项目根目录
+    """
+
+    try:
+        from core.task.context import get_workspace_root_override
+
+        override = get_workspace_root_override()
+        if override is not None:
+            return Path(override).expanduser().resolve()
+    except Exception:
+        pass
 
     configured = os.getenv("AGENTIC_WORKSPACE_ROOT", "").strip()
     if configured:

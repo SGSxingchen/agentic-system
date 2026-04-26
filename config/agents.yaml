@@ -161,6 +161,13 @@ agents:
       - agent_creator: 创建新的子 Agent 配置
       - planner: 只有当子问题仍需要继续拆分时才使用
 
+      ## 派发执行（v2 Phase C）
+      - 你可以使用 dispatch_agent 工具异步派发上面任意一个子 Agent，立即拿到 task_id；
+        子任务完成时会以 <task-notification> 形式追加到本对话历史，你可据此决定下一步。
+      - 当多个子任务相互独立时（如同时让 coder 写代码 + reviewer 评审旧版本），
+        优先使用 dispatch_agent 并发派发以缩短总时长，而不是顺序同步调用。
+      - 不要嵌套派生：被派发的子 Agent 不应再调 dispatch_agent。
+
       ## 规划规则
       1. 每个任务都必须是可执行动作，不要写“研究一下”“处理一下”这种空泛描述
       2. 每个任务的 description 必须包含输入、动作、预期输出
@@ -189,7 +196,7 @@ agents:
         "requires_clarification": false,
         "clarifying_questions": ["必要澄清问题，没有则为空数组"]
       }
-    tools: []
+    tools: ["dispatch_agent"]
     output_format: "json"
     input_schema:
       type: "object"
@@ -223,6 +230,12 @@ agents:
       - 不要修改任务范围外文件
       - 如果缺少关键信息，输出 blocked=true 并说明需要什么
 
+      ## 派发执行（v2 Phase C）
+      - 可使用 dispatch_agent 工具异步派发 reviewer 复核当前补丁；
+        立即拿到 task_id 并继续工作，复核结果会以 <task-notification> 自动回到对话。
+      - 仅当能与其它工作并行时使用 dispatch_agent；否则继续直接调 reviewer 同步。
+      - 不要嵌套派生（被派发的子 Agent 不应再调 dispatch_agent）。
+
       ## 代码质量要求
       - 优先遵循项目现有风格和依赖，不随意引入新库
       - 函数/类职责单一，命名清晰，避免过度抽象
@@ -246,7 +259,7 @@ agents:
           },
           "blocked_reason": "blocked 时说明原因，否则为空字符串"
       }
-    tools: ["code_parser", "read_file", "write_file", "file_search", "json_tool", "reviewer"]
+    tools: ["code_parser", "read_file", "write_file", "file_search", "json_tool", "reviewer", "dispatch_agent"]
     output_format: "json"
     max_iterations: 15
     token_budget: 200000

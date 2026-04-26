@@ -167,9 +167,9 @@ agentic-system/
 
 ## 3. 核心架构
 
-> ✅ **编排层 v2 Phase A + B 已落地**（2026-04-26）：Agent 反应式工具循环底盘 + Task 抽象 + Pipeline 编排（替换原 Workflow）。
-> §3.5 含 v2 Phase A 的 Agent 流式工具循环说明；§3.8 Pipeline 编排是当前唯一的多步骤编排引擎；§3.9 是 v2 Phase B 新增的 Task 抽象层。
-> 仍未落地的 Phase C（子 Agent 派生）/ Phase D（snip 压缩 / stop hooks / 边际收益）见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md) §11。
+> ✅ **编排层 v2 Phase A + B + C 已落地**（2026-04-26）：Agent 反应式工具循环底盘 + Task 抽象 + Pipeline 编排（替换原 Workflow） + 非阻塞子 Agent 派生 + `<task-notification>` 回注。
+> §3.5 含 v2 Phase A 的 Agent 流式工具循环说明；§3.8 Pipeline 编排是当前唯一的多步骤编排引擎；§3.9 是 v2 Phase B/C 新增的 Task 抽象 + 子 Agent 派生层。
+> 仍未落地的 Phase D（snip 压缩 / stop hooks / 边际收益 / Worktree GC）见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md) §11。
 
 ### 3.1 系统分层
 
@@ -360,7 +360,20 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - `GET /api/tasks/{id}/transcript` — 读取 JSONL 事件流（数组返回）
 - `DELETE /api/tasks/{id}` — 真正 cancel 后台 asyncio.Task；状态终态化为 `killed`，记录保留可查
 
-**前端**：`TaskPanel` 5s 轮询 `/api/tasks`；卡片显示 progress 摘要 + 取消按钮。WebSocket 推送 progress 留 Phase C。
+**前端**：`TaskPanel` 5s 轮询 `/api/tasks`；卡片显示 progress 摘要 + 取消按钮。WebSocket 推送 progress 留 Phase D。
+
+**v2 Phase C 子 Agent 派生（2026-04-26）**：
+
+新工具 `dispatch_agent`（已自动注册到 CapabilityRegistry，`planner` / `coder` 默认拥有）支持非阻塞地派发已注册的子 Agent：
+
+- 入参：`subagent_type` (必填) / `prompt` (必填) / `worktree` (默认 false) / `description` (可选)
+- 行为：立即创建 `TaskType.SUB_AGENT` 子 task（`parent_id` 指向当前 Pipeline task）+ 后台 `asyncio.create_task` 跑子 Agent；返回 `{task_id, status="dispatched"}`
+- 子 Agent 完成时把结果以 `<task-notification>` user 消息追加到当前 Agent 的对话历史；父 Agent 在下一轮采样前 drain
+- 嵌套保护：`max_depth=1`（被派发的子 Agent 不能再调 dispatch_agent）
+- 父 task 取消时所有 SUB_AGENT 子 task 级联 KILLED（TaskRegistry.kill 递归）
+- Worktree 隔离（可选）：`worktree=true` 时用 `git worktree add --detach` 在 `data/worktrees/{task_id}/` 建临时工作树；通过 contextvar 覆盖 `_safety.get_workspace_root()`，让子 Agent 的文件 tool 在隔离目录运行
+
+跨 async 调用栈传递的运行时上下文集中在 `core/task/context.py`：`parent_task_id` / `notification_box` / `workspace_root_override` / `dispatch_depth` 共 4 个 ContextVar。所有 setter 返回 `Token`，调用方用 try/finally reset。
 
 ---
 

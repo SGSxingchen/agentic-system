@@ -503,17 +503,38 @@ LLM 输出 N 个 tool_use 块
 
 **验收**：通过 `POST /api/tasks` 提交任务 → `GET /api/tasks/{id}` 看到 `progress.current_step` 推进 → `GET /api/tasks/{id}/transcript` 拿到 step_* 事件流 → `DELETE /api/tasks/{id}` 取消时状态变 `killed`。
 
-### Phase C：子 Agent 派生 + Notification 回注
+### Phase C：子 Agent 派生 + Notification 回注 ✅ 已落地（2026-04-26）
 
-支柱 4 + 支柱 8。
+支柱 4 + 支柱 8。**已实施改动**：
 
-- `agent` 工具
-- SubAgentContext 上下文克隆
-- 父子 abort 链
-- `<task-notification>` 注入逻辑
-- 可选 worktree 隔离
+- ✅ `core/task/context.py` 新增 4 个 `ContextVar`：`parent_task_id` / `notification_box` / `workspace_root_override` / `dispatch_depth`（跨 async 调用栈传递运行时状态）
+- ✅ `core/task/notifications.py` 新增 `format_task_notification(payload) -> XML` + `make_user_message`，输出格式参考 Claude Code coordinatorMode；自动 XML 转义防止注入；result 超 2000 字符截断
+- ✅ `core/task/types.py` 新增 `TaskType.SUB_AGENT`
+- ✅ `core/task/registry.py::TaskRegistry.kill` 改造为递归级联：父 task 取消时所有未终态的子 task 一并 cancel；新增 `list_children(parent_id)`
+- ✅ `core/agent/agent.py::Agent.run / run_stream` 入口建 `notification_box: List[Dict]`，挂到 contextvar；每轮 LLM 采样前 `await asyncio.sleep(0)` 让出事件循环 + drain box → `<task-notification>` user 消息追加到 messages
+- ✅ `capabilities/tools/_safety.py::get_workspace_root` 优先看 `workspace_root_override` contextvar，让 dispatch_agent worktree 模式覆盖文件 tool 工作根
+- ✅ `capabilities/tools/dispatch_agent.py` 新增 `DispatchAgentCapability`：
+  - 解析 `subagent_type` → `CapabilityRegistry`，找不到返 error
+  - `check_permissions` + execute 双重校验 `dispatch_depth >= 1`（MVP 禁止嵌套派生）
+  - 可选 `worktree=true`：用 `git worktree add --detach` 在 `data/worktrees/{task_id}/` 建临时 worktree
+  - 创建 `TaskType.SUB_AGENT` 子 task；asyncio.create_task 派生 `_run_subagent` 后台跑；attach 句柄到 registry
+  - 完成 / 失败 / cancel 时回写 TaskRegistry + 父 notification_box + transcript
+  - 立即返回 `{task_id, status="dispatched", summary, worktree}`，不阻塞父 Agent
+- ✅ `routes/tasks.py::_run_pipeline_task` 和 `_run_single_agent_fallback` 用 `set_parent_task_id` 包裹执行；try/finally reset
+- ✅ `config/agents.yaml`：`planner.tools` + `coder.tools` 末尾加 `dispatch_agent`；system_prompt 加使用指引
+- ✅ 测试：`test_notifications.py`（6 用例）+ `test_task_registry.py` 增 `test_kill_cascades_to_child_tasks` / `test_list_children` + `test_dispatch_agent.py`（8 用例：立即返回 / 嵌套保护 / 未知 subagent / 缺参 / 端到端 notification 回注 / failed sub-agent）；605 → 619 通过零退化
 
-**验收**：Planner 在自己的工具循环里派生 Coder 子 Agent，Coder 完成后 Planner 自动看到 notification 并决定下一步（派 Reviewer 还是直接收尾）。
+**仍未做的（明确留给后续 Phase）**：
+- Worktree GC（evict_after / 自动清理）→ Phase D
+- 跨 commit / push 的 worktree 操作 → 不实装（子 Agent 在 worktree 内只读写文件）
+- MCP 远程子 Agent → 预留接口
+- 嵌套派生（max_depth ≥ 2）→ MVP 不做
+- Notification 持久化 / 重试 → 不做（in-memory 即可）
+
+**验收**：
+- 单测验证 dispatch_agent 异步派发 + notification 端到端回注 user role messages（`test_notification_appears_in_parent_messages`）
+- 父 task DELETE 时所有 SUB_AGENT 子 task 级联 KILLED（`test_kill_cascades_to_child_tasks`）
+- `test_check_permissions_denies_at_max_depth` 验证嵌套派生在 schema 层就被拒
 
 ### Phase D：高级特性
 
