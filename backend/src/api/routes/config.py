@@ -11,7 +11,7 @@ from typing import Any, Dict
 from fastapi import APIRouter
 import yaml
 
-from ..schemas import APIResponse, ConfigUpdateRequest
+from ..schemas import APIResponse, ConfigUpdateRequest, ModelListRequest
 from ..dependencies import (
     get_bus,
     get_agent_registry,
@@ -232,6 +232,88 @@ async def update_config(config_data: ConfigUpdateRequest):
 
         traceback.print_exc()
         return APIResponse(status="error", message=str(e))
+
+
+async def _fetch_openai_models(api_key: str, base_url: str | None) -> list[dict]:
+    """调用 OpenAI 兼容端点 /v1/models（DeepSeek、本地代理等同协议都能用）。"""
+    from openai import AsyncOpenAI
+
+    kwargs: Dict[str, Any] = {"api_key": api_key, "timeout": 10.0}
+    if base_url:
+        kwargs["base_url"] = base_url
+    client = AsyncOpenAI(**kwargs)
+    page = await client.models.list()
+    return [
+        {"id": m.id, "owned_by": getattr(m, "owned_by", None)}
+        for m in page.data
+    ]
+
+
+async def _fetch_anthropic_models(api_key: str, base_url: str | None) -> list[dict]:
+    """调用 Anthropic /v1/models（2024 起官方支持）。"""
+    from anthropic import AsyncAnthropic
+
+    kwargs: Dict[str, Any] = {"api_key": api_key, "timeout": 10.0}
+    if base_url:
+        kwargs["base_url"] = base_url
+    client = AsyncAnthropic(**kwargs)
+    page = await client.models.list(limit=200)
+    return [
+        {"id": m.id, "display_name": getattr(m, "display_name", None)}
+        for m in page.data
+    ]
+
+
+@router.post("/api/config/models", response_model=APIResponse)
+async def list_provider_models(request: ModelListRequest):
+    """从 LLM 提供商远端拉取可用模型列表。
+
+    解析顺序：请求体的非空字段 → 已保存的 config.yaml。
+    api_key 全部留空时用服务器侧保存的密钥；二者都没有则报错。
+    远端调用失败时返回 status="error" 但仍带 200，前端据此回退到静态短表。
+    """
+    from core.config import load_config
+
+    config = load_config()
+    saved_llm = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
+
+    provider = (request.provider or saved_llm.get("provider") or "openai").lower()
+    api_key = request.api_key or saved_llm.get("api_key", "")
+    if request.base_url is not None:
+        base_url = request.base_url
+    else:
+        base_url = saved_llm.get("base_url", "")
+    base_url = base_url or None
+
+    if not api_key:
+        return APIResponse(
+            status="error",
+            message="API key 未配置",
+            data={"provider": provider, "models": []},
+        )
+
+    try:
+        if provider == "openai":
+            models = await _fetch_openai_models(api_key, base_url)
+        elif provider == "anthropic":
+            models = await _fetch_anthropic_models(api_key, base_url)
+        else:
+            return APIResponse(
+                status="error",
+                message=f"不支持的 provider: {provider}",
+                data={"provider": provider, "models": []},
+            )
+        return APIResponse(
+            status="ok",
+            data={"provider": provider, "models": models},
+        )
+    except Exception as e:
+        print(f"[WARN] list_provider_models failed: {type(e).__name__}: {e}")
+        return APIResponse(
+            status="error",
+            message=str(e),
+            data={"provider": provider, "models": []},
+        )
 
 
 @router.get("/api/health", response_model=APIResponse)

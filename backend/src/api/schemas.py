@@ -178,6 +178,18 @@ class ConfigUpdateRequest(BaseModel):
     tools: Optional[ToolsConfigRequest] = None
 
 
+class ModelListRequest(BaseModel):
+    """从 LLM 提供商远端拉取模型列表请求
+
+    所有字段都可选；缺省时回退到 backend/src/config.yaml 的已保存配置。
+    api_key 留空表示沿用服务器已保存的密钥（前端密码框未触动时使用）。
+    """
+
+    provider: Optional[str] = Field(default=None, description="openai | anthropic")
+    base_url: Optional[str] = Field(default=None, description="覆盖 base_url；空字符串表示用 SDK 默认")
+    api_key: Optional[str] = Field(default=None, description="覆盖 api_key；留空沿用服务器保存的密钥")
+
+
 class ConfigResponse(BaseModel):
     """配置响应（不暴露 api_key）"""
 

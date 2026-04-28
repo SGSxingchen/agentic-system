@@ -87,6 +87,25 @@ export async function updateConfig(
   return post<void>('/api/config', config)
 }
 
+export interface ProviderModel {
+  id: string
+  owned_by?: string | null
+  display_name?: string | null
+}
+
+export interface ProviderModelList {
+  provider: string
+  models: ProviderModel[]
+}
+
+export async function listProviderModels(params: {
+  provider?: string
+  base_url?: string
+  api_key?: string
+}): Promise<APIResponse<ProviderModelList>> {
+  return post<ProviderModelList>('/api/config/models', params)
+}
+
 // ===== 健康检查 =====
 
 export async function getHealth(): Promise<APIResponse<HealthStatus>> {

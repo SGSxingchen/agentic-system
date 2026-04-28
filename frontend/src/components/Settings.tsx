@@ -57,6 +57,10 @@ export function Settings({ onClose }: SettingsProps) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsSource, setModelsSource] = useState<'remote' | 'fallback' | 'idle'>('idle')
+  const [modelsError, setModelsError] = useState<string | null>(null)
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -235,14 +239,43 @@ export function Settings({ onClose }: SettingsProps) {
     setSaving(false)
   }
 
-  const models: Record<string, string[]> = {
-    openai: ['gpt-5.4', 'gpt-4.1', 'gpt-4o', 'gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo'],
+  // 远端拉取失败时的兜底短表（保持最常用的几个最新模型）
+  const fallbackModels: Record<string, string[]> = {
+    openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
     anthropic: [
+      'claude-opus-4-5',
+      'claude-sonnet-4-5',
+      'claude-haiku-4-5',
       'claude-3-5-sonnet-20241022',
-      'claude-3-opus-20240229',
-      'claude-3-haiku-20240307',
     ],
   }
+
+  const fetchModels = async () => {
+    setModelsLoading(true)
+    setModelsError(null)
+    const res = await api.listProviderModels({
+      provider,
+      base_url: baseUrl,
+      api_key: apiKey || undefined, // 留空 → 后端用已保存的 key
+    })
+    if (res.status === 'ok' && res.data && res.data.models.length > 0) {
+      setAvailableModels(res.data.models.map((m) => m.id))
+      setModelsSource('remote')
+    } else {
+      setAvailableModels(fallbackModels[provider] || [])
+      setModelsSource('fallback')
+      setModelsError(res.message || null)
+    }
+    setModelsLoading(false)
+  }
+
+  // 初次加载完毕、或 provider/base_url 变化时自动拉一次
+  // apiKey 不放入依赖：用户每敲一个字符不应触发请求
+  useEffect(() => {
+    if (loading) return
+    fetchModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider, baseUrl, loading])
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -278,7 +311,23 @@ export function Settings({ onClose }: SettingsProps) {
             </div>
 
             <div className="form-group">
-              <label>模型</label>
+              <label>
+                模型
+                <button
+                  type="button"
+                  className="form-inline-btn"
+                  onClick={fetchModels}
+                  disabled={modelsLoading}
+                  style={{
+                    marginLeft: 8,
+                    fontSize: 12,
+                    padding: '2px 8px',
+                    cursor: modelsLoading ? 'wait' : 'pointer',
+                  }}
+                >
+                  {modelsLoading ? '获取中...' : '刷新列表'}
+                </button>
+              </label>
               <input
                 type="text"
                 list="model-list"
@@ -287,11 +336,23 @@ export function Settings({ onClose }: SettingsProps) {
                 placeholder="输入或选择模型"
               />
               <datalist id="model-list">
-                {(models[provider] || []).map((m) => (
+                {availableModels.map((m) => (
                   <option key={m} value={m} />
                 ))}
               </datalist>
-              <small className="form-hint">可手动输入自定义模型名称</small>
+              <small className="form-hint">
+                {modelsSource === 'remote' && (
+                  <>已从远端拉取 {availableModels.length} 个模型；可手动输入自定义名称</>
+                )}
+                {modelsSource === 'fallback' && (
+                  <>
+                    {modelsError
+                      ? `远端获取失败（${modelsError}），使用兜底列表`
+                      : '使用兜底列表；配置完 API Key 后点击「刷新列表」'}
+                  </>
+                )}
+                {modelsSource === 'idle' && <>可手动输入自定义模型名称</>}
+              </small>
             </div>
 
             <div className="form-group">
