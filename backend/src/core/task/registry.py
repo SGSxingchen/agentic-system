@@ -73,12 +73,12 @@ class TaskRegistry:
         return self._tasks.get(task_id)
 
     def list(self) -> List[TaskState]:
-        """返回所有 task；按 created_at 倒序（最新在前）。"""
-        return sorted(
-            self._tasks.values(),
-            key=lambda t: t.created_at,
-            reverse=True,
-        )
+        """返回所有 task；按插入顺序倒序（最新在前）。
+
+        用 dict 插入序而非 created_at 字符串：Windows 上 datetime 分辨率约
+        16ms，连续 create() 时间戳会相同，字符串排序退化为稳定排序导致顺序错乱。
+        """
+        return list(reversed(self._tasks.values()))
 
     def __contains__(self, task_id: str) -> bool:
         return task_id in self._tasks
@@ -164,12 +164,10 @@ class TaskRegistry:
         return True
 
     def list_children(self, parent_id: str) -> List[TaskState]:
-        """列出某个父任务的所有子任务（按 created_at 倒序）。"""
-        return sorted(
-            (t for t in self._tasks.values() if t.parent_id == parent_id),
-            key=lambda t: t.created_at,
-            reverse=True,
-        )
+        """列出某个父任务的所有子任务（按插入顺序倒序）。"""
+        return [
+            t for t in reversed(self._tasks.values()) if t.parent_id == parent_id
+        ]
 
     # ─── 内部：progress 合并 ──────────────────────────────
 

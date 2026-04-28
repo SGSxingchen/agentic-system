@@ -110,7 +110,7 @@ class FileSearchCapability(CapabilityBase):
 
             results.append(
                 {
-                    "path": str(file_path.relative_to(get_workspace_root())),
+                    "path": file_path.relative_to(get_workspace_root()).as_posix(),
                     "size": file_path.stat().st_size,
                     "match": match_reason or "glob",
                     "snippets": snippets[:3],
