@@ -225,7 +225,7 @@ class TestLoadSystemConfig:
         assert isinstance(config, SystemConfig)
         assert config.llm.provider == "openai"
         assert config.llm.model == "gpt-3.5-turbo"
-        assert config.memory.backend == "memory"
+        assert config.memory.backend == "chroma"
 
     def test_custom_values(self, tmp_path):
         """自定义配置正确加载"""

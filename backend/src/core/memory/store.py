@@ -6,6 +6,7 @@
 """
 import json
 import math
+import hashlib
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -185,11 +186,13 @@ class ChromaStore(BaseMemoryStore):
             import chromadb
         except ImportError:
             raise ImportError(
-                "ChromaDB 未安装，请运行: pip install chromadb\n"
-                "或使用 InMemoryStore 进行开发测试"
+                "ChromaDB 未安装，当前默认记忆后端需要持久化存储。\n"
+                "请运行: pip install chromadb\n"
+                "临时开发可设置 MEMORY_BACKEND=memory 使用 InMemoryStore。"
             )
 
         if persist_dir:
+            Path(persist_dir).mkdir(parents=True, exist_ok=True)
             self._client = chromadb.PersistentClient(path=persist_dir)
         else:
             self._client = chromadb.Client()
@@ -206,17 +209,21 @@ class ChromaStore(BaseMemoryStore):
             "access_count": memory.access_count,
             "created_at": memory.created_at.isoformat(),
             "last_accessed": memory.last_accessed.isoformat(),
-            **{f"meta_{k}": json.dumps(v) if isinstance(v, (dict, list)) else str(v)
-               for k, v in memory.metadata.items()},
+            **{
+                f"meta_{k}": self._encode_metadata_value(v)
+                for k, v in memory.metadata.items()
+            },
         }
 
         kwargs: dict[str, Any] = {
             "ids": [memory.id],
             "documents": [memory.content],
             "metadatas": [metadata],
+            # 使用本地确定性 embedding，避免 Chroma 默认 embedding 函数在
+            # 无网络环境下载模型；项目可通过 MemoryFormation.embedding_fn
+            # 写入更高质量 embedding 覆盖该值。
+            "embeddings": [memory.embedding or self._local_embedding(memory.content)],
         }
-        if memory.embedding:
-            kwargs["embeddings"] = [memory.embedding]
 
         self._collection.upsert(**kwargs)
         return memory.id
@@ -244,7 +251,7 @@ class ChromaStore(BaseMemoryStore):
             kwargs["where"] = where_filter
 
         if query.query:
-            kwargs["query_texts"] = [query.query]
+            kwargs["query_embeddings"] = [self._local_embedding(query.query)]
             result = self._collection.query(**kwargs)
         else:
             # 无查询文本时获取所有并按元数据排序
@@ -334,16 +341,16 @@ class ChromaStore(BaseMemoryStore):
     def _result_to_memory(self, result: dict, index: int) -> Memory:
         """从 ChromaDB get 结果构造 Memory"""
         meta = result["metadatas"][index] if result["metadatas"] else {}
-        emb = (result["embeddings"][index]
-               if result.get("embeddings") and result["embeddings"]
-               else [])
+        emb = self._extract_embedding(result.get("embeddings"), index)
         return Memory(
             id=result["ids"][index],
             type=MemoryType(meta.get("type", "episodic")),
             content=result["documents"][index] if result["documents"] else "",
-            embedding=emb or [],
+            embedding=emb,
             metadata={
-                k[5:]: v for k, v in meta.items() if k.startswith("meta_")
+                k[5:]: self._decode_metadata_value(v)
+                for k, v in meta.items()
+                if k.startswith("meta_")
             },
             importance=float(meta.get("importance", 0.5)),
             access_count=int(meta.get("access_count", 0)),
@@ -358,16 +365,16 @@ class ChromaStore(BaseMemoryStore):
     def _result_to_memory_from_query(self, result: dict, index: int) -> Memory:
         """从 ChromaDB query 结果构造 Memory（query 结果多嵌套一层列表）"""
         meta = result["metadatas"][0][index] if result["metadatas"] else {}
-        emb = (result["embeddings"][0][index]
-               if result.get("embeddings") and result["embeddings"] and result["embeddings"][0]
-               else [])
+        emb = self._extract_query_embedding(result.get("embeddings"), index)
         return Memory(
             id=result["ids"][0][index],
             type=MemoryType(meta.get("type", "episodic")),
             content=result["documents"][0][index] if result["documents"] else "",
-            embedding=emb or [],
+            embedding=emb,
             metadata={
-                k[5:]: v for k, v in meta.items() if k.startswith("meta_")
+                k[5:]: self._decode_metadata_value(v)
+                for k, v in meta.items()
+                if k.startswith("meta_")
             },
             importance=float(meta.get("importance", 0.5)),
             access_count=int(meta.get("access_count", 0)),
@@ -378,6 +385,91 @@ class ChromaStore(BaseMemoryStore):
             if "created_at" in meta
             else datetime.now(),
         )
+
+    @staticmethod
+    def _encode_metadata_value(value: Any) -> str | int | float | bool:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _decode_metadata_value(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if not stripped:
+            return value
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return value
+
+    @staticmethod
+    def _extract_embedding(embeddings: Any, index: int) -> list[float]:
+        if embeddings is None:
+            return []
+        try:
+            value = embeddings[index]
+        except Exception:
+            return []
+        return ChromaStore._coerce_embedding(value)
+
+    @staticmethod
+    def _extract_query_embedding(embeddings: Any, index: int) -> list[float]:
+        if embeddings is None:
+            return []
+        try:
+            value = embeddings[0][index]
+        except Exception:
+            return []
+        return ChromaStore._coerce_embedding(value)
+
+    @staticmethod
+    def _coerce_embedding(value: Any) -> list[float]:
+        if value is None:
+            return []
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if not isinstance(value, list):
+            return []
+        return [float(item) for item in value]
+
+    @staticmethod
+    def _local_embedding(text: str, dimensions: int = 128) -> list[float]:
+        """Small deterministic lexical embedding for offline Chroma operation.
+
+        This is not a replacement for provider embeddings, but it gives Chroma a
+        stable vector space for persistence/search in fresh installs without
+        pulling model weights at runtime.
+        """
+
+        vector = [0.0] * dimensions
+        normalized = str(text or "").lower()
+        tokens = normalized.split()
+        # 中文/无空格文本补充字符级特征；ASCII 文本补充短 ngram 特征。
+        tokens.extend(ch for ch in normalized if "\u4e00" <= ch <= "\u9fff")
+        if len(tokens) <= 1:
+            compact = "".join(normalized.split())
+            tokens.extend(compact[i : i + 3] for i in range(max(0, len(compact) - 2)))
+
+        for token in tokens:
+            if not token:
+                continue
+            digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
+            bucket = int.from_bytes(digest[:4], "big") % dimensions
+            sign = 1.0 if digest[4] % 2 == 0 else -1.0
+            vector[bucket] += sign
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm <= 0:
+            return vector
+        return [value / norm for value in vector]
 
 
 # ---- 工厂函数 ----

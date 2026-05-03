@@ -1,5 +1,6 @@
 """Private assistant memory behavior tests."""
 import sys
+import importlib.util
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -10,7 +11,7 @@ import pytest
 
 from core.llm.base import BaseLLMClient, LLMResponse
 from core.memory import InMemoryStore, Memory, MemoryFormation, MemoryRetriever, MemoryType
-from core.memory.buffer import ConversationMemoryBuffer
+from core.memory.buffer import ConversationMemoryBuffer, should_reflect_early
 from core.memory.processor import MemoryProcessor
 from core.memory.types import MemoryQuery
 
@@ -266,21 +267,51 @@ async def test_retrieve_with_scores_uses_store_search_for_context_candidates():
     assert store.search_queries[0].max_results >= 3
 
 
-async def test_conversation_buffer_returns_reflection_window():
-    buffer = ConversationMemoryBuffer(min_turns=1)
+async def test_conversation_buffer_default_three_turns_triggers_on_third_ordinary_exchange():
+    buffer = ConversationMemoryBuffer(min_turns=3)
+
+    first = buffer.append_exchange("你好", "你好，有什么可以帮你？", source="rest_chat")
+    second = buffer.append_exchange("今天天气怎么样", "我无法查看实时天气。", source="rest_chat")
+    third = buffer.append_exchange("讲个笑话", "好的。", source="rest_chat")
+
+    assert first is None
+    assert second is None
+    assert third is not None
+    assert len(third["turns"]) == 6
+    assert third["source_window"]["message_count"] == 6
+    assert third["source_window"]["trigger_reason"] == "threshold"
+
+
+async def test_conversation_buffer_reflects_significant_preference_on_first_turn():
+    buffer = ConversationMemoryBuffer(min_turns=3)
 
     window = buffer.append_exchange(
-        "我喜欢简洁回答",
-        "好的，我会保持简洁。",
+        "以后默认用中文回答，我喜欢简洁回答",
+        "好的，我会默认用中文并保持简洁。",
         source="rest_chat",
         session_id="chat-1",
     )
 
+    assert should_reflect_early("以后默认用中文回答，我喜欢简洁回答") is True
     assert window is not None
     assert len(window["turns"]) == 2
     assert window["source_window"]["message_count"] == 2
     assert window["source_window"]["session_id"] == "chat-1"
     assert window["source_window"]["source"] == "rest_chat"
+    assert window["source_window"]["trigger_reason"] == "significant"
+
+
+async def test_conversation_buffer_does_not_reflect_first_smalltalk_turn():
+    buffer = ConversationMemoryBuffer(min_turns=3)
+
+    window = buffer.append_exchange(
+        "你好，在吗",
+        "在的，有什么可以帮你？",
+        source="rest_chat",
+    )
+
+    assert should_reflect_early("你好，在吗") is False
+    assert window is None
 
 
 async def test_conversation_buffer_waits_until_threshold():
@@ -311,3 +342,108 @@ async def test_conversation_buffer_isolates_reflection_windows_by_session():
         "A 第二轮",
         "A 回复二",
     ]
+
+
+async def test_chat_reflection_creates_retrievable_memory_after_complete_exchange():
+    from api.dependencies import (
+        set_llm_client,
+        set_memory_buffer,
+        set_memory_formation,
+        set_memory_retriever,
+        set_memory_store,
+    )
+    from api.websocket.handlers import build_memory_context, reflect_chat_exchange
+
+    store = InMemoryStore()
+    formation = MemoryFormation(store)
+    retriever = MemoryRetriever(store)
+    set_memory_store(store)
+    set_memory_formation(formation)
+    set_memory_retriever(retriever)
+    set_memory_buffer(ConversationMemoryBuffer(min_turns=3))
+    set_llm_client(
+        FakeReflectionLLM(
+            """{
+  "memories": [
+    {
+      "memory_type": "semantic",
+      "memory_kind": "preference",
+      "canonical_summary": "用户偏好简洁回答。",
+      "assistant_context": "用户喜欢助手回答简洁。",
+      "topics": ["沟通"],
+      "key_facts": ["偏好简洁"],
+      "importance": 0.8,
+      "confidence": 0.9,
+      "summary_quality": 0.9
+    }
+  ]
+}"""
+        )
+    )
+
+    await reflect_chat_exchange(
+        user_message="以后默认用中文回答，我喜欢你回答简洁一点",
+        assistant_text="好的，我会保持简洁。",
+        source="rest_chat",
+        session_id="chat-auto",
+    )
+
+    stats = await formation.get_stats()
+    assert stats["total"] == 1
+
+    context, count = await build_memory_context("请简洁回答")
+    assert count == 1
+    assert "用户喜欢助手回答简洁" in context
+
+    set_llm_client(None)
+    set_memory_buffer(None)
+    set_memory_formation(None)
+    set_memory_retriever(None)
+    set_memory_store(None)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("chromadb") is None,
+    reason="chromadb is not installed",
+)
+async def test_chroma_store_persists_and_recalls_after_reinitialization(tmp_path):
+    from core.memory import ChromaStore
+
+    persist_dir = tmp_path / "chroma"
+    collection_name = "memory_persistence_test"
+
+    store = ChromaStore(collection_name=collection_name, persist_dir=str(persist_dir))
+    formation = MemoryFormation(store)
+    memory = await formation.create_structured_memory(
+        {
+            "content": "用户的毕设项目是多智能体自动化代码生成系统。",
+            "memory_type": "semantic",
+            "importance": 0.85,
+            "metadata": {
+                "memory_kind": "project_context",
+                "canonical_summary": "用户的毕设项目是多智能体自动化代码生成系统。",
+                "assistant_context": "用户正在做多智能体自动化代码生成系统毕设。",
+                "topics": ["毕设", "多智能体"],
+                "key_facts": ["自动化代码生成系统"],
+                "summary_quality": 0.9,
+                "confidence": 0.9,
+            },
+        }
+    )
+    assert memory is not None
+    assert (await formation.get_stats())["total"] == 1
+
+    first_retriever = MemoryRetriever(store)
+    first_results = await first_retriever.retrieve_with_scores("毕设 多智能体", max_results=3)
+    assert first_results
+
+    reloaded = ChromaStore(collection_name=collection_name, persist_dir=str(persist_dir))
+    reloaded_formation = MemoryFormation(reloaded)
+    assert (await reloaded_formation.get_stats())["total"] == 1
+
+    reloaded_results = await MemoryRetriever(reloaded).retrieve_with_scores(
+        "多智能体毕设",
+        max_results=3,
+    )
+    assert reloaded_results
+    assert reloaded_results[0]["memory"].metadata["assistant_context"].startswith("用户正在做")

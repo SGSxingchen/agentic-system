@@ -635,7 +635,7 @@ class TestConnectionManager:
                 return {"response": "ok"}
 
         ws = _mock_ws()
-        reflect = AsyncMock()
+        scheduled = []
         monkeypatch.setattr(ws_handlers, "manager", ConnectionManager())
         monkeypatch.setattr(
             ws_handlers,
@@ -647,12 +647,16 @@ class TestConnectionManager:
             "build_memory_context",
             AsyncMock(return_value=("", 0)),
         )
-        monkeypatch.setattr(ws_handlers, "reflect_chat_exchange", reflect)
+        monkeypatch.setattr(
+            ws_handlers,
+            "schedule_memory_reflection",
+            lambda **kwargs: scheduled.append(kwargs),
+        )
 
         await ws_handlers._handle_user_message(
             ws,
             {"message": "hello", "session_id": "chat-1"},
         )
 
-        reflect.assert_awaited_once()
-        assert reflect.await_args.kwargs["session_id"] == "chat-1"
+        assert len(scheduled) == 1
+        assert scheduled[0]["session_id"] == "chat-1"

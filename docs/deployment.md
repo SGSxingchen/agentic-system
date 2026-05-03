@@ -49,7 +49,10 @@ llm:
   base_url: ""              # 自定义端点 (可选)
 
 memory:
-  backend: "memory"         # "memory" (内存) 或 "chroma" (ChromaDB 持久化)
+  backend: "chroma"         # 默认 ChromaDB 持久化；开发测试可改 "memory"
+  persist_dir: "./data/chroma"
+  reflection_min_turns: 3   # 默认累计后反思；显著偏好/待办/项目决策可提前触发
+  reflection_max_messages: 12
 ```
 
 或使用环境变量:
@@ -135,8 +138,9 @@ uvicorn api.main:app --host 127.0.0.1 --port 8001 --workers 1
 | `LLM_API_KEY` | API Key | (空) |
 | `LLM_MODEL` | 模型名称 | gpt-3.5-turbo |
 | `LLM_BASE_URL` | 自定义 API 端点 | (空) |
-| `MEMORY_BACKEND` | 记忆后端 | memory |
+| `MEMORY_BACKEND` | 记忆后端 | chroma |
 | `MEMORY_PERSIST_DIR` | ChromaDB 持久化目录 | ./data/chroma |
+| `MEMORY_FALLBACK_TO_MEMORY_ON_ERROR` | Chroma 初始化失败时降级内存 | true |
 | `BUS_QUEUE_SIZE` | 消息队列大小 | 1000 |
 | `BUS_HISTORY_SIZE` | 消息历史保留数 | 500 |
 
@@ -187,18 +191,18 @@ python -m api.main
 
 ### ChromaDB 相关错误
 
-ChromaDB 是可选依赖。如果不需要向量检索:
+ChromaDB 是默认持久化记忆依赖。正常部署请安装:
+
+```bash
+pip install chromadb
+```
+
+如果只是临时开发、且不需要持久化记忆:
 
 ```yaml
 # config.yaml
 memory:
   backend: "memory"  # 使用内存后端
-```
-
-如果需要 ChromaDB:
-
-```bash
-pip install chromadb
 ```
 
 ### API Key 问题

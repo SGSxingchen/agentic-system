@@ -26,7 +26,7 @@
 | 统一消息总线 (UnifiedBus) | ✅ 已实现 | 优先级队列、消息历史、运行指标、向后兼容 SimpleBus |
 | 事件引擎 + 扳机系统 | ✅ 已实现 | ECA 规则引擎，条件评估，优先级调度 |
 | 4 个专业智能体 | ✅ 已实现 | Assistant / Planner / Coder / Reviewer |
-| 长期记忆系统 | ✅ 已实现 | 情景/语义/程序记忆，InMemory + ChromaDB 双后端 |
+| 长期记忆系统 | ✅ 已实现 | 默认 ChromaDB 持久化，自动对话反思生成，检索注入，InMemory 降级 |
 | 工作流编排 | ✅ 已实现 | 顺序/并行执行，YAML 模板驱动 |
 | 能力插件系统 | ✅ 已实现 | CodeParser + StaticAnalyzer + TestRunner |
 | YAML 配置体系 | ✅ 已实现 | config/ 目录 5 个 YAML，动态加载，fallback 机制 |
@@ -202,7 +202,7 @@ LLM 客户端层 (OpenAI / Anthropic)
 5. TriggerRegistry              → 从 config/triggers.yaml 加载扳机
 6. EventEngine                  → 初始化事件引擎
 7. WorkflowOrchestrator         → 从 config/workflows.yaml 加载模板
-8. init_memory_system()         → 初始化记忆存储/检索/巩固
+8. init_memory_system()         → 初始化持久化记忆存储/检索/巩固/对话反思缓冲
 9. reload_agent()               → 从 config/agents.yaml 创建并注册 Agent
 10. lifecycle_manager.start()   → 启动健康监控
 ```
@@ -278,6 +278,16 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 **三种类型:** episodic (情景) / semantic (语义) / procedural (程序)
 
+**当前闭环:** 记忆系统默认使用 `chroma` 后端并持久化到项目内
+`./data/chroma`。REST chat、REST SSE stream 和 WebSocket 流式对话都会在生成
+前按用户消息召回相关记忆，将 `assistant_context` / `canonical_summary` 作为
+「长期记忆 - 不可信资料」注入 Agent system prompt；完整 assistant 回复结束后
+仅将对话片段追加到后台反思缓冲。`ConversationMemoryBuffer` 按 `session_id`
+隔离反思窗口，默认累计 3 轮后反思；遇到“记住/以后默认/我喜欢/待办/需求变更”
+等显著长期信号时可提前触发。触发后交给后台任务中的
+`MemoryProcessor` 生成结构化候选，再由 `MemoryFormation` 去重、巩固并写入
+存储。不会按 token 写入。
+
 **v2 方向:** 升级为私人助理式全局长期记忆层。所有记忆默认进入共享个人记忆池，`session_id` 仅作为来源追踪，不作为默认召回过滤条件；自动对话反思缓冲必须按 `session_id` 隔离，避免跨会话混合摘要。新增自动对话反思、`canonical_summary` / `assistant_context` 双摘要、检索评分解释和近似去重。
 
 **安全约束:** 记忆注入 Agent prompt 时必须标记为不可信资料，只能作为事实参考，不能执行记忆文本中的指令。解释性召回必须先使用底层 `MemoryStore.search()` 做候选粗筛，保留 ChromaDB 等后端的语义检索能力；只有最终选中的召回结果更新访问记录。
@@ -302,9 +312,11 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 **组件:**
 | 组件 | 职责 |
 |------|------|
-| `MemoryStore` | 存储后端 (InMemoryStore 或 ChromaStore) |
+| `MemoryStore` | 存储后端 (默认 ChromaStore；缺依赖时清晰提示并可降级 InMemoryStore) |
+| `ConversationMemoryBuffer` | 收集完整用户/助手回合，按 session 隔离并按阈值/显著信号触发自动反思窗口 |
+| `MemoryProcessor` | LLM 反思对话窗口，输出 `canonical_summary` / `assistant_context` 等候选 |
 | `MemoryFormation` | 创建、巩固 (去重合并)、遗忘 (时间衰减) |
-| `MemoryRetriever` | 多信号加权检索 (相关性 + 时间 + 重要性 + 频率) |
+| `MemoryRetriever` | 多信号加权检索 (相关性 + 时间 + 重要性 + 频率) 并返回召回解释 |
 | `embedding.py` | OpenAI text-embedding 向量化 |
 
 ### 3.7 能力系统
@@ -348,7 +360,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 | 文件 | 顶层键 | 作用 |
 |------|--------|------|
-| `system.yaml` | 直接合并到顶层 | 全局配置 (LLM/Bus/Memory/Server 等) |
+| `system.yaml` | 直接合并到顶层 | 全局配置 (LLM/Bus/Memory/Server 等；Memory 默认 chroma + ./data/chroma) |
 | `agents.yaml` | `agents` (列表) | 4 个 Agent 定义 |
 | `triggers.yaml` | `triggers` (列表) | 5 个事件扳机规则 |
 | `capabilities.yaml` | `capabilities` (列表) | 2 个原生能力 (MCP/OpenAPI 预留) |
@@ -366,6 +378,21 @@ load_system_config()    # 类型安全版，返回 Pydantic SystemConfig
 **环境变量覆盖:**
 `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`,
 `MEMORY_BACKEND`, `MEMORY_PERSIST_DIR`, `BUS_QUEUE_SIZE`, `BUS_HISTORY_SIZE`
+
+记忆默认配置:
+
+```yaml
+memory:
+  backend: "chroma"
+  persist_dir: "./data/chroma"
+  collection_name: "agent_memories"
+  reflection_min_turns: 3
+  reflection_max_messages: 12
+  fallback_to_memory_on_error: true
+```
+
+若运行环境没有安装 `chromadb`，启动日志会明确提示安装方式；默认允许降级到
+内存后端以便开发环境仍能启动，但生产/验收环境应安装依赖并保持 chroma。
 
 ### 4.4 动态加载 (main.py)
 
