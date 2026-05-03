@@ -102,6 +102,11 @@ export interface Memory {
   created_at: string
   last_accessed?: string
   metadata: Record<string, any>
+  retrieval?: {
+    score?: number
+    breakdown?: Record<string, number>
+    deduped_similar_ids?: string[]
+  }
 }
 
 export interface MemoryStats {
@@ -114,6 +119,27 @@ export interface MemoryStats {
   }
   oldest_memory?: string
   newest_memory?: string
+}
+
+export interface MemorySettings {
+  backend: string
+  persist_dir: string
+  collection_name: string
+  auto_reflection_enabled: boolean
+  reflection_min_turns: number
+  reflection_max_messages: number
+  recall_max_results: number
+  recall_max_chars: number
+  recall_score_threshold: number
+  fallback_to_memory_on_error: boolean
+  consolidation_threshold: number
+  forget_after_days: number
+  forget_min_importance: number
+  status: {
+    initialized: boolean
+    runtime_store?: string
+    note?: string
+  }
 }
 
 // ===== 任务和管线 =====
@@ -290,7 +316,16 @@ export interface ToolPromptInfo {
 
 // ===== 视图类型 =====
 
-export type PanelType = 'chat' | 'tasks' | 'agents' | 'memory' | 'monitor' | 'pipeline' | 'evolution' | 'personas'
+export type PanelType =
+  | 'chat'
+  | 'tasks'
+  | 'agents'
+  | 'memory'
+  | 'memory-settings'
+  | 'monitor'
+  | 'pipeline'
+  | 'evolution'
+  | 'personas'
 
 // ===== 视图类型（新 Layout 导航） =====
 

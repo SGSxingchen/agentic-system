@@ -42,9 +42,16 @@ class MemoryConfig(BaseModel):
     backend: str = Field(default="chroma", description="存储后端: memory, chroma")
     persist_dir: str = Field(default="./data/chroma", description="持久化目录")
     collection_name: str = Field(default="agent_memories", description="集合名称")
+    auto_reflection_enabled: bool = Field(default=True, description="是否启用自动对话反思形成记忆")
     reflection_min_turns: int = Field(default=3, ge=1, description="自动反思触发轮数")
     reflection_max_messages: int = Field(default=12, ge=2, description="反思窗口最大消息数")
+    recall_max_results: int = Field(default=3, ge=1, description="默认注入提示词的召回记忆数量")
+    recall_max_chars: int = Field(default=1200, ge=200, description="默认注入提示词的召回上下文字符预算")
+    recall_score_threshold: float = Field(default=0.0, ge=0, le=1, description="召回结果最低综合分数阈值")
     fallback_to_memory_on_error: bool = Field(default=True, description="Chroma 初始化失败时是否降级内存")
+    consolidation_threshold: float = Field(default=0.3, ge=0, le=1, description="记忆巩固相似阈值")
+    forget_after_days: int = Field(default=30, ge=1, description="多少天未访问后进入遗忘候选")
+    forget_min_importance: float = Field(default=0.3, ge=0, le=1, description="遗忘的低重要性阈值")
 
 
 class BusConfig(BaseModel):
@@ -216,6 +223,12 @@ def _apply_env_overrides(raw: Dict[str, Any]) -> Dict[str, Any]:
         memory["persist_dir"] = value
     if value := os.getenv("MEMORY_FALLBACK_TO_MEMORY_ON_ERROR"):
         memory["fallback_to_memory_on_error"] = value.strip().lower() in {"1", "true", "yes", "on"}
+    if value := os.getenv("MEMORY_AUTO_REFLECTION_ENABLED"):
+        memory["auto_reflection_enabled"] = value.strip().lower() in {"1", "true", "yes", "on"}
+    if value := os.getenv("MEMORY_RECALL_MAX_RESULTS"):
+        memory["recall_max_results"] = int(value)
+    if value := os.getenv("MEMORY_RECALL_SCORE_THRESHOLD"):
+        memory["recall_score_threshold"] = float(value)
 
     bus = raw.setdefault("bus", {})
     if value := os.getenv("BUS_QUEUE_SIZE"):
@@ -352,9 +365,16 @@ def load_config(
             "backend": "chroma",
             "persist_dir": "./data/chroma",
             "collection_name": "agent_memories",
+            "auto_reflection_enabled": True,
             "reflection_min_turns": 3,
             "reflection_max_messages": 12,
+            "recall_max_results": 3,
+            "recall_max_chars": 1200,
+            "recall_score_threshold": 0.0,
             "fallback_to_memory_on_error": True,
+            "consolidation_threshold": 0.3,
+            "forget_after_days": 30,
+            "forget_min_importance": 0.3,
         },
         "tools": {
             "web_search": {

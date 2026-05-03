@@ -3,6 +3,7 @@ import type {
   AgentInfo,
   Memory,
   MemoryStats,
+  MemorySettings,
   HealthStatus,
   SystemConfig,
   Task,
@@ -118,6 +119,8 @@ export async function getHealth(): Promise<APIResponse<HealthStatus>> {
 
 // ===== 记忆 API =====
 
+export type MemoryStatsResponse = MemoryStats
+
 export async function getMemoryStats(): Promise<APIResponse<MemoryStats>> {
   return get<MemoryStats>('/api/memory/stats')
 }
@@ -154,18 +157,40 @@ export async function createMemory(data: {
   })
 }
 
+export async function updateMemory(
+  memoryId: string,
+  data: {
+    content?: string
+    type?: string
+    importance?: number
+    metadata?: Record<string, unknown>
+  }
+): Promise<APIResponse<Memory>> {
+  return put<Memory>(`/api/memory/${memoryId}`, data)
+}
+
 export async function deleteMemory(
   memoryId: string
 ): Promise<APIResponse<void>> {
   return del<void>(`/api/memory/${memoryId}`)
 }
 
-export async function consolidateMemories(): Promise<APIResponse<void>> {
-  return post<void>('/api/memory/consolidate')
+export async function getMemorySettings(): Promise<APIResponse<MemorySettings>> {
+  return get<MemorySettings>('/api/memory/settings')
 }
 
-export async function forgetMemories(): Promise<APIResponse<void>> {
-  return post<void>('/api/memory/forget')
+export async function updateMemorySettings(
+  settings: Partial<MemorySettings>
+): Promise<APIResponse<MemorySettings>> {
+  return post<MemorySettings>('/api/memory/settings', settings)
+}
+
+export async function consolidateMemories(): Promise<APIResponse<Record<string, number>>> {
+  return post<Record<string, number>>('/api/memory/consolidate')
+}
+
+export async function forgetMemories(): Promise<APIResponse<{ forgotten: number }>> {
+  return post<{ forgotten: number }>('/api/memory/forget')
 }
 
 // ===== 智能体 API =====

@@ -144,7 +144,12 @@ async def init_memory_system(config: Dict[str, Any]):
         backend = "memory"
         store_kwargs = {}
         memory_store = create_memory_store("memory")
-    memory_formation = MemoryFormation(store=memory_store)
+    memory_formation = MemoryFormation(
+        store=memory_store,
+        consolidation_threshold=float(memory_config.get("consolidation_threshold", 0.3)),
+        forget_after_days=int(memory_config.get("forget_after_days", 30)),
+        forget_min_importance=float(memory_config.get("forget_min_importance", 0.3)),
+    )
     memory_retriever = MemoryRetriever(store=memory_store)
     memory_buffer = ConversationMemoryBuffer(
         min_turns=int(memory_config.get("reflection_min_turns", 3)),
