@@ -788,3 +788,28 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 进化页按系统组成展示：Assistants/Agents、Tools、Skills/MCP Context、Memory/Reflection、Models/Providers、Runtime/Orchestration、Evolution/Reflection Pipeline、Observability/Config。每个部分必须展示真实已有数据；缺数据时显示明确 empty state，不使用硬编码假运行数据。
 
 Evolution Command 区域允许用户用一句目标生成系统级任务指令，并可提交为 Pipeline Task。指令必须强调：先审查架构状态、再设计最小可行改造、按文档实现、运行验证。
+
+---
+
+## 14. Agent Run / 多实例调度模型（v2.5 新增）
+
+### 14.1 为什么替代固定流水线
+
+旧 `Pipeline` 仍可作为兼容模板执行器存在，但不再是默认任务模型。固定 plan→code→review 步骤把“下一步”写死在调度层，无法表达多个 agent/session/workspace/task 并发实例，也无法让 Agent 根据工具反馈自主调整策略。
+
+新默认模型是 **Agent Run**：每次运行都是一个独立实例，拥有 `run_id/task_id`、`agent_name`、`session_id`、`workspace_id`、`goal`、`mode`、`strategy`、状态机、事件 transcript、输出和取消控制。调度层只负责创建实例、隔离工作区、记录事件、广播状态和取消；Agent 自己的 tool-use loop 决定下一步。
+
+### 14.2 后端入口
+
+- `POST /api/runs` 创建自主运行实例。
+- `GET /api/runs` 按 agent/session/workspace/status 查询多个运行。
+- `GET /api/runs/{run_id}` 查看运行状态。
+- `GET /api/runs/{run_id}/events` 读取 JSONL transcript 事件流。
+- `POST /api/runs/{run_id}/control` 或 `DELETE /api/runs/{run_id}` 取消运行。
+- `GET /api/runs/workspaces` 汇总当前运行涉及的工作区。
+
+兼容层：`POST /api/tasks` 的默认 `pipeline=auto` 已迁移为创建 `agent_run`；只有显式传入非 `auto` 的 `pipeline` 才走旧固定 Pipeline 模板。
+
+### 14.3 前端入口
+
+左侧“运行”页面替代旧单任务流水线视角，可选择 Agent、Session、Workspace 创建多个并行 Agent Run，并展开查看每个实例的事件流、进度、结果和错误。旧“管线(兼容)”页面保留，用于编辑/执行 YAML Pipeline 模板和迁移历史用例。

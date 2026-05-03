@@ -59,6 +59,7 @@ from .routes import (
     artifacts_router,
     pipelines_router,
     tasks_router,
+    runs_router,
 )
 from .websocket.handlers import (
     build_memory_context,
@@ -426,6 +427,7 @@ app.add_middleware(
 )
 
 app.include_router(tasks_router)
+app.include_router(runs_router)
 app.include_router(agents_router)
 app.include_router(pipelines_router)
 app.include_router(memory_router)

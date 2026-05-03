@@ -222,3 +222,35 @@ Pipeline 执行 → bus.publish(step_started / step_completed)
 进化页面的产品定位是 **Agentic System Architecture Dashboard + Evolution Command Center**。它不再把 assistant、Agent CRUD 或 Tool CRUD 作为“进化”本身，而是先聚合展示当前系统状态：Agents、Tools、Skills/MCP、Memory/Reflection、Models/Providers、Runtime/Pipeline、Evolution Pipeline 和 Observability/Config。
 
 后端通过 `GET /api/evolution/system-status` 复用运行时注册中心、配置、记忆、管线和总线指标生成状态摘要；通过 `POST /api/evolution/command` 将用户目标与当前状态快照合成为可提交给任务管线的进化指令。原有动态 Tool 和 Tool prompt 接口继续作为组件维护能力保留。
+
+---
+
+## v2.5 Agent Run 调度架构
+
+系统默认编排从固定 Pipeline 迁移为 Agent Run。Pipeline 的问题是把步骤顺序写在模板里，适合演示固定 plan/code/review，却不适合多 agent、多 session、多 workspace 并发工作，也不适合让 Agent 根据工具结果自主改变策略。
+
+Agent Run 的核心抽象：
+
+```
+RunInstance = {
+  run_id/task_id,
+  agent_name,
+  session_id,
+  workspace_id,
+  goal,
+  mode: autonomous,
+  strategy: agent_decides,
+  status,
+  progress,
+  transcript,
+  output/error
+}
+```
+
+调度层职责收敛为：创建实例、分配隔离 workspace、设置 contextvars、启动 Agent tool-use loop、落盘 transcript、广播 monitor 事件、支持取消。它不读取固定步骤、不推断 plan/code/review 顺序，也不把 tool 调用伪装成流水线步骤。
+
+兼容边界：
+
+- `core.pipeline.Pipeline`、`/api/pipelines/*` 和 YAML pipeline 模板保留，用于旧演示与迁移。
+- `/api/tasks` 默认 `pipeline=auto` 已映射到 Agent Run；显式 `pipeline=<template>` 才进入旧 Pipeline。
+- 前端“运行”页面展示多个并行 Agent Run；“管线(兼容)”页面只服务历史模板。

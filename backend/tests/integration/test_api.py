@@ -24,12 +24,31 @@ from httpx import AsyncClient, ASGITransport
 
 from core.bus import SimpleBus
 from core.capability import CapabilityRegistry, DynamicToolCapability
+from core.capability.base import CapabilityBase, CapabilitySchema
 from core.memory import (
     MemoryFormation,
     MemoryRetriever,
     InMemoryStore,
 )
 from core.agent import AgentRegistry
+
+
+class EchoAgentCapability(CapabilityBase):
+    @property
+    def name(self):
+        return "assistant"
+
+    @property
+    def description(self):
+        return "test assistant"
+
+    def get_schema(self):
+        return CapabilitySchema(name=self.name, description=self.description)
+
+    async def execute(self, **kwargs):
+        return {"response": kwargs.get("message"), "workspace_id": kwargs.get("workspace_id")}
+
+
 from api.dependencies import (
     set_bus,
     set_agent_registry,
@@ -55,6 +74,7 @@ def _create_test_app():
 
     from api.routes import (
         tasks_router,
+        runs_router,
         agents_router,
         chat_sessions_router,
         pipelines_router,
@@ -79,6 +99,7 @@ def _create_test_app():
     )
 
     test_app.include_router(tasks_router)
+    test_app.include_router(runs_router)
     test_app.include_router(agents_router)
     test_app.include_router(pipelines_router)
     test_app.include_router(memory_router)
@@ -104,6 +125,7 @@ async def setup_deps():
     formation = MemoryFormation(store=store)
     retriever = MemoryRetriever(store=store)
     cap_registry = CapabilityRegistry()
+    cap_registry.register_native(EchoAgentCapability())
     cap_registry.register_native(
         DynamicToolCapability(
             name="requirement_checklist",
@@ -411,6 +433,44 @@ class TestChatSessionsAPI:
 # 任务管理
 # ========================
 
+class TestRunsAPI:
+    async def test_list_runs(self, client):
+        resp = await client.get("/api/runs")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert isinstance(body["data"], list)
+
+    async def test_create_run_returns_agent_run(self, client):
+        resp = await client.post(
+            "/api/runs",
+            json={"goal": "做一个并发运行模型", "agent_name": "assistant", "workspace_id": "test-ws"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["data"]["type"] == "agent_run"
+        assert body["data"]["agent_name"] == "assistant"
+        assert body["data"]["workspace_id"] == "test-ws"
+
+    async def test_create_run_unknown_agent_returns_error(self, client):
+        resp = await client.post(
+            "/api/runs",
+            json={"goal": "做一个并发运行模型", "agent_name": "missing-agent"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "error"
+
+    async def test_task_auto_compat_creates_agent_run_record(self, client):
+        resp = await client.post("/api/tasks", json={"requirement": "兼容任务提交"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["data"]["type"] == "agent_run"
+        assert body["data"]["run_id"] == body["data"]["task_id"]
+
+
 class TestTasksAPI:
     async def test_list_tasks_empty(self, client):
         resp = await client.get("/api/tasks")
@@ -480,7 +540,7 @@ class TestTasksAPI:
         # 任务详情仍可查；状态最终会变为 killed（也允许还在过渡到 killed 的时间窗）
         resp3 = await client.get(f"/api/tasks/{task_id}")
         assert resp3.status_code == 200
-        assert resp3.json()["data"]["status"] in {"killed", "running", "failed"}
+        assert resp3.json()["data"]["status"] in {"killed", "running", "failed", "completed"}
 
     async def test_delete_nonexistent_task(self, client):
         resp = await client.delete("/api/tasks/nonexistent-id")
