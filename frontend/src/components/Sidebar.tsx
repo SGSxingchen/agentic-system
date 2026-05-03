@@ -73,6 +73,14 @@ const Icons = {
       <circle cx="12" cy="12" r="1" />
     </svg>
   ),
+  personas: (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
+      <path d="M9 12h6" />
+      <path d="M9 16h6" />
+      <path d="M10 8h4" />
+    </svg>
+  ),
   settings: (
     <svg viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="3" />
@@ -89,6 +97,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'memory', icon: Icons.memory, label: '记忆管理' },
   { key: 'memory-settings', icon: Icons.memorySettings, label: '记忆设置' },
   { key: 'evolution', icon: Icons.evolution, label: '进化' },
+  { key: 'personas', icon: Icons.personas, label: '人格' },
   { key: 'monitor', icon: Icons.monitor, label: '监控' },
 ]
 

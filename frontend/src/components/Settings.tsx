@@ -304,8 +304,14 @@ export function Settings({ onClose }: SettingsProps) {
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
-          <h2>设置</h2>
-          <button className="settings-close-btn" onClick={onClose}>
+          <div>
+            <p className="settings-eyebrow">System controls</p>
+            <h2>设置中心</h2>
+            <p className="settings-subtitle">
+              优先配置常用模型和搜索能力；高级参数已收纳到折叠区。
+            </p>
+          </div>
+          <button className="settings-close-btn" onClick={onClose} aria-label="关闭设置">
             ✕
           </button>
         </div>
@@ -316,272 +322,306 @@ export function Settings({ onClose }: SettingsProps) {
           <div className="settings-loading">加载配置中...</div>
         ) : (
           <>
-            <section className="settings-section">
+            <div className="settings-overview" aria-label="当前设置概览">
+              <div className="settings-overview-card">
+                <span>当前模型</span>
+                <strong>{model || '未配置模型'}</strong>
+                <small>{provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} · {baseUrl ? '自定义地址' : '默认地址'}</small>
+              </div>
+              <div className="settings-overview-card">
+                <span>密钥状态</span>
+                <strong className={apiKeySet ? 'status-ok' : 'status-warn'}>
+                  {apiKeySet ? 'API Key 已保存' : '待填写 API Key'}
+                </strong>
+                <small>留空保存时会保持旧密钥</small>
+              </div>
+              <div className="settings-overview-card">
+                <span>工具状态</span>
+                <strong>{webSearchProvider || 'duckduckgo'}</strong>
+                <small>{shellEnabled ? 'Bash 工具已启用' : 'Bash 工具关闭（推荐）'}</small>
+              </div>
+            </div>
+
+            <section className="settings-section settings-section--primary">
               <div className="settings-section-title">
-                <h3>模型配置</h3>
-                <p>控制主 Agent 和子 Agent 调用的 LLM。</p>
-              </div>
-
-            <div className="form-group">
-              <label>LLM 提供商</label>
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value)}
-              >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic (Claude)</option>
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label>
-                模型
-                <button
-                  type="button"
-                  className="form-inline-btn"
-                  onClick={fetchModels}
-                  disabled={modelsLoading}
-                  style={{
-                    marginLeft: 8,
-                    fontSize: 12,
-                    padding: '2px 8px',
-                    cursor: modelsLoading ? 'wait' : 'pointer',
-                  }}
-                >
-                  {modelsLoading ? '获取中...' : '刷新列表'}
-                </button>
-              </label>
-              <select
-                value={availableModels.includes(model) ? model : '__custom__'}
-                onChange={(e) => {
-                  if (e.target.value !== '__custom__') {
-                    setModel(e.target.value)
-                  }
-                }}
-              >
-                {!availableModels.includes(model) && (
-                  <option value="__custom__">当前自定义：{model || '未填写'}</option>
-                )}
-                {availableModels.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="也可以手动输入自定义模型"
-                style={{ marginTop: 8 }}
-              />
-              <small className="form-hint">
-                {modelsSource === 'remote' && (
-                  <>已从远端拉取 {availableModels.length} 个模型；可手动输入自定义名称</>
-                )}
-                {modelsSource === 'fallback' && (
-                  <>
-                    {modelsError
-                      ? `远端获取失败（${modelsError}），使用兜底列表`
-                      : '使用兜底列表；配置完 API Key 后点击「刷新列表」'}
-                  </>
-                )}
-                {modelsSource === 'idle' && <>可手动输入自定义模型名称</>}
-              </small>
-            </div>
-
-            <div className="form-group">
-              <label>API Key</label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={apiKeySet ? '已设置 (留空保持不变)' : '请输入 API Key'}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Base URL（可选）</label>
-              <input
-                type="text"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="留空使用默认地址"
-              />
-              <small className="form-hint">用于代理或自部署服务</small>
-            </div>
-
-            <div className="settings-grid">
-              <div className="form-group">
-                <label>Temperature</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  value={temperature}
-                  onChange={(e) => setTemperature(Number(e.target.value))}
-                />
-                <small className="form-hint">越低越稳定，越高越发散</small>
-              </div>
-
-              <div className="form-group">
-                <label>Max Tokens</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={maxTokens}
-                  onChange={(e) => setMaxTokens(Number(e.target.value))}
-                />
-                <small className="form-hint">单次回复最大输出长度</small>
-              </div>
-            </div>
-
-            <div className="settings-grid">
-              <div className="form-group">
-                <label>Top P（可选）</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={topP}
-                  onChange={(e) => setTopP(e.target.value)}
-                  placeholder="留空不传"
-                />
-                <small className="form-hint">OpenAI / Anthropic 都支持；通常不要和 Temperature 同时大幅调整</small>
-              </div>
-
-              <div className="form-group">
-                <label>Stop Sequences</label>
-                <textarea
-                  value={stopSequences}
-                  onChange={(e) => setStopSequences(e.target.value)}
-                  rows={3}
-                  placeholder={'每行一个停止序列'}
-                />
-                <small className="form-hint">OpenAI 会映射为 stop，Anthropic 会映射为 stop_sequences</small>
-              </div>
-            </div>
-
-            {provider === 'openai' && (
-              <div className="provider-params">
-                <div className="settings-section-title settings-section-title--compact">
-                  <h3>OpenAI 对话参数</h3>
-                  <p>仅 provider=openai 时发送，不会传给 Anthropic。</p>
-                </div>
-
-                <div className="settings-grid">
-                  <div className="form-group">
-                    <label>Max Completion Tokens（可选）</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={openaiMaxCompletionTokens}
-                      onChange={(e) => setOpenaiMaxCompletionTokens(e.target.value)}
-                      placeholder="留空使用 Max Tokens"
-                    />
-                  </div>
-
-                  <div className="form-group settings-check-row">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={openaiUseLegacyMaxTokens}
-                        onChange={(e) => setOpenaiUseLegacyMaxTokens(e.target.checked)}
-                      />
-                      使用 legacy max_tokens
-                    </label>
-                    <small className="form-hint">部分 OpenAI 兼容代理不支持 max_completion_tokens 时开启</small>
-                  </div>
-                </div>
-
-                <div className="settings-grid">
-                  <div className="form-group">
-                    <label>Presence Penalty（可选）</label>
-                    <input
-                      type="number"
-                      min={-2}
-                      max={2}
-                      step={0.1}
-                      value={openaiPresencePenalty}
-                      onChange={(e) => setOpenaiPresencePenalty(e.target.value)}
-                      placeholder="留空不传"
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Frequency Penalty（可选）</label>
-                    <input
-                      type="number"
-                      min={-2}
-                      max={2}
-                      step={0.1}
-                      value={openaiFrequencyPenalty}
-                      onChange={(e) => setOpenaiFrequencyPenalty(e.target.value)}
-                      placeholder="留空不传"
-                    />
-                  </div>
-                </div>
-
-                <div className="settings-grid">
-                  <div className="form-group">
-                    <label>Reasoning Effort（可选）</label>
-                    <select
-                      value={openaiReasoningEffort}
-                      onChange={(e) => setOpenaiReasoningEffort(e.target.value)}
-                    >
-                      <option value="">留空不传</option>
-                      <option value="minimal">minimal</option>
-                      <option value="low">low</option>
-                      <option value="medium">medium</option>
-                      <option value="high">high</option>
-                      <option value="xhigh">xhigh</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Seed（可选）</label>
-                    <input
-                      type="number"
-                      value={openaiSeed}
-                      onChange={(e) => setOpenaiSeed(e.target.value)}
-                      placeholder="留空不传"
-                    />
-                  </div>
+                <div>
+                  <span className="settings-section-kicker">常用</span>
+                  <h3>模型与凭据</h3>
+                  <p>日常最常调整的 LLM 提供商、模型、密钥和输出长度。</p>
                 </div>
               </div>
-            )}
 
-            {provider === 'anthropic' && (
-              <div className="provider-params">
-                <div className="settings-section-title settings-section-title--compact">
-                  <h3>Anthropic 对话参数</h3>
-                  <p>仅 provider=anthropic 时发送，不会传给 OpenAI。</p>
+              <div className="settings-grid settings-grid--comfortable">
+                <div className="form-group">
+                  <label>LLM 提供商</label>
+                  <select
+                    value={provider}
+                    onChange={(e) => setProvider(e.target.value)}
+                  >
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic (Claude)</option>
+                  </select>
                 </div>
 
                 <div className="form-group">
-                  <label>Top K（可选）</label>
+                  <label>API Key</label>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={apiKeySet ? '已设置 (留空保持不变)' : '请输入 API Key'}
+                  />
+                  <small className="form-hint">密钥不会回显；输入新值才会覆盖。</small>
+                </div>
+              </div>
+
+              <div className="form-group settings-model-field">
+                <label className="settings-label-row">
+                  <span>模型</span>
+                  <button
+                    type="button"
+                    className="form-inline-btn"
+                    onClick={fetchModels}
+                    disabled={modelsLoading}
+                  >
+                    {modelsLoading ? '获取中...' : '刷新列表'}
+                  </button>
+                </label>
+                <div className="settings-model-picker">
+                  <select
+                    value={availableModels.includes(model) ? model : '__custom__'}
+                    onChange={(e) => {
+                      if (e.target.value !== '__custom__') {
+                        setModel(e.target.value)
+                      }
+                    }}
+                  >
+                    {!availableModels.includes(model) && (
+                      <option value="__custom__">当前自定义：{model || '未填写'}</option>
+                    )}
+                    {availableModels.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder="也可以手动输入自定义模型"
+                  />
+                </div>
+                <small className="form-hint">
+                  {modelsSource === 'remote' && (
+                    <>已从远端拉取 {availableModels.length} 个模型；可手动输入自定义名称</>
+                  )}
+                  {modelsSource === 'fallback' && (
+                    <>
+                      {modelsError
+                        ? `远端获取失败（${modelsError}），使用兜底列表`
+                        : '使用兜底列表；配置完 API Key 后点击「刷新列表」'}
+                    </>
+                  )}
+                  {modelsSource === 'idle' && <>可手动输入自定义模型名称</>}
+                </small>
+              </div>
+
+              <div className="settings-grid settings-grid--comfortable">
+                <div className="form-group">
+                  <label>Base URL（可选）</label>
+                  <input
+                    type="text"
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="留空使用默认地址"
+                  />
+                  <small className="form-hint">用于代理或自部署服务；OpenAI 会自动补齐 /v1。</small>
+                </div>
+
+                <div className="form-group">
+                  <label>Max Tokens</label>
                   <input
                     type="number"
                     min={1}
-                    value={anthropicTopK}
-                    onChange={(e) => setAnthropicTopK(e.target.value)}
-                    placeholder="留空不传"
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(Number(e.target.value))}
                   />
-                  <small className="form-hint">Anthropic Messages API 专属采样参数</small>
+                  <small className="form-hint">单次回复最大输出长度</small>
                 </div>
               </div>
-            )}
+
+              <details className="settings-details">
+                <summary>
+                  <span>高级采样与停止条件</span>
+                  <small>Temperature、Top P、Stop Sequences</small>
+                </summary>
+                <div className="settings-details-body">
+                  <div className="settings-grid">
+                    <div className="form-group">
+                      <label>Temperature</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={temperature}
+                        onChange={(e) => setTemperature(Number(e.target.value))}
+                      />
+                      <small className="form-hint">越低越稳定，越高越发散。</small>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Top P（可选）</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={topP}
+                        onChange={(e) => setTopP(e.target.value)}
+                        placeholder="留空不传"
+                      />
+                      <small className="form-hint">通常不要和 Temperature 同时大幅调整。</small>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Stop Sequences</label>
+                    <textarea
+                      value={stopSequences}
+                      onChange={(e) => setStopSequences(e.target.value)}
+                      rows={3}
+                      placeholder={'每行一个停止序列'}
+                    />
+                    <small className="form-hint">OpenAI 映射为 stop，Anthropic 映射为 stop_sequences。</small>
+                  </div>
+                </div>
+              </details>
+
+              {provider === 'openai' && (
+                <details className="settings-details">
+                  <summary>
+                    <span>OpenAI 专属参数</span>
+                    <small>仅 provider=openai 时发送</small>
+                  </summary>
+                  <div className="settings-details-body">
+                    <div className="settings-grid">
+                      <div className="form-group">
+                        <label>Max Completion Tokens（可选）</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={openaiMaxCompletionTokens}
+                          onChange={(e) => setOpenaiMaxCompletionTokens(e.target.value)}
+                          placeholder="留空使用 Max Tokens"
+                        />
+                      </div>
+
+                      <div className="form-group settings-check-row">
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={openaiUseLegacyMaxTokens}
+                            onChange={(e) => setOpenaiUseLegacyMaxTokens(e.target.checked)}
+                          />
+                          使用 legacy max_tokens
+                        </label>
+                        <small className="form-hint">部分 OpenAI 兼容代理不支持 max_completion_tokens 时开启。</small>
+                      </div>
+                    </div>
+
+                    <div className="settings-grid">
+                      <div className="form-group">
+                        <label>Presence Penalty（可选）</label>
+                        <input
+                          type="number"
+                          min={-2}
+                          max={2}
+                          step={0.1}
+                          value={openaiPresencePenalty}
+                          onChange={(e) => setOpenaiPresencePenalty(e.target.value)}
+                          placeholder="留空不传"
+                        />
+                      </div>
+
+                      <div className="form-group">
+                        <label>Frequency Penalty（可选）</label>
+                        <input
+                          type="number"
+                          min={-2}
+                          max={2}
+                          step={0.1}
+                          value={openaiFrequencyPenalty}
+                          onChange={(e) => setOpenaiFrequencyPenalty(e.target.value)}
+                          placeholder="留空不传"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="settings-grid">
+                      <div className="form-group">
+                        <label>Reasoning Effort（可选）</label>
+                        <select
+                          value={openaiReasoningEffort}
+                          onChange={(e) => setOpenaiReasoningEffort(e.target.value)}
+                        >
+                          <option value="">留空不传</option>
+                          <option value="minimal">minimal</option>
+                          <option value="low">low</option>
+                          <option value="medium">medium</option>
+                          <option value="high">high</option>
+                          <option value="xhigh">xhigh</option>
+                        </select>
+                      </div>
+
+                      <div className="form-group">
+                        <label>Seed（可选）</label>
+                        <input
+                          type="number"
+                          value={openaiSeed}
+                          onChange={(e) => setOpenaiSeed(e.target.value)}
+                          placeholder="留空不传"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              )}
+
+              {provider === 'anthropic' && (
+                <details className="settings-details">
+                  <summary>
+                    <span>Anthropic 专属参数</span>
+                    <small>仅 provider=anthropic 时发送</small>
+                  </summary>
+                  <div className="settings-details-body">
+                    <div className="form-group">
+                      <label>Top K（可选）</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={anthropicTopK}
+                        onChange={(e) => setAnthropicTopK(e.target.value)}
+                        placeholder="留空不传"
+                      />
+                      <small className="form-hint">Anthropic Messages API 专属采样参数。</small>
+                    </div>
+                  </div>
+                </details>
+              )}
             </section>
 
             <section className="settings-section">
               <div className="settings-section-title">
-                <h3>工具配置</h3>
-                <p>工具的 URL、Key 和默认运行参数；Key 只显示是否已设置。</p>
+                <div>
+                  <span className="settings-section-kicker">常用</span>
+                  <h3>联网搜索</h3>
+                  <p>配置搜索提供商、凭据和默认返回规模。</p>
+                </div>
               </div>
 
-              <div className="settings-grid">
+              <div className="settings-grid settings-grid--comfortable">
                 <div className="form-group">
                   <label>Web Search Provider</label>
                   <select
@@ -605,20 +645,7 @@ export function Settings({ onClose }: SettingsProps) {
                 </div>
               </div>
 
-              <div className="form-group">
-                <label>Web Search Base URL（可选）</label>
-                <input
-                  type="text"
-                  value={webSearchBaseUrl}
-                  onChange={(e) => setWebSearchBaseUrl(e.target.value)}
-                  placeholder="留空使用 provider 默认地址"
-                />
-                <small className="form-hint">
-                  DuckDuckGo 默认 https://duckduckgo.com/html/；Brave/Serper 可填代理地址
-                </small>
-              </div>
-
-              <div className="settings-grid">
+              <div className="settings-grid settings-grid--comfortable">
                 <div className="form-group">
                   <label>搜索结果数</label>
                   <input
@@ -641,180 +668,230 @@ export function Settings({ onClose }: SettingsProps) {
                 </div>
               </div>
 
-              <div className="settings-grid">
-                <div className="form-group">
-                  <label>网页读取超时（秒）</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={webFetchTimeout}
-                    onChange={(e) => setWebFetchTimeout(Number(e.target.value))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>网页读取最大字符数</label>
-                  <input
-                    type="number"
-                    min={200}
-                    max={20000}
-                    value={webFetchMaxChars}
-                    onChange={(e) => setWebFetchMaxChars(Number(e.target.value))}
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>文件工具工作区根目录（可选）</label>
-                <input
-                  type="text"
-                  value={workspaceRoot}
-                  onChange={(e) => setWorkspaceRoot(e.target.value)}
-                  placeholder="留空使用项目根目录"
-                />
-                <small className="form-hint">read_file/write_file/file_search 只能访问该目录内文件</small>
-              </div>
-
-              <div className="settings-grid">
-                <div className="form-group settings-check-row">
-                  <label>
+              <details className="settings-details">
+                <summary>
+                  <span>网络读取与文件工具</span>
+                  <small>Base URL、网页读取、工作区根目录</small>
+                </summary>
+                <div className="settings-details-body">
+                  <div className="form-group">
+                    <label>Web Search Base URL（可选）</label>
                     <input
-                      type="checkbox"
-                      checked={shellEnabled}
-                      onChange={(e) => setShellEnabled(e.target.checked)}
+                      type="text"
+                      value={webSearchBaseUrl}
+                      onChange={(e) => setWebSearchBaseUrl(e.target.value)}
+                      placeholder="留空使用 provider 默认地址"
                     />
-                    启用 Bash 工具
-                  </label>
-                  <small className="form-hint">高风险工具，默认关闭</small>
-                </div>
-
-                <div className="form-group">
-                  <label>Shell 超时（秒）</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={shellTimeout}
-                    onChange={(e) => setShellTimeout(Number(e.target.value))}
-                  />
-                </div>
-              </div>
-
-              <div className="custom-tool-configs">
-                <div className="custom-tool-configs-header">
-                  <div>
-                    <h4>自定义工具凭据</h4>
-                    <p>给未来新增工具预留 URL、Key 和扩展参数；Key 留空会保持旧值。</p>
+                    <small className="form-hint">
+                      DuckDuckGo 默认 https://duckduckgo.com/html/；Brave/Serper 可填代理地址。
+                    </small>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-secondary btn-compact"
-                    onClick={() =>
-                      setCustomTools((items) => [
-                        ...items,
-                        {
-                          id: makeCustomToolId(),
-                          name: '',
-                          enabled: true,
-                          baseUrl: '',
-                          apiKey: '',
-                          apiKeySet: false,
-                          extraJson: '{}',
-                        },
-                      ])
-                    }
-                  >
-                    添加工具配置
-                  </button>
-                </div>
 
-                {customTools.length === 0 ? (
-                  <div className="custom-tool-empty">暂无自定义工具凭据。</div>
-                ) : (
-                  customTools.map((tool) => (
-                    <div className="custom-tool-card" key={tool.id}>
-                      <div className="custom-tool-card-header">
-                        <div className="form-group">
-                          <label>工具名称</label>
-                          <input
-                            type="text"
-                            value={tool.name}
-                            onChange={(e) =>
-                              updateCustomTool(tool.id, { name: e.target.value })
-                            }
-                            placeholder="例如 notion_search"
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          className="btn-secondary btn-compact"
-                          onClick={() =>
-                            setCustomTools((items) =>
-                              items.filter((item) => item.id !== tool.id)
-                            )
-                          }
-                        >
-                          移除
-                        </button>
-                      </div>
-
-                      <div className="settings-grid">
-                        <div className="form-group">
-                          <label>Base URL</label>
-                          <input
-                            type="text"
-                            value={tool.baseUrl}
-                            onChange={(e) =>
-                              updateCustomTool(tool.id, { baseUrl: e.target.value })
-                            }
-                            placeholder="工具服务地址，可选"
-                          />
-                        </div>
-
-                        <div className="form-group">
-                          <label>API Key</label>
-                          <input
-                            type="password"
-                            value={tool.apiKey}
-                            onChange={(e) =>
-                              updateCustomTool(tool.id, { apiKey: e.target.value })
-                            }
-                            placeholder={tool.apiKeySet ? '已设置 (留空保持不变)' : '可选'}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="settings-grid">
-                        <div className="form-group settings-check-row">
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={tool.enabled}
-                              onChange={(e) =>
-                                updateCustomTool(tool.id, { enabled: e.target.checked })
-                              }
-                            />
-                            启用该工具配置
-                          </label>
-                        </div>
-
-                        <div className="form-group">
-                          <label>Extra JSON</label>
-                          <textarea
-                            value={tool.extraJson}
-                            onChange={(e) =>
-                              updateCustomTool(tool.id, { extraJson: e.target.value })
-                            }
-                            rows={4}
-                            spellCheck={false}
-                            placeholder='{"region":"us"}'
-                          />
-                        </div>
-                      </div>
+                  <div className="settings-grid">
+                    <div className="form-group">
+                      <label>网页读取超时（秒）</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={webFetchTimeout}
+                        onChange={(e) => setWebFetchTimeout(Number(e.target.value))}
+                      />
                     </div>
-                  ))
-                )}
+
+                    <div className="form-group">
+                      <label>网页读取最大字符数</label>
+                      <input
+                        type="number"
+                        min={200}
+                        max={20000}
+                        value={webFetchMaxChars}
+                        onChange={(e) => setWebFetchMaxChars(Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>文件工具工作区根目录（可选）</label>
+                    <input
+                      type="text"
+                      value={workspaceRoot}
+                      onChange={(e) => setWorkspaceRoot(e.target.value)}
+                      placeholder="留空使用项目根目录"
+                    />
+                    <small className="form-hint">read_file/write_file/file_search 只能访问该目录内文件。</small>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <section className="settings-section settings-section--danger">
+              <div className="settings-section-title">
+                <div>
+                  <span className="settings-section-kicker settings-section-kicker--danger">高级 / 危险</span>
+                  <h3>执行工具与自定义凭据</h3>
+                  <p>Bash 执行和自定义工具属于低频高风险设置，默认折叠。</p>
+                </div>
               </div>
+
+              <details className="settings-details settings-details--danger">
+                <summary>
+                  <span>Bash 执行工具</span>
+                  <small>{shellEnabled ? '当前已启用，请确认风险' : '当前关闭，推荐保持关闭'}</small>
+                </summary>
+                <div className="settings-details-body">
+                  <div className="settings-warning-box">
+                    启用 Bash 后，Agent 可能执行命令。仅在可信环境中开启，并设置合理超时。
+                  </div>
+                  <div className="settings-grid">
+                    <div className="form-group settings-check-row">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={shellEnabled}
+                          onChange={(e) => setShellEnabled(e.target.checked)}
+                        />
+                        启用 Bash 工具
+                      </label>
+                      <small className="form-hint">高风险工具，默认关闭。</small>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Shell 超时（秒）</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={shellTimeout}
+                        onChange={(e) => setShellTimeout(Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              <details className="settings-details">
+                <summary>
+                  <span>自定义工具凭据</span>
+                  <small>{customTools.length > 0 ? `${customTools.length} 个配置` : '暂无配置'}</small>
+                </summary>
+                <div className="settings-details-body">
+                  <div className="custom-tool-configs">
+                    <div className="custom-tool-configs-header">
+                      <div>
+                        <h4>自定义工具凭据</h4>
+                        <p>给未来新增工具预留 URL、Key 和扩展参数；Key 留空会保持旧值。</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-compact"
+                        onClick={() =>
+                          setCustomTools((items) => [
+                            ...items,
+                            {
+                              id: makeCustomToolId(),
+                              name: '',
+                              enabled: true,
+                              baseUrl: '',
+                              apiKey: '',
+                              apiKeySet: false,
+                              extraJson: '{}',
+                            },
+                          ])
+                        }
+                      >
+                        添加工具配置
+                      </button>
+                    </div>
+
+                    {customTools.length === 0 ? (
+                      <div className="custom-tool-empty">暂无自定义工具凭据。</div>
+                    ) : (
+                      customTools.map((tool) => (
+                        <div className="custom-tool-card" key={tool.id}>
+                          <div className="custom-tool-card-header">
+                            <div className="form-group">
+                              <label>工具名称</label>
+                              <input
+                                type="text"
+                                value={tool.name}
+                                onChange={(e) =>
+                                  updateCustomTool(tool.id, { name: e.target.value })
+                                }
+                                placeholder="例如 notion_search"
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn-secondary btn-compact"
+                              onClick={() =>
+                                setCustomTools((items) =>
+                                  items.filter((item) => item.id !== tool.id)
+                                )
+                              }
+                            >
+                              移除
+                            </button>
+                          </div>
+
+                          <div className="settings-grid">
+                            <div className="form-group">
+                              <label>Base URL</label>
+                              <input
+                                type="text"
+                                value={tool.baseUrl}
+                                onChange={(e) =>
+                                  updateCustomTool(tool.id, { baseUrl: e.target.value })
+                                }
+                                placeholder="工具服务地址，可选"
+                              />
+                            </div>
+
+                            <div className="form-group">
+                              <label>API Key</label>
+                              <input
+                                type="password"
+                                value={tool.apiKey}
+                                onChange={(e) =>
+                                  updateCustomTool(tool.id, { apiKey: e.target.value })
+                                }
+                                placeholder={tool.apiKeySet ? '已设置 (留空保持不变)' : '可选'}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="settings-grid">
+                            <div className="form-group settings-check-row">
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={tool.enabled}
+                                  onChange={(e) =>
+                                    updateCustomTool(tool.id, { enabled: e.target.checked })
+                                  }
+                                />
+                                启用该工具配置
+                              </label>
+                            </div>
+
+                            <div className="form-group">
+                              <label>Extra JSON</label>
+                              <textarea
+                                value={tool.extraJson}
+                                onChange={(e) =>
+                                  updateCustomTool(tool.id, { extraJson: e.target.value })
+                                }
+                                rows={4}
+                                spellCheck={false}
+                                placeholder='{"region":"us"}'
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </details>
             </section>
 
             <div className="button-group">
@@ -823,7 +900,7 @@ export function Settings({ onClose }: SettingsProps) {
                 onClick={handleSave}
                 disabled={saving}
               >
-                {saving ? '保存中...' : '保存'}
+                {saving ? '保存中...' : '保存设置'}
               </button>
               <button className="btn-secondary" onClick={onClose}>
                 取消

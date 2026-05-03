@@ -376,6 +376,27 @@ def load_config(
             "forget_after_days": 30,
             "forget_min_importance": 0.3,
         },
+        "tools": {
+            "web_search": {
+                "provider": "duckduckgo",
+                "base_url": "",
+                "api_key": "",
+                "max_results": 5,
+                "timeout": 10,
+            },
+            "web_fetch": {
+                "timeout": 10,
+                "max_chars": 4000,
+            },
+            "file": {
+                "workspace_root": "",
+            },
+            "shell": {
+                "enabled": False,
+                "timeout": 30,
+            },
+            "custom": {},
+        },
     }
 
     merged = _deep_merge(merged, load_yaml_configs(config_dir=config_dir))

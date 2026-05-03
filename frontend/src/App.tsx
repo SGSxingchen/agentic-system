@@ -9,6 +9,7 @@ import { MonitorPanel } from './components/MonitorPanel'
 import { TaskPanel } from './components/TaskPanel'
 import { PipelinePanel } from './components/PipelinePanel'
 import { EvolutionPanel } from './components/EvolutionPanel'
+import { PersonaPanel } from './components/PersonaPanel'
 import { Settings } from './components/Settings'
 import type { WSEvent, Message } from './types'
 import './App.css'
@@ -83,6 +84,8 @@ function AppContent() {
         return <PipelinePanel />
       case 'evolution':
         return <EvolutionPanel />
+      case 'personas':
+        return <PersonaPanel />
       case 'memory':
         return <MemoryPanel initialTab="memories" />
       case 'memory-settings':
