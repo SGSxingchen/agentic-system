@@ -7,6 +7,8 @@ import type {
   HealthStatus,
   SystemConfig,
   Task,
+  RunEventsResponse,
+  RunWorkspaceSummary,
   ChatSession,
   ChatSessionSummary,
   Message,
@@ -374,6 +376,51 @@ export async function deleteTask(
   taskId: string
 ): Promise<APIResponse<void>> {
   return del<void>(`/api/tasks/${taskId}`)
+}
+
+// ===== Agent Run API =====
+
+export async function createRun(data: {
+  goal: string
+  agent_name?: string
+  session_id?: string
+  workspace_id?: string
+  mode?: string
+  strategy?: string
+  input?: Record<string, unknown>
+}): Promise<APIResponse<Task>> {
+  return post<Task>('/api/runs', data)
+}
+
+export async function getRuns(params?: {
+  agent_name?: string
+  workspace_id?: string
+  session_id?: string
+  status?: string
+}): Promise<APIResponse<Task[]>> {
+  const qs = new URLSearchParams()
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) qs.set(key, value)
+    })
+  }
+  return get<Task[]>(`/api/runs${qs.toString() ? `?${qs.toString()}` : ''}`)
+}
+
+export async function getRun(runId: string): Promise<APIResponse<Task>> {
+  return get<Task>(`/api/runs/${runId}`)
+}
+
+export async function getRunEvents(runId: string, offset = 0): Promise<APIResponse<RunEventsResponse>> {
+  return get<RunEventsResponse>(`/api/runs/${runId}/events?offset=${offset}`)
+}
+
+export async function cancelRun(runId: string): Promise<APIResponse<Task>> {
+  return del<Task>(`/api/runs/${runId}`)
+}
+
+export async function getRunWorkspaces(): Promise<APIResponse<RunWorkspaceSummary[]>> {
+  return get<RunWorkspaceSummary[]>('/api/runs/workspaces')
 }
 
 // ===== 智能体调用 =====

@@ -217,6 +217,14 @@ export interface Task {
   requirement?: string
   agent?: string
   pipeline?: string
+  goal?: string
+  type?: 'agent_run' | 'pipeline' | 'sub_agent' | string
+  run_id?: string | null
+  agent_name?: string | null
+  session_id?: string | null
+  workspace_id?: string | null
+  mode?: string
+  strategy?: string
   input?: any
   output?: any
   plan?: any
@@ -229,6 +237,27 @@ export interface Task {
   ended_at?: string | null
   created_at: string
   updated_at?: string
+}
+
+export interface RunEvent {
+  ts: string
+  type: string
+  payload: Record<string, any>
+}
+
+export interface RunEventsResponse {
+  run_id: string
+  offset: number
+  events: RunEvent[]
+}
+
+export interface RunWorkspaceSummary {
+  workspace_id: string
+  path: string
+  runs: number
+  active_runs: number
+  latest_updated_at: string
+  agents: string[]
 }
 
 // ===== 配置 =====

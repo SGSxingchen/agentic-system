@@ -1,7 +1,10 @@
-"""Task 抽象的类型定义（v2 Phase B 支柱 2 + 支柱 5）
+"""Task / Agent Run 抽象的类型定义。
 
 TaskState 是异步工作的统一表示：包含状态机、进度、结果、磁盘 transcript 引用。
-现阶段唯一的 TaskType 是 PIPELINE；未来 Phase C 起会扩展 SUB_AGENT、SHELL。
+
+历史上这里主要承载固定 Pipeline 执行；v2.3 起默认语义迁移为 Agent Run：
+一个可多开的 agent/session/workspace/task 实例，拥有自己的目标、事件流、
+运行控制与结果记录。PIPELINE 仍保留为兼容类型，但不再是默认调度模型。
 """
 from __future__ import annotations
 
@@ -14,7 +17,8 @@ from typing import Any, Dict, Optional
 class TaskType(str, Enum):
     """Task 类型枚举"""
 
-    PIPELINE = "pipeline"
+    AGENT_RUN = "agent_run"
+    PIPELINE = "pipeline"  # 兼容旧固定流水线
     SUB_AGENT = "sub_agent"
     # 预留：未来 Phase D 实装
     # SHELL = "shell"
@@ -65,7 +69,12 @@ class TaskState:
     id: str
     type: TaskType
     requirement: str
-    pipeline_name: str
+    pipeline_name: str = ""  # 兼容旧字段；Agent Run 可为空
+    agent_name: Optional[str] = None
+    session_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    mode: str = "autonomous"
+    strategy: str = "agent_decides"
     status: TaskStatus = TaskStatus.PENDING
     progress: AgentProgress = field(default_factory=AgentProgress)
     error: Optional[str] = None
@@ -92,11 +101,19 @@ class TaskState:
         """序列化为前端友好的字典（枚举 → 字符串）"""
         return {
             "task_id": self.id,
+            "run_id": self.id if self.type is TaskType.AGENT_RUN else None,
             "id": self.id,  # 保持向后兼容
             "type": self.type.value,
             "status": self.status.value,
             "requirement": self.requirement,
+            "goal": self.requirement,
             "pipeline": self.pipeline_name,
+            "agent": self.agent_name,
+            "agent_name": self.agent_name,
+            "session_id": self.session_id,
+            "workspace_id": self.workspace_id,
+            "mode": self.mode,
+            "strategy": self.strategy,
             "progress": self.progress.to_dict(),
             "error": self.error,
             "plan": self.plan,

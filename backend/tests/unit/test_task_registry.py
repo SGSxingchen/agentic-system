@@ -166,3 +166,26 @@ def test_list_children_returns_only_direct_children() -> None:
 
     assert ids == {c1.id, c2.id}
     assert other.id not in ids
+
+
+def test_create_agent_run_state_has_instance_fields() -> None:
+    registry = TaskRegistry()
+    state = registry.create(
+        task_type=TaskType.AGENT_RUN,
+        requirement="ship autonomous scheduler",
+        agent_name="assistant",
+        session_id="session-a",
+        workspace_id="workspace-a",
+        mode="autonomous",
+        strategy="agent_decides",
+    )
+
+    payload = state.to_dict()
+
+    assert payload["type"] == "agent_run"
+    assert payload["run_id"] == state.id
+    assert payload["goal"] == "ship autonomous scheduler"
+    assert payload["agent_name"] == "assistant"
+    assert payload["session_id"] == "session-a"
+    assert payload["workspace_id"] == "workspace-a"
+    assert payload["strategy"] == "agent_decides"
