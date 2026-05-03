@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from .types import Memory, MemoryType
 from .store import BaseMemoryStore
+from .processor import PRIVATE_MEMORY_SCHEMA_VERSION
 
 
 class MemoryFormation:
@@ -70,6 +71,55 @@ class MemoryFormation:
 
         await self.store.save(memory)
         return memory
+
+    async def create_structured_memory(
+        self,
+        candidate: dict[str, Any],
+        *,
+        min_quality: float = 0.35,
+        min_confidence: float = 0.35,
+    ) -> Optional[Memory]:
+        """Create a private-assistant memory from a structured candidate.
+
+        Low quality candidates are ignored. Exact or near-identical memories
+        with the same ``memory_kind`` are merged into the existing memory.
+        """
+
+        metadata = dict(candidate.get("metadata") or {})
+        quality = self._clamp_float(metadata.get("summary_quality"), default=1.0)
+        confidence = self._clamp_float(metadata.get("confidence"), default=1.0)
+        if quality < min_quality or confidence < min_confidence:
+            return None
+
+        canonical_summary = str(
+            metadata.get("canonical_summary") or candidate.get("content") or ""
+        ).strip()
+        if not canonical_summary:
+            return None
+
+        memory_kind = str(metadata.get("memory_kind") or "other").strip() or "other"
+        metadata = self._with_private_defaults(metadata, canonical_summary, memory_kind)
+
+        existing = await self._find_duplicate(canonical_summary, metadata)
+        if existing:
+            existing.importance = min(
+                1.0,
+                max(existing.importance, self._clamp_float(candidate.get("importance"), default=0.5))
+                + 0.05,
+            )
+            existing.access_count += 1
+            existing.last_accessed = datetime.now()
+            existing.metadata = self._merge_metadata(existing.metadata, metadata)
+            await self.store.update(existing)
+            return existing
+
+        memory_type = self._coerce_memory_type(candidate.get("memory_type"))
+        return await self.create_memory(
+            content=canonical_summary,
+            memory_type=memory_type,
+            importance=self._clamp_float(candidate.get("importance"), default=0.5),
+            metadata=metadata,
+        )
 
     async def create_episodic(
         self,
@@ -189,10 +239,16 @@ class MemoryFormation:
         all_memories = await self.store.get_all(limit=10000)
 
         for memory in all_memories:
-            if (
+            metadata = memory.metadata or {}
+            quality = self._clamp_float(metadata.get("summary_quality"), default=0.0)
+            is_active_todo = metadata.get("memory_kind") == "todo"
+            should_forget = (
                 memory.importance < self.forget_min_importance
+                and quality < 0.8
                 and memory.last_accessed < cutoff
-            ):
+                and not is_active_todo
+            )
+            if should_forget:
                 await self.store.delete(memory.id)
                 forgotten += 1
 
@@ -213,3 +269,133 @@ class MemoryFormation:
                 "procedural": procedural,
             },
         }
+
+    async def _find_duplicate(
+        self,
+        canonical_summary: str,
+        metadata: dict[str, Any],
+    ) -> Optional[Memory]:
+        memory_kind = metadata.get("memory_kind")
+        target_key = self._normalize_text(canonical_summary)
+        all_memories = await self.store.get_all(limit=10000)
+        for memory in all_memories:
+            current_metadata = memory.metadata or {}
+            if current_metadata.get("memory_kind") != memory_kind:
+                continue
+
+            current_summary = str(
+                current_metadata.get("canonical_summary") or memory.content
+            )
+            current_key = self._normalize_text(current_summary)
+            if current_key == target_key:
+                return memory
+            if self._jaccard(current_key, target_key) >= 0.86:
+                return memory
+        return None
+
+    @staticmethod
+    def _with_private_defaults(
+        metadata: dict[str, Any],
+        canonical_summary: str,
+        memory_kind: str,
+    ) -> dict[str, Any]:
+        enriched = dict(metadata)
+        enriched["memory_kind"] = memory_kind
+        enriched.setdefault("canonical_summary", canonical_summary)
+        enriched.setdefault("assistant_context", canonical_summary)
+        enriched.setdefault("topics", [])
+        enriched.setdefault("key_facts", [])
+        enriched.setdefault("source_window", {})
+        enriched.setdefault("source", "chat_reflection")
+        enriched.setdefault("source_agent", "assistant")
+        enriched.setdefault("schema_version", PRIVATE_MEMORY_SCHEMA_VERSION)
+        return enriched
+
+    @staticmethod
+    def _merge_metadata(
+        base: dict[str, Any],
+        incoming: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(base)
+        for key, value in incoming.items():
+            if key in {"topics", "key_facts"}:
+                merged[key] = MemoryFormation._merge_unique_lists(
+                    merged.get(key),
+                    value,
+                )
+            elif key == "source_window":
+                merged[key] = MemoryFormation._merge_source_windows(
+                    merged.get(key),
+                    value,
+                )
+            elif key not in merged or merged[key] in (None, "", [], {}):
+                merged[key] = value
+            elif key in {"confidence", "summary_quality"}:
+                merged[key] = max(
+                    MemoryFormation._clamp_float(merged[key], default=0.0),
+                    MemoryFormation._clamp_float(value, default=0.0),
+                )
+        merged.setdefault("schema_version", PRIVATE_MEMORY_SCHEMA_VERSION)
+        return merged
+
+    @staticmethod
+    def _merge_unique_lists(base: Any, incoming: Any) -> list[str]:
+        values: list[str] = []
+        for source in (base, incoming):
+            if not isinstance(source, list):
+                continue
+            for item in source:
+                text = str(item).strip()
+                if text and text not in values:
+                    values.append(text)
+        return values
+
+    @staticmethod
+    def _merge_source_windows(base: Any, incoming: Any) -> Any:
+        windows = []
+        if isinstance(base, list):
+            windows.extend(base)
+        elif isinstance(base, dict) and base:
+            windows.append(base)
+        if isinstance(incoming, list):
+            windows.extend(item for item in incoming if isinstance(item, dict))
+        elif isinstance(incoming, dict) and incoming:
+            windows.append(incoming)
+        if not windows:
+            return {}
+        return windows
+
+    @staticmethod
+    def _coerce_memory_type(value: Any) -> MemoryType:
+        try:
+            return MemoryType(str(value or "semantic"))
+        except ValueError:
+            return MemoryType.SEMANTIC
+
+    @staticmethod
+    def _clamp_float(value: Any, *, default: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = default
+        return max(0.0, min(1.0, number))
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        return "".join(str(value).lower().split())
+
+    @staticmethod
+    def _jaccard(left: str, right: str) -> float:
+        left_tokens = MemoryFormation._token_set(left)
+        right_tokens = MemoryFormation._token_set(right)
+        if not left_tokens or not right_tokens:
+            return 0.0
+        return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+    @staticmethod
+    def _token_set(value: str) -> set[str]:
+        if not value:
+            return set()
+        cjk_chars = {ch for ch in value if "\u4e00" <= ch <= "\u9fff"}
+        words = set(value.split())
+        return cjk_chars | words

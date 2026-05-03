@@ -20,6 +20,7 @@ class _AppState:
         self.memory_store = None           # 记忆存储
         self.memory_formation = None       # 记忆形成
         self.memory_retriever = None       # 记忆检索
+        self.memory_buffer = None          # 对话反思缓冲
         self.reload_agent: Optional[Callable[[], Coroutine]] = None
         self.context_store = None          # ContextStore 实例
         self.capability_registry = None    # CapabilityRegistry 实例
@@ -53,6 +54,10 @@ def set_memory_formation(formation) -> None:
 
 def set_memory_retriever(retriever) -> None:
     _state.memory_retriever = retriever
+
+
+def set_memory_buffer(buffer) -> None:
+    _state.memory_buffer = buffer
 
 
 def set_reload_agent_fn(fn: Callable[[], Coroutine]) -> None:
@@ -95,6 +100,10 @@ def get_memory_formation():
 
 def get_memory_retriever():
     return _state.memory_retriever
+
+
+def get_memory_buffer():
+    return _state.memory_buffer
 
 
 def reload_agent_fn() -> Optional[Callable[[], Coroutine]]:

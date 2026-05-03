@@ -22,6 +22,7 @@ from api.dependencies import (
     get_context_store,
     get_llm_client,
     get_memory_formation,
+    get_memory_buffer,
     get_memory_retriever,
     get_memory_store,
     get_pipeline,
@@ -32,6 +33,7 @@ from api.dependencies import (
     set_context_store,
     set_llm_client,
     set_memory_formation,
+    set_memory_buffer,
     set_memory_retriever,
     set_memory_store,
     set_pipeline,
@@ -55,7 +57,22 @@ from api.schemas import (
     PipelineStepSchema,
     PipelineTemplate,
 )
+from api.websocket import handlers as ws_handlers
 from api.websocket.handlers import ConnectionManager
+
+
+def test_stream_done_event_copies_memory_usage_into_content():
+    """SSE done 事件要兼容前端从 content 读取 memories_used 的路径。"""
+
+    from api.main import _attach_stream_memory_usage
+
+    event = {"type": "done", "content": {"response": "ok"}}
+
+    enriched = _attach_stream_memory_usage(event, memories_used=2)
+
+    assert enriched["memories_used"] == 2
+    assert enriched["content"]["memories_used"] == 2
+    assert event["content"] == {"response": "ok"}
 
 
 # ============================================================
@@ -68,7 +85,7 @@ def reset_app_state():
     # 保存原始值
     attrs = [
         "bus", "agent_registry", "current_llm_client",
-        "memory_store", "memory_formation", "memory_retriever", "reload_agent",
+        "memory_store", "memory_formation", "memory_retriever", "memory_buffer", "reload_agent",
         "context_store", "capability_registry", "pipeline",
     ]
     saved = {a: getattr(_state, a) for a in attrs}
@@ -112,6 +129,7 @@ class TestDependencies:
         assert get_llm_client() is None
         assert get_memory_store() is None
         assert get_memory_formation() is None
+        assert get_memory_buffer() is None
         assert get_memory_retriever() is None
         assert reload_agent_fn() is None
         assert get_context_store() is None
@@ -152,6 +170,11 @@ class TestDependencies:
         sentinel = object()
         set_memory_retriever(sentinel)
         assert get_memory_retriever() is sentinel
+
+    def test_set_get_memory_buffer(self):
+        sentinel = object()
+        set_memory_buffer(sentinel)
+        assert get_memory_buffer() is sentinel
 
     def test_set_get_reload_agent_fn(self):
         async def dummy():
@@ -599,3 +622,37 @@ class TestConnectionManager:
         manager.disconnect(ws)
         manager.disconnect(ws)
         assert manager.active_count == 0
+
+    @pytest.mark.asyncio
+    async def test_user_message_forwards_session_id_to_reflection(self, monkeypatch):
+        """WebSocket 聊天反思应使用前端传入的 session_id。"""
+
+        class FakeCapabilityRegistry:
+            def __contains__(self, name):
+                return name == "assistant"
+
+            async def execute(self, name, **kwargs):
+                return {"response": "ok"}
+
+        ws = _mock_ws()
+        reflect = AsyncMock()
+        monkeypatch.setattr(ws_handlers, "manager", ConnectionManager())
+        monkeypatch.setattr(
+            ws_handlers,
+            "get_capability_registry",
+            lambda: FakeCapabilityRegistry(),
+        )
+        monkeypatch.setattr(
+            ws_handlers,
+            "build_memory_context",
+            AsyncMock(return_value=("", 0)),
+        )
+        monkeypatch.setattr(ws_handlers, "reflect_chat_exchange", reflect)
+
+        await ws_handlers._handle_user_message(
+            ws,
+            {"message": "hello", "session_id": "chat-1"},
+        )
+
+        reflect.assert_awaited_once()
+        assert reflect.await_args.kwargs["session_id"] == "chat-1"

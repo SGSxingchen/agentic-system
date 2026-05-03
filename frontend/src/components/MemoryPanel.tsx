@@ -11,6 +11,11 @@ interface MemoryItem {
   created_at: string
   last_accessed?: string
   metadata?: Record<string, any>
+  retrieval?: {
+    score?: number
+    breakdown?: Record<string, number>
+    deduped_similar_ids?: string[]
+  }
 }
 
 interface MemoryStatsData {
@@ -37,6 +42,16 @@ const TYPE_COLORS: Record<string, string> = {
   episodic: '#2196F3',
   semantic: '#9C27B0',
   procedural: '#FF9800',
+}
+
+const KIND_LABELS: Record<string, string> = {
+  preference: '偏好',
+  fact: '事实',
+  project_context: '项目背景',
+  decision: '决策',
+  todo: '待办',
+  experience: '经验',
+  other: '其他',
 }
 
 function importanceStars(importance: number): string {
@@ -181,6 +196,12 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
 
   const renderMemoryCard = (memory: MemoryItem) => {
     const isExpanded = expandedId === memory.id
+    const metadata = memory.metadata || {}
+    const memoryKind = typeof metadata.memory_kind === 'string' ? metadata.memory_kind : ''
+    const topics = Array.isArray(metadata.topics) ? metadata.topics : []
+    const quality =
+      typeof metadata.summary_quality === 'number' ? metadata.summary_quality : null
+    const retrieval = memory.retrieval
     return (
       <div
         key={memory.id}
@@ -199,6 +220,11 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
           >
             {importanceStars(memory.importance)}
           </span>
+          {memoryKind && (
+            <span className="memory-kind-badge">
+              {KIND_LABELS[memoryKind] || memoryKind}
+            </span>
+          )}
           <span className="memory-expand-icon">
             {isExpanded ? '▼' : '▶'}
           </span>
@@ -215,6 +241,18 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
         </div>
 
         <div className="memory-content">{memory.content}</div>
+
+        {(topics.length > 0 || quality != null || retrieval?.score != null) && (
+          <div className="memory-meta">
+            {topics.length > 0 && <small>主题: {topics.join(' / ')}</small>}
+            {quality != null && (
+              <small>质量: {(quality * 100).toFixed(0)}%</small>
+            )}
+            {retrieval?.score != null && (
+              <small>召回: {(retrieval.score * 100).toFixed(0)}%</small>
+            )}
+          </div>
+        )}
 
         {isExpanded && (
           <div className="memory-details">
@@ -242,6 +280,14 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
                 <span className="detail-value">{memory.access_count}</span>
               </div>
             )}
+            {retrieval && (
+              <div className="memory-detail-row">
+                <span className="detail-label">召回评分:</span>
+                <pre className="detail-metadata">
+                  {JSON.stringify(retrieval, null, 2)}
+                </pre>
+              </div>
+            )}
             {memory.metadata &&
               Object.keys(memory.metadata).length > 0 && (
                 <div className="memory-detail-row">
@@ -254,7 +300,7 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
           </div>
         )}
 
-        {!isExpanded && (
+        {!isExpanded && topics.length === 0 && quality == null && retrieval?.score == null && (
           <div className="memory-meta">
             <small>{new Date(memory.created_at).toLocaleString()}</small>
           </div>

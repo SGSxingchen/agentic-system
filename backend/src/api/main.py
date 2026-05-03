@@ -25,7 +25,12 @@ from core.bus import UnifiedBus
 from core.config import load_config, load_yaml_configs
 from core.context import ContextStore
 from core.llm import create_llm_client
-from core.memory import MemoryFormation, MemoryRetriever, create_memory_store
+from core.memory import (
+    ConversationMemoryBuffer,
+    MemoryFormation,
+    MemoryRetriever,
+    create_memory_store,
+)
 from core.pipeline import Pipeline
 
 from .dependencies import (
@@ -35,6 +40,7 @@ from .dependencies import (
     set_capability_registry,
     set_context_store,
     set_llm_client,
+    set_memory_buffer,
     set_memory_formation,
     set_memory_retriever,
     set_memory_store,
@@ -51,6 +57,8 @@ from .routes import (
     tasks_router,
 )
 from .websocket.handlers import (
+    build_memory_context,
+    reflect_chat_exchange,
     register_bus_event_bridge,
     websocket_endpoint as ws_handler,
 )
@@ -81,6 +89,22 @@ def clear_yaml_cache() -> None:
     _yaml_configs = {}
 
 
+def _attach_stream_memory_usage(
+    event: dict[str, Any],
+    *,
+    memories_used: int,
+) -> dict[str, Any]:
+    """Attach memory usage to stream events without mutating the original."""
+
+    enriched = dict(event)
+    enriched["memories_used"] = memories_used
+    if enriched.get("type") == "done" and isinstance(enriched.get("content"), dict):
+        content = dict(enriched["content"])
+        content.setdefault("memories_used", memories_used)
+        enriched["content"] = content
+    return enriched
+
+
 async def init_memory_system(config: Dict[str, Any]):
     """Initialize the configured memory backend."""
 
@@ -101,10 +125,15 @@ async def init_memory_system(config: Dict[str, Any]):
     memory_store = create_memory_store(backend, **store_kwargs)
     memory_formation = MemoryFormation(store=memory_store)
     memory_retriever = MemoryRetriever(store=memory_store)
+    memory_buffer = ConversationMemoryBuffer(
+        min_turns=int(memory_config.get("reflection_min_turns", 3)),
+        max_window_messages=int(memory_config.get("reflection_max_messages", 12)),
+    )
 
     set_memory_store(memory_store)
     set_memory_formation(memory_formation)
     set_memory_retriever(memory_retriever)
+    set_memory_buffer(memory_buffer)
 
     print(f"[OK] memory initialized (backend={backend})")
     return memory_store, memory_formation, memory_retriever
@@ -367,12 +396,23 @@ async def chat_endpoint(req: dict):
         elif isinstance(req.get("history"), list):
             payload["history"] = req["history"]
 
+        memory_context, memories_used = await build_memory_context(message)
+        if memory_context:
+            payload["memory_context"] = memory_context
+
         start = time.perf_counter()
         result = await cap_registry.execute("assistant", **payload)
         response_text = result.get("response", str(result))
+        await reflect_chat_exchange(
+            user_message=message,
+            assistant_text=response_text,
+            source="rest_chat",
+            session_id=req.get("session_id"),
+        )
         return {
             "status": "ok",
             "response": response_text,
+            "memories_used": memories_used,
             "elapsed_ms": round((time.perf_counter() - start) * 1000, 2),
             "usage": result.get("usage", {}),
         }
@@ -405,15 +445,42 @@ async def chat_stream_endpoint(req: dict):
             elif isinstance(req.get("history"), list):
                 payload["history"] = req["history"]
 
+            memory_context, memories_used = await build_memory_context(message)
+            if memory_context:
+                payload["memory_context"] = memory_context
+
             if hasattr(capability, "execute_stream"):
+                final_response = ""
                 async for event in capability.execute_stream(**payload):
                     if isinstance(event, dict) and event.get("type") == "done":
                         event = dict(event)
                         event["elapsed_ms"] = round((time.perf_counter() - request_started_at) * 1000, 2)
+                        event = _attach_stream_memory_usage(
+                            event,
+                            memories_used=memories_used,
+                        )
+                        content = event.get("content")
+                        if isinstance(content, dict):
+                            final_response = str(content.get("response") or content)
+                        else:
+                            final_response = str(content or "")
                     yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+                if final_response:
+                    await reflect_chat_exchange(
+                        user_message=message,
+                        assistant_text=final_response,
+                        source="rest_chat_stream",
+                        session_id=req.get("session_id"),
+                    )
             else:
                 result = await cap_registry.execute("assistant", **payload)
                 response_text = result.get("response", str(result))
+                await reflect_chat_exchange(
+                    user_message=message,
+                    assistant_text=response_text,
+                    source="rest_chat_stream",
+                    session_id=req.get("session_id"),
+                )
                 yield (
                     f"data: {_json.dumps({'type': 'thinking', 'content': response_text}, ensure_ascii=False)}\n\n"
                 )

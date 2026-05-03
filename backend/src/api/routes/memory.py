@@ -60,13 +60,19 @@ async def memory_search(body: MemorySearchRequest):
     if not retriever:
         return APIResponse(status="error", message="记忆系统未初始化")
 
-    memories = await retriever.retrieve(
+    results = await retriever.retrieve_with_scores(
         context=body.query,
         max_results=body.max_results,
     )
     return APIResponse(
         status="ok",
-        data=[m.to_dict() for m in memories],
+        data=[
+            {
+                **item["memory"].to_dict(),
+                "retrieval": item["retrieval"],
+            }
+            for item in results
+        ],
     )
 
 

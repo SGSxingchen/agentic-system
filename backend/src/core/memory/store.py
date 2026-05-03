@@ -140,11 +140,6 @@ class InMemoryStore(BaseMemoryStore):
                 reverse=True,
             )
 
-        # 更新访问记录
-        for m in results[: query.max_results]:
-            m.access_count += 1
-            m.last_accessed = datetime.now()
-
         return results[: query.max_results]
 
     async def delete(self, memory_id: str) -> bool:
@@ -272,8 +267,6 @@ class ChromaStore(BaseMemoryStore):
         ids_list = result["ids"][0] if result["ids"] else []
         for i in range(len(ids_list)):
             memory = self._result_to_memory_from_query(result, i)
-            memory.access_count += 1
-            memory.last_accessed = datetime.now()
             memories.append(memory)
 
         return memories
