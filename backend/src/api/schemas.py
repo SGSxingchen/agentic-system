@@ -369,6 +369,30 @@ class ChatMessageCreateRequest(BaseModel):
     usage: Optional[dict[str, int]] = None
     toolCalls: Optional[list[dict[str, Any]]] = None
     timeline: Optional[list[dict[str, Any]]] = None
+    artifacts: Optional[list[dict[str, Any]]] = None
+
+
+
+
+# ========================
+# Artifact / 前端附件相关
+# ========================
+
+
+class ArtifactCreateRequest(BaseModel):
+    """创建可被前端预览/下载的 Artifact。"""
+
+    kind: Literal["html", "markdown", "code", "image", "file", "text"] = "file"
+    title: str = Field(..., min_length=1, description="Artifact 标题")
+    content: str = Field(..., min_length=1, description="文本内容或 base64 文件内容")
+    mime_type: str = Field(default="", description="MIME 类型，如 text/html、image/png")
+    filename: str = Field(default="", description="下载文件名")
+    encoding: str = Field(default="utf-8", description="文本编码")
+    content_encoding: Literal["text", "base64"] = "text"
+    session_id: Optional[str] = None
+    message_id: Optional[str] = None
+    source: str = "api"
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ========================

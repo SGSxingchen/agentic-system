@@ -9,6 +9,7 @@ import type {
   ToolCallRecord,
   MessageTimelineItem,
   Persona,
+  Artifact,
 } from '../types'
 import {
   addChatSessionMessage,
@@ -19,6 +20,7 @@ import {
   listPersonas,
   getPersonaBindings,
   bindSessionPersona,
+  getArtifactContent,
 } from '../api/client'
 import {
   appendTextTimelineItem,
@@ -305,6 +307,136 @@ function summarizeUnknownValue(value: unknown): string {
   return text.length > 72 ? `${text.slice(0, 72)}…` : text
 }
 
+function formatBytes(value?: number): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-'
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function isArtifactLike(value: unknown): value is Artifact {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Record<string, unknown>
+  return typeof item.id === 'string' && typeof item.title === 'string' && typeof item.download_url === 'string'
+}
+
+function collectArtifacts(value: unknown, seen = new Set<string>()): Artifact[] {
+  if (!value) return []
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectArtifacts(item, seen))
+  }
+  if (typeof value !== 'object') return []
+
+  const record = value as Record<string, unknown>
+  const direct = isArtifactLike(record) ? [record as Artifact] : []
+  const nested: Artifact[] = []
+  for (const key of ['artifact', 'artifacts']) {
+    if (record[key] != null) nested.push(...collectArtifacts(record[key], seen))
+  }
+
+  return [...direct, ...nested].filter((artifact) => {
+    if (seen.has(artifact.id)) return false
+    seen.add(artifact.id)
+    return true
+  })
+}
+
+function artifactsFromMessage(message: Message): Artifact[] {
+  const artifacts = collectArtifacts(message.artifacts)
+  for (const call of message.toolCalls || []) {
+    artifacts.push(...collectArtifacts(call.result))
+  }
+  for (const item of message.timeline || []) {
+    if (item.toolCall?.result) artifacts.push(...collectArtifacts(item.toolCall.result))
+  }
+  const seen = new Set<string>()
+  return artifacts.filter((artifact) => {
+    if (seen.has(artifact.id)) return false
+    seen.add(artifact.id)
+    return true
+  })
+}
+
+function ArtifactChips({
+  artifacts,
+  selectedId,
+  onSelect,
+}: {
+  artifacts: Artifact[]
+  selectedId?: string | null
+  onSelect: (artifact: Artifact) => void
+}) {
+  if (artifacts.length === 0) return null
+  return (
+    <div className="artifact-chip-list">
+      {artifacts.map((artifact) => (
+        <button
+          key={artifact.id}
+          className={`artifact-chip ${artifact.id === selectedId ? 'artifact-chip--active' : ''}`}
+          onClick={() => onSelect(artifact)}
+        >
+          <span className="artifact-chip__kind">{artifact.kind}</span>
+          <span className="artifact-chip__title">{artifact.title}</span>
+          <span className="artifact-chip__meta">{formatBytes(artifact.size)}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ArtifactPreview({
+  artifact,
+  content,
+  loading,
+  onClose,
+}: {
+  artifact: Artifact | null
+  content?: string
+  loading: boolean
+  onClose: () => void
+}) {
+  if (!artifact) return null
+  const isImage = artifact.mime_type.startsWith('image/') || artifact.kind === 'image'
+  const isHtml = artifact.kind === 'html' || artifact.mime_type.includes('html')
+  const isText = artifact.previewable && !isImage
+  return (
+    <aside className="artifact-preview" aria-label="Artifact 预览">
+      <div className="artifact-preview__topbar">
+        <div>
+          <span className="artifact-preview__eyebrow">AstrBot Artifact</span>
+          <h3>{artifact.title}</h3>
+          <p>{artifact.filename} · {artifact.mime_type || 'file'} · {formatBytes(artifact.size)}</p>
+        </div>
+        <button className="artifact-preview__close" onClick={onClose} aria-label="关闭 Artifact 预览">×</button>
+      </div>
+      <div className="artifact-preview__actions">
+        <a href={artifact.download_url} download>下载</a>
+        <a href={artifact.open_url} target="_blank" rel="noreferrer">打开</a>
+      </div>
+      <div className={`artifact-preview__stage artifact-preview__stage--${artifact.kind}`}>
+        {isImage ? (
+          <img src={artifact.open_url} alt={artifact.title} />
+        ) : loading ? (
+          <div className="artifact-preview__loading">载入预览中...</div>
+        ) : isHtml && content ? (
+          <iframe
+            title={artifact.title}
+            srcDoc={content}
+            sandbox="allow-scripts allow-forms allow-popups allow-modals"
+          />
+        ) : isText && content != null ? (
+          <pre>{content}</pre>
+        ) : (
+          <div className="artifact-preview__fallback">
+            此 Artifact 不支持内嵌预览，请下载或在新窗口打开。
+          </div>
+        )}
+      </div>
+    </aside>
+  )
+
+}
+
 function JsonDetails({
   label,
   value,
@@ -428,6 +560,9 @@ export function ChatPanel() {
   const [streamingTools, setStreamingTools] = useState<ToolCallRecord[]>([])
   const [streamingTimeline, setStreamingTimeline] = useState<MessageTimelineItem[]>([])
   const [streamingProgress, setStreamingProgress] = useState<AgentProgressEvent | null>(null)
+  const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
+  const [artifactContent, setArtifactContent] = useState<Record<string, string>>({})
+  const [artifactLoading, setArtifactLoading] = useState(false)
 
   const upsertSessionSummary = useCallback((session: ChatSession) => {
     const summary = summarizeSession(session)
@@ -591,6 +726,7 @@ export function ChatPanel() {
       let responseElapsedMs: number | undefined
       let responseToolCalls: ToolCallRecord[] = []
       let responseTimeline: MessageTimelineItem[] = []
+      let responseArtifacts: Artifact[] = []
       let streamOrder = 0
       const requestStartedAt = performance.now()
 
@@ -663,6 +799,10 @@ export function ChatPanel() {
                 }
               })
               const fallbackCallId = callId || String(event.tool || `tool-result-${streamOrder + 1}`)
+              responseArtifacts = [
+                ...responseArtifacts,
+                ...collectArtifacts(event.result),
+              ].filter((artifact, index, all) => all.findIndex((item) => item.id === artifact.id) === index)
               if (!resultPatch) {
                 resultPatch = {
                   id: fallbackCallId,
@@ -699,6 +839,10 @@ export function ChatPanel() {
                   if (typeof event.content.memories_used === 'number') {
                     memoriesUsed = event.content.memories_used
                   }
+                  responseArtifacts = [
+                    ...responseArtifacts,
+                    ...collectArtifacts(event.content),
+                  ].filter((artifact, index, all) => all.findIndex((item) => item.id === artifact.id) === index)
                 } else if (event.content.error) {
                   finalContent = `错误: ${event.content.error}`
                 } else {
@@ -729,6 +873,7 @@ export function ChatPanel() {
         toolCalls: responseToolCalls,
         timeline: responseTimeline,
         progress: { activity: 'completed', status: 'completed', agent: 'assistant' },
+        artifacts: responseArtifacts,
       }
       dispatch({ type: 'ADD_MESSAGE', payload: assistantMsg })
       await persistMessage(sessionId, assistantMsg)
@@ -760,6 +905,7 @@ export function ChatPanel() {
             memoriesUsed: data.memories_used,
             elapsedMs: typeof data.elapsed_ms === 'number' ? data.elapsed_ms : undefined,
             usage: data.usage,
+            artifacts: collectArtifacts(data),
           }
           dispatch({ type: 'ADD_MESSAGE', payload: assistantMsg })
           await persistMessage(sessionId, assistantMsg)
@@ -874,6 +1020,25 @@ export function ChatPanel() {
     }
   }, [state.messages, streamingText, streamingTools, streamingTimeline, streamingProgress])
 
+  useEffect(() => {
+    let cancelled = false
+    async function loadArtifact() {
+      if (!selectedArtifact || !selectedArtifact.previewable || selectedArtifact.mime_type.startsWith('image/')) return
+      if (artifactContent[selectedArtifact.id] != null) return
+      setArtifactLoading(true)
+      try {
+        const res = await getArtifactContent(selectedArtifact.id)
+        if (!cancelled && res.status === 'ok' && res.data) {
+          setArtifactContent((prev) => ({ ...prev, [selectedArtifact.id]: res.data!.content }))
+        }
+      } finally {
+        if (!cancelled) setArtifactLoading(false)
+      }
+    }
+    loadArtifact()
+    return () => { cancelled = true }
+  }, [artifactContent, selectedArtifact])
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -896,6 +1061,9 @@ export function ChatPanel() {
       return haystack.includes(query)
     })
   }, [sessionQuery, sessions])
+  const sessionArtifacts = state.messages.flatMap(artifactsFromMessage)
+    .filter((artifact, index, all) => all.findIndex((item) => item.id === artifact.id) === index)
+
 
   return (
     <div className="chat-panel">
@@ -988,7 +1156,7 @@ export function ChatPanel() {
         )}
       </aside>
 
-      <section className="chat-main">
+      <section className={`chat-main ${selectedArtifact ? 'chat-main--with-artifact' : ''}`}>
         <div className="chat-persona-bar">
           <span>人格</span>
           <select
@@ -1065,6 +1233,7 @@ export function ChatPanel() {
                 ) : (
                   <div className={`chat-bubble chat-bubble-${msg.type}`}>
                     <MessageTimeline items={getMessageTimeline(msg)} />
+                    <ArtifactChips artifacts={artifactsFromMessage(msg)} selectedId={selectedArtifact?.id} onSelect={setSelectedArtifact} />
                     {msg.memoriesUsed != null && msg.memoriesUsed > 0 && (
                       <div className="chat-memory-indicator">
                         使用了 {msg.memoriesUsed} 条记忆
@@ -1152,6 +1321,25 @@ export function ChatPanel() {
           </div>
         </div>
       </section>
+
+      {selectedArtifact && (
+        <ArtifactPreview
+          artifact={selectedArtifact}
+          content={artifactContent[selectedArtifact.id]}
+          loading={artifactLoading}
+          onClose={() => setSelectedArtifact(null)}
+        />
+      )}
+
+      {!selectedArtifact && sessionArtifacts.length > 0 && (
+        <button
+          className="artifact-rail-button"
+          onClick={() => setSelectedArtifact(sessionArtifacts[0])}
+          title="打开 Artifact 预览"
+        >
+          Artifacts · {sessionArtifacts.length}
+        </button>
+      )}
     </div>
   )
 }

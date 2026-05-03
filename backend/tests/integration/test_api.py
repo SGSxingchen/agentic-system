@@ -62,6 +62,7 @@ def _create_test_app():
         config_router,
         evolution_router,
         personas_router,
+        artifacts_router,
     )
 
     @asynccontextmanager
@@ -85,6 +86,7 @@ def _create_test_app():
     test_app.include_router(evolution_router)
     test_app.include_router(personas_router)
     test_app.include_router(chat_sessions_router)
+    test_app.include_router(artifacts_router)
 
     return test_app
 
@@ -152,6 +154,13 @@ async def client(setup_deps):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture
+def artifact_store_dir(tmp_path, monkeypatch):
+    path = tmp_path / "artifacts"
+    monkeypatch.setenv("ARTIFACT_STORE_DIR", str(path))
+    return path
 
 
 @pytest.fixture
@@ -484,6 +493,49 @@ class TestTasksAPI:
         )
         # Pydantic 校验 min_length=1 应拒绝空字符串
         assert resp.status_code == 422
+
+
+# ========================
+# Artifact / 前端附件
+# ========================
+
+class TestArtifactsAPI:
+    async def test_create_preview_and_download_text_artifact(self, client, artifact_store_dir):
+        resp = await client.post(
+            "/api/artifacts",
+            json={
+                "kind": "html",
+                "title": "Demo Artifact",
+                "content": "<h1>Hello Artifact</h1>",
+                "mime_type": "text/html",
+                "filename": "demo.html",
+                "session_id": "s1",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        artifact = body["data"]
+        assert artifact["title"] == "Demo Artifact"
+        assert artifact["download_url"].endswith("/download")
+        assert (artifact_store_dir / "artifacts.json").exists()
+
+        content_resp = await client.get(f"/api/artifacts/{artifact['id']}/content")
+        assert content_resp.status_code == 200
+        assert "Hello Artifact" in content_resp.json()["data"]["content"]
+
+        download_resp = await client.get(f"/api/artifacts/{artifact['id']}/download")
+        assert download_resp.status_code == 200
+        assert download_resp.text == "<h1>Hello Artifact</h1>"
+
+    async def test_list_artifacts_can_filter_by_session(self, client, artifact_store_dir):
+        await client.post("/api/artifacts", json={"kind": "text", "title": "A", "content": "a", "session_id": "s1"})
+        await client.post("/api/artifacts", json={"kind": "text", "title": "B", "content": "b", "session_id": "s2"})
+        resp = await client.get("/api/artifacts?session_id=s1")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data) == 1
+        assert data[0]["title"] == "A"
 
 
 # ========================

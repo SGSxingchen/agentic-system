@@ -16,6 +16,7 @@ import type {
   PersonaBindings,
   PersonaProposal,
   PersonaVersion,
+  Artifact,
 } from '../types'
 
 const API_BASE = ''
@@ -325,6 +326,18 @@ export async function addChatSessionMessage(
     `/api/chat-sessions/${encodeURIComponent(sessionId)}/messages`,
     message
   )
+}
+
+
+// ===== Artifact API =====
+
+export async function listArtifacts(sessionId?: string): Promise<APIResponse<Artifact[]>> {
+  const suffix = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
+  return get<Artifact[]>(`/api/artifacts${suffix}`)
+}
+
+export async function getArtifactContent(id: string): Promise<APIResponse<{ artifact: Artifact; content: string }>> {
+  return get<{ artifact: Artifact; content: string }>(`/api/artifacts/${encodeURIComponent(id)}/content`)
 }
 
 // ===== 任务 API =====
