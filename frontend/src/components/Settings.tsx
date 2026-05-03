@@ -351,18 +351,30 @@ export function Settings({ onClose }: SettingsProps) {
                   {modelsLoading ? '获取中...' : '刷新列表'}
                 </button>
               </label>
+              <select
+                value={availableModels.includes(model) ? model : '__custom__'}
+                onChange={(e) => {
+                  if (e.target.value !== '__custom__') {
+                    setModel(e.target.value)
+                  }
+                }}
+              >
+                {!availableModels.includes(model) && (
+                  <option value="__custom__">当前自定义：{model || '未填写'}</option>
+                )}
+                {availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
               <input
                 type="text"
-                list="model-list"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="输入或选择模型"
+                placeholder="也可以手动输入自定义模型"
+                style={{ marginTop: 8 }}
               />
-              <datalist id="model-list">
-                {availableModels.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
               <small className="form-hint">
                 {modelsSource === 'remote' && (
                   <>已从远端拉取 {availableModels.length} 个模型；可手动输入自定义名称</>
