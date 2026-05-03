@@ -832,3 +832,25 @@ class TestEvolutionAPI:
         )
         assert requirement_tool["prompt"]
         assert requirement_tool["schema"]["type"] == "object"
+
+    async def test_evolution_system_status(self, client):
+        resp = await client.get("/api/evolution/system-status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        data = body["data"]
+        assert data["overview"]["agent_count"] >= 0
+        component_ids = {component["id"] for component in data["components"]}
+        assert {"agents", "tools", "memory", "runtime", "evolution_pipeline"}.issubset(component_ids)
+        assert data["graph"]["summary"]["dynamic_tools"] == 1
+
+    async def test_evolution_command(self, client):
+        resp = await client.post(
+            "/api/evolution/command",
+            json={"goal": "增强 memory reflection 的可观测性"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert "Agentic System Evolution" in body["data"]["command"]
+        assert "memory" in body["data"]["target_components"]

@@ -103,7 +103,7 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
     label: 'Agents',
     items: [
       { key: 'agents', icon: Icons.agents, label: '智能体', hint: '角色与状态' },
-      { key: 'evolution', icon: Icons.evolution, label: '进化', hint: '能力图谱' },
+      { key: 'evolution', icon: Icons.evolution, label: '进化', hint: '架构状态' },
       { key: 'personas', icon: Icons.personas, label: '人格', hint: '语气与偏好' },
     ],
   },

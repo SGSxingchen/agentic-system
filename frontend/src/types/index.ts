@@ -349,6 +349,41 @@ export interface EvolutionGraph {
   extension_points: string[]
 }
 
+export interface EvolutionSystemComponent {
+  id: string
+  title: string
+  status: 'healthy' | 'warning' | 'empty' | 'disabled' | string
+  summary: string
+  metrics: Record<string, any>
+  items: Array<Record<string, any>>
+  empty_state?: string
+}
+
+export interface EvolutionSystemStatus {
+  overview: {
+    system_name: string
+    version: string
+    generated_at: string
+    readiness: string
+    architecture: string
+    agent_count: number
+    tool_count: number
+    dynamic_tool_count: number
+    pipeline_count: number
+    model: string
+    [key: string]: any
+  }
+  components: EvolutionSystemComponent[]
+  graph: EvolutionGraph
+}
+
+export interface EvolutionCommand {
+  goal: string
+  target_components: string[]
+  command: string
+  status_snapshot: Record<string, any>
+}
+
 export interface ToolPromptInfo {
   name: string
   type: 'tool' | 'dynamic_tool'

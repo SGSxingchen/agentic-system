@@ -568,6 +568,62 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 }
 ```
 
+### GET /api/evolution/system-status
+
+获取当前 Agentic System Architecture / System State 聚合状态。该接口复用运行时 registry、memory store、pipeline、bus 和配置文件状态，用于进化页展示系统级架构，而不是把 assistant 或 tool 管理误认为进化本身。
+
+**响应片段:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "overview": {
+      "system_name": "Multi-Agent Code System",
+      "readiness": "ready",
+      "agent_count": 6,
+      "tool_count": 14,
+      "pipeline_count": 3,
+      "model": "openai / gpt-3.5-turbo"
+    },
+    "components": [
+      {
+        "id": "agents",
+        "title": "Assistants / Agents",
+        "status": "healthy",
+        "summary": "assistant 是协作入口之一；planner/coder/reviewer/creator 等 Agent 共同构成运行时。",
+        "metrics": { "total": 6, "idle": 6 },
+        "items": []
+      }
+    ],
+    "graph": { "summary": { "agents": 6, "tools": 14 } }
+  }
+}
+```
+
+### POST /api/evolution/command
+
+根据用户输入的进化目标和当前系统状态生成一条可提交给 Agentic Pipeline 的明确进化指令。生成结果会强调“先审查架构状态，再设计最小可行改造，最后测试验证”，避免把新增 Agent/Tool CRUD 当成进化本身。
+
+**请求体:**
+```json
+{
+  "goal": "增强长期记忆召回解释，并在前端展示可观测状态"
+}
+```
+
+**响应片段:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "goal": "增强长期记忆召回解释，并在前端展示可观测状态",
+    "target_components": ["memory", "observability"],
+    "command": "请作为 Agentic System Evolution 任务执行...",
+    "status_snapshot": { "readiness": "ready" }
+  }
+}
+```
+
 ### POST /api/evolution/dynamic-tools
 
 运行时创建安全动态工具，并可立即挂载到指定 Agent。

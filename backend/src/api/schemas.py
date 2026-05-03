@@ -400,6 +400,12 @@ class ArtifactCreateRequest(BaseModel):
 # ========================
 
 
+class EvolutionCommandRequest(BaseModel):
+    """Generate a concrete system-evolution instruction from a user goal."""
+
+    goal: str = Field(..., min_length=1, description="希望 Agentic System 如何进化的目标")
+
+
 class DynamicToolCreateRequest(BaseModel):
     """创建动态工具请求"""
 
