@@ -54,9 +54,12 @@ bus:
 
 # 记忆系统配置 (可被环境变量覆盖: MEMORY_BACKEND, MEMORY_PERSIST_DIR)
 memory:
-  backend: "memory"              # "memory" (内存) 或 "chroma" (ChromaDB 持久化)
+  backend: "chroma"              # 默认 ChromaDB 持久化；开发测试可用 "memory"
   persist_dir: "./data/chroma"
   collection_name: "agent_memories"
+  reflection_min_turns: 1         # 完整回复结束后累计多少轮触发一次自动反思
+  reflection_max_messages: 8      # 每次反思最多纳入最近多少条消息
+  fallback_to_memory_on_error: true # chromadb 缺失/初始化失败时清晰提示并降级内存
 
 # 上下文管理配置
 context:

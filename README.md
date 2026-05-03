@@ -249,7 +249,17 @@ llm:
   base_url: ""              # 自定义 API 端点 (可选)
 
 memory:
-  backend: "memory"         # "memory" (内存) 或 "chroma" (ChromaDB)
+  backend: "chroma"         # 默认 ChromaDB 持久化；开发测试可改 "memory"
+  persist_dir: "./data/chroma"
+  reflection_min_turns: 1   # 完整助手回复结束后触发自动反思
+```
+
+对话记忆现在不是只靠 `/api/memory/create` 手动写入：REST chat、SSE stream 和
+WebSocket 流式聊天会在完整回复结束后自动反思生成结构化记忆；下一次生成前会
+检索相关记忆，并以「不可信资料」方式注入上下文。可用以下脚本验证持久化闭环:
+
+```bash
+python scripts/verify_memory_persistence.py
 ```
 
 ### 组件配置 (config/ 目录)

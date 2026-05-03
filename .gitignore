@@ -27,6 +27,7 @@ backend/src/config.yaml
 # Logs
 *.log
 logs/
+data/
 
 # Test
 .pytest_cache/

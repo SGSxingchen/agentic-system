@@ -440,6 +440,8 @@ async def build_memory_context(
         lines.append(line)
         remaining -= len(line)
 
+    if lines:
+        print(f"[MEMORY] recalled {len(lines)} memories for query={query[:80]!r}")
     return "\n".join(lines), len(lines)
 
 
@@ -473,8 +475,16 @@ async def reflect_chat_exchange(
             window["turns"],
             source_window=window["source_window"],
         )
+        saved = 0
         for candidate in candidates:
-            await formation.create_structured_memory(candidate)
+            memory = await formation.create_structured_memory(candidate)
+            if memory:
+                saved += 1
+        print(
+            "[MEMORY] reflected chat window "
+            f"source={source} session_id={session_id or '-'} "
+            f"candidates={len(candidates)} saved={saved}"
+        )
     except Exception as exc:
         print(f"[WARN] memory reflection failed: {exc}")
 

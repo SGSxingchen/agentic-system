@@ -110,7 +110,7 @@ async def init_memory_system(config: Dict[str, Any]):
     """Initialize the configured memory backend."""
 
     memory_config = config.get("memory", {})
-    backend = memory_config.get("backend", "memory")
+    backend = memory_config.get("backend", "chroma")
     store_kwargs: Dict[str, Any] = {}
 
     if backend == "chroma":
@@ -123,12 +123,31 @@ async def init_memory_system(config: Dict[str, Any]):
             "agent_memories",
         )
 
-    memory_store = create_memory_store(backend, **store_kwargs)
+    try:
+        memory_store = create_memory_store(backend, **store_kwargs)
+    except Exception as exc:
+        fallback_enabled = bool(memory_config.get("fallback_to_memory_on_error", True))
+        detail = (
+            f"[WARN] memory backend '{backend}' failed to initialize: {exc}"
+        )
+        if backend == "chroma":
+            detail += (
+                "\n[WARN] Chroma 持久化未启用。请安装依赖 `pip install chromadb` "
+                "或设置 MEMORY_BACKEND=memory 显式使用内存后端。"
+            )
+        if not fallback_enabled:
+            print(detail)
+            raise
+        print(detail)
+        print("[WARN] falling back to in-memory memory store; data will not persist")
+        backend = "memory"
+        store_kwargs = {}
+        memory_store = create_memory_store("memory")
     memory_formation = MemoryFormation(store=memory_store)
     memory_retriever = MemoryRetriever(store=memory_store)
     memory_buffer = ConversationMemoryBuffer(
-        min_turns=int(memory_config.get("reflection_min_turns", 3)),
-        max_window_messages=int(memory_config.get("reflection_max_messages", 12)),
+        min_turns=int(memory_config.get("reflection_min_turns", 1)),
+        max_window_messages=int(memory_config.get("reflection_max_messages", 8)),
     )
 
     set_memory_store(memory_store)
@@ -136,7 +155,11 @@ async def init_memory_system(config: Dict[str, Any]):
     set_memory_retriever(memory_retriever)
     set_memory_buffer(memory_buffer)
 
-    print(f"[OK] memory initialized (backend={backend})")
+    print(
+        "[OK] memory initialized "
+        f"(backend={backend}, persist_dir={store_kwargs.get('persist_dir', '-')}, "
+        f"reflection_min_turns={memory_buffer.min_turns})"
+    )
     return memory_store, memory_formation, memory_retriever
 
 
