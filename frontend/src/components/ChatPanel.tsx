@@ -8,6 +8,7 @@ import type {
   TokenUsage,
   ToolCallRecord,
   MessageTimelineItem,
+  Persona,
 } from '../types'
 import {
   addChatSessionMessage,
@@ -15,6 +16,9 @@ import {
   deleteChatSession,
   getChatSession,
   listChatSessions,
+  listPersonas,
+  getPersonaBindings,
+  bindSessionPersona,
 } from '../api/client'
 import {
   appendTextTimelineItem,
@@ -390,6 +394,8 @@ export function ChatPanel() {
   const [sessionBusy, setSessionBusy] = useState(false)
   const [sessionError, setSessionError] = useState('')
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
+  const [personas, setPersonas] = useState<Persona[]>([])
+  const [selectedPersonaId, setSelectedPersonaId] = useState('base-assistant')
   const activeSessionIdRef = useRef<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // 流式累积文本
@@ -419,6 +425,10 @@ export function ChatPanel() {
       activeSessionIdRef.current = sessionId
       setActiveSessionId(sessionId)
       dispatch({ type: 'SET_MESSAGES', payload: res.data.messages || [] })
+      const bindingRes = await getPersonaBindings()
+      if (bindingRes.status === 'ok' && bindingRes.data) {
+        setSelectedPersonaId(bindingRes.data.sessions[sessionId] || 'base-assistant')
+      }
     } finally {
       setSessionBusy(false)
     }
@@ -438,6 +448,7 @@ export function ChatPanel() {
       activeSessionIdRef.current = res.data.id
       setActiveSessionId(res.data.id)
       dispatch({ type: 'SET_MESSAGES', payload: res.data.messages || [] })
+      setSelectedPersonaId('base-assistant')
       return res.data.id
     } finally {
       setSessionBusy(false)
@@ -535,6 +546,7 @@ export function ChatPanel() {
           message: text,
           messages: contextMessages,
           session_id: sessionId,
+          persona_id: selectedPersonaId,
         }),
       })
 
@@ -709,6 +721,7 @@ export function ChatPanel() {
             message: text,
             messages: contextMessages,
             session_id: sessionId,
+            persona_id: selectedPersonaId,
           }),
         })
         if (res.ok) {
@@ -755,6 +768,7 @@ export function ChatPanel() {
     ensureActiveSession,
     input,
     persistMessage,
+    selectedPersonaId,
     state.messages,
     state.sending,
   ])
@@ -762,6 +776,14 @@ export function ChatPanel() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId
   }, [activeSessionId])
+
+  useEffect(() => {
+    let cancelled = false
+    listPersonas(false).then((res) => {
+      if (!cancelled && res.status === 'ok' && res.data) setPersonas(res.data)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -790,6 +812,10 @@ export function ChatPanel() {
               type: 'SET_MESSAGES',
               payload: sessionRes.data.messages || [],
             })
+            const bindingRes = await getPersonaBindings()
+            if (!cancelled && bindingRes.status === 'ok' && bindingRes.data) {
+              setSelectedPersonaId(bindingRes.data.sessions[firstSession.id] || 'base-assistant')
+            }
           } else {
             setSessionError(sessionRes.message || '加载会话失败')
           }
@@ -917,6 +943,21 @@ export function ChatPanel() {
       </aside>
 
       <section className="chat-main">
+        <div className="chat-persona-bar">
+          <span>人格</span>
+          <select
+            value={selectedPersonaId}
+            onChange={async (e) => {
+              const next = e.target.value
+              setSelectedPersonaId(next)
+              if (activeSessionIdRef.current) await bindSessionPersona(activeSessionIdRef.current, next)
+            }}
+          >
+            {personas.map((persona) => (
+              <option key={persona.id} value={persona.id}>{persona.name} · v{persona.version}</option>
+            ))}
+          </select>
+        </div>
         <div className="chat-metrics-bar" aria-label="当前对话指标">
           <span className="chat-metric">
             Msg <strong>{sessionMessageCount}</strong>

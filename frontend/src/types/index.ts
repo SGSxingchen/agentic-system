@@ -290,8 +290,58 @@ export interface ToolPromptInfo {
 
 // ===== 视图类型 =====
 
-export type PanelType = 'chat' | 'tasks' | 'agents' | 'memory' | 'monitor' | 'pipeline' | 'evolution'
+export type PanelType = 'chat' | 'tasks' | 'agents' | 'memory' | 'monitor' | 'pipeline' | 'evolution' | 'personas'
 
 // ===== 视图类型（新 Layout 导航） =====
 
 export type ViewType = 'dashboard' | 'tasks' | 'agents' | 'memory' | 'settings'
+
+// ===== 人格系统 =====
+
+export interface Persona {
+  id: string
+  name: string
+  description: string
+  persona_prompt: string
+  style_rules: string[]
+  behavior_rules: string[]
+  permission_boundary: string
+  version: number
+  status: 'active' | 'draft' | 'archived'
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaProposal {
+  id: string
+  persona_id: string
+  base_version: number
+  source: 'feedback' | 'admin_instruction' | 'reflection' | string
+  session_id?: string | null
+  message_id?: string | null
+  reflection_id?: string | null
+  proposal_text: string
+  proposed_patch: Partial<Persona>
+  diff: string
+  summary: string
+  status: 'pending' | 'approved' | 'rejected'
+  reviewer?: string | null
+  review_time?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaVersion {
+  version: number
+  persona_id: string
+  created_at: string
+  reason: string
+  snapshot: Persona
+  reviewer?: string
+  note?: string
+}
+
+export interface PersonaBindings {
+  agents: Record<string, string>
+  sessions: Record<string, string>
+}
