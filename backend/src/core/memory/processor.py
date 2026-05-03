@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 from typing import Any, Optional
 
 from ..llm.base import BaseLLMClient
+from ..prompts import build_memory_reflection_messages
 
 
 PRIVATE_MEMORY_SCHEMA_VERSION = "private_memory_v1"
@@ -64,35 +64,7 @@ class MemoryProcessor:
         return candidates
 
     def _build_messages(self, turns: list[dict[str, Any]]) -> list[dict[str, str]]:
-        lines = []
-        for turn in turns:
-            role = str(turn.get("role") or "unknown")
-            content = str(turn.get("content") or "").strip()
-            timestamp = str(turn.get("timestamp") or "")
-            if content:
-                prefix = f"{role}"
-                if timestamp:
-                    prefix += f" @ {timestamp}"
-                lines.append(f"{prefix}: {content}")
-
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "你是私人助理的长期记忆反思器。"
-                    "请从对话中提炼值得长期保存的用户偏好、事实、决策、待办、经验或项目背景。"
-                    "只输出 JSON: {\"memories\": [...]}。"
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"当前日期: {datetime.now().date().isoformat()}\n\n"
-                    "对话窗口:\n"
-                    + "\n".join(lines)
-                ),
-            },
-        ]
+        return build_memory_reflection_messages(turns)
 
     def _candidate_to_memory(
         self,

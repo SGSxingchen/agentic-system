@@ -332,6 +332,11 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - 保持 `parameters` JSON Schema 只读不变
 - 保存到 `config/capabilities.yaml` 的 `prompt` 字段
 
+**统一提示词体系**:
+- Agent 主提示词在 `config/agents.yaml`，统一按“角色边界 / 输入变量 / 工具调用规则或工作流程 / 安全与权限约束 / 输出契约”组织。
+- Python 运行时拼接片段在 `core/prompts.py`，包括长期记忆不可信注入、token 预算 nudge、对话反思 prompt、内置 Tool 描述。
+- 内置 Tool 的 `CapabilitySchema.description` 应通过 `core.prompts.TOOL_DESCRIPTIONS` 获取；`config/capabilities.yaml` 的 `description` 与其保持同风格，`prompt` 仅用于显式覆盖。
+
 ### 3.8 Pipeline 编排（v2 Phase B 起为唯一编排引擎）
 
 > ✅ **v2 Phase B 已落地（2026-04-26）**：旧 `core/workflow/` 模块、`core/event/`、`config/triggers.yaml`、`backend/config/` 已删除；`config/workflows.yaml` 改名 `config/pipelines.yaml`，`/api/workflows/*` 改名 `/api/pipelines/*`，前端 `WorkflowPanel` 改名 `PipelinePanel`。

@@ -14,6 +14,7 @@ import re
 from typing import Any, Dict, List, Set, Tuple, Union
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 # ─── 问题严重级别 ──────────────────────────────────────────
@@ -43,7 +44,7 @@ class StaticAnalyzerCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "基于 AST 的静态代码分析：未使用导入、命名规范、复杂度、函数长度等"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

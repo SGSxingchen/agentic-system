@@ -6,6 +6,7 @@
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 class MemorySearchCapability(CapabilityBase):
@@ -17,7 +18,7 @@ class MemorySearchCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "搜索记忆系统，根据查询返回相关的历史记忆信息"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

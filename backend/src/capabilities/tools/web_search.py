@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 from ._web_safety import open_public_url
 
@@ -25,7 +26,7 @@ class WebSearchCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "搜索公开网页并返回标题、链接和摘要；适合查找最新资料，再配合 web_fetch 读取具体页面"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

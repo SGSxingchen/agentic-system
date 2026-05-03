@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 from ._web_safety import open_public_url, validate_public_http_url
 
@@ -24,7 +25,7 @@ class WebFetchCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "读取 HTTP/HTTPS 网页内容并返回标题、正文预览和基础元数据"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

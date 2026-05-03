@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from core.capability.base import CapabilityBase, CapabilitySchema
 from core.config import load_single_yaml, save_yaml_config
+from core.prompts import get_tool_description
 
 
 NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -44,10 +45,7 @@ class CreateDynamicToolConfigCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return (
-            "Create or update a YAML dynamic tool definition and optionally attach it "
-            "to configured Agents. Supports template, checklist, and regex_extract modes."
-        )
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -58,40 +56,40 @@ class CreateDynamicToolConfigCapability(CapabilityBase):
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Tool name. Must match ^[A-Za-z_][A-Za-z0-9_]*$.",
+                        "description": "Tool 名称，必须匹配 ^[A-Za-z_][A-Za-z0-9_]*$",
                     },
                     "description": {
                         "type": "string",
-                        "description": "LLM-facing tool description/prompt.",
+                        "description": "暴露给 LLM 的工具描述/提示词",
                     },
                     "mode": {
                         "type": "string",
-                        "description": "Dynamic mode: template | checklist | regex_extract.",
+                        "description": "动态工具模式: template | checklist | regex_extract",
                         "default": "template",
                     },
                     "input_schema": {
                         "type": "object",
-                        "description": "Optional JSON Schema for tool input.",
+                        "description": "可选工具输入 JSON Schema",
                     },
                     "config": {
                         "type": "object",
-                        "description": "Mode-specific config, e.g. template or required_terms.",
+                        "description": "模式相关配置，例如 template 或 required_terms",
                     },
                     "attach_to_agents": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Agent names that should receive this tool.",
+                        "description": "需要挂载该工具的 Agent 名称列表",
                         "default": ["assistant"],
                     },
                     "overwrite": {
                         "type": "boolean",
-                        "description": "Overwrite an existing dynamic tool with the same name.",
+                        "description": "是否覆盖同名动态工具",
                         "default": False,
                     },
                 },
                 "required": ["name", "description", "mode"],
             },
-            returns="Created YAML config entry and reload instructions.",
+            returns="创建的 YAML 配置条目和重新装载提示",
             is_read_only=False,
             is_concurrency_safe=False,
             max_result_size=4000,
@@ -205,7 +203,7 @@ class CreateAgentConfigCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "Create or update an Agent config in config/agents.yaml and optionally attach it to assistant."
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -216,50 +214,50 @@ class CreateAgentConfigCapability(CapabilityBase):
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Agent name. Must match ^[A-Za-z_][A-Za-z0-9_]*$.",
+                        "description": "Agent 名称，必须匹配 ^[A-Za-z_][A-Za-z0-9_]*$",
                     },
                     "description": {
                         "type": "string",
-                        "description": "Agent description and tool description when delegated to.",
+                        "description": "Agent 描述，同时作为被委派时的工具描述",
                     },
                     "system_prompt": {
                         "type": "string",
-                        "description": "System prompt defining the Agent role, workflow, and output contract.",
+                        "description": "定义 Agent 角色、流程、约束和输出契约的系统提示词",
                     },
                     "tools": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Tool or sub-Agent names available to this Agent.",
+                        "description": "该 Agent 可使用的 Tool 或子 Agent 名称列表",
                         "default": [],
                     },
                     "output_format": {
                         "type": "string",
-                        "description": "text | json",
+                        "description": "输出格式: text | json",
                         "default": "text",
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": "Tool-use loop limit.",
+                        "description": "tool_use 循环上限",
                         "default": 10,
                     },
                     "input_schema": {
                         "type": "object",
-                        "description": "JSON Schema shown when this Agent is used as a tool.",
+                        "description": "该 Agent 被当作工具使用时展示的 JSON Schema",
                     },
                     "attach_to_assistant": {
                         "type": "boolean",
-                        "description": "Add this Agent name to assistant.tools.",
+                        "description": "是否将该 Agent 名称加入 assistant.tools",
                         "default": True,
                     },
                     "overwrite": {
                         "type": "boolean",
-                        "description": "Overwrite an existing Agent with the same name.",
+                        "description": "是否覆盖同名 Agent",
                         "default": False,
                     },
                 },
                 "required": ["name", "description", "system_prompt"],
             },
-            returns="Created Agent config and reload instructions.",
+            returns="创建的 Agent 配置和重新装载提示",
             is_read_only=False,
             is_concurrency_safe=False,
             max_result_size=4000,

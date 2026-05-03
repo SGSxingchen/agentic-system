@@ -7,6 +7,7 @@ from collections import Counter
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 class TextProcessorCapability(CapabilityBase):
@@ -37,7 +38,7 @@ class TextProcessorCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "文本处理工具：统计、清洗、关键词提取、大小写转换和 slug 生成"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

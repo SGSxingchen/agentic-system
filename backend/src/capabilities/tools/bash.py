@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 from ._safety import ensure_shell_tool_enabled, resolve_workspace_cwd
 
@@ -33,9 +34,7 @@ class BashCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return (
-            "Execute a shell command inside the workspace. Disabled by default and intended only for trusted local development."
-        )
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -46,21 +45,21 @@ class BashCapability(CapabilityBase):
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "Shell command to execute.",
+                        "description": "要执行的 Shell 命令（在工作区内运行）",
                     },
                     "timeout": {
                         "type": "number",
-                        "description": "Timeout in seconds, defaults to 30.",
+                        "description": "超时时间秒数，默认 30",
                         "default": 30,
                     },
                     "cwd": {
                         "type": "string",
-                        "description": "Optional working directory inside the workspace.",
+                        "description": "可选工作目录，必须位于工作区内",
                     },
                 },
                 "required": ["command"],
             },
-            returns="Shell stdout, stderr, and return code.",
+            returns="Shell stdout、stderr 和返回码",
             is_read_only=False,
             is_concurrency_safe=False,
             max_result_size=16000,

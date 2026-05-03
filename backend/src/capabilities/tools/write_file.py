@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 from ._safety import resolve_workspace_path
 
@@ -18,7 +19,7 @@ class WriteFileCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "Write content to a file inside the workspace and create parent directories when needed."
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -29,21 +30,21 @@ class WriteFileCapability(CapabilityBase):
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "Target file path inside the workspace.",
+                        "description": "目标文件路径，必须位于工作区内",
                     },
                     "content": {
                         "type": "string",
-                        "description": "Content to write into the file.",
+                        "description": "要写入文件的完整内容",
                     },
                     "encoding": {
                         "type": "string",
-                        "description": "File encoding, defaults to utf-8.",
+                        "description": "文件编码，默认 utf-8",
                         "default": "utf-8",
                     },
                 },
                 "required": ["file_path", "content"],
             },
-            returns="Write result metadata.",
+            returns="写入结果元数据",
             is_read_only=False,
             is_concurrency_safe=False,
             max_result_size=8000,
