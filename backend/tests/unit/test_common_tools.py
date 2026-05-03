@@ -302,9 +302,40 @@ class TestWebSearchCapability:
             result = await tool.execute(query="example doc")
 
         assert result["count"] == 1
+        assert result["provider"] == "duckduckgo"
         assert result["results"][0]["title"] == "Example Doc"
         assert result["results"][0]["url"] == "https://example.com/doc"
         assert result["results"][0]["snippet"] == "A useful result snippet."
+
+    @pytest.mark.asyncio
+    async def test_search_default_provider_uses_duckduckgo(self):
+        html = b'<a class="result__a" href="https://example.com/">Example</a>'
+        opened_urls: list[str] = []
+
+        def fake_open(request, timeout=0):
+            opened_urls.append(request.full_url)
+            return FakeResponse(html)
+
+        tool = WebSearchCapability()
+        with (
+            patch.object(tool, "_load_tool_config", return_value={}),
+            patch("socket.getaddrinfo", return_value=[PUBLIC_ADDR]),
+            patch("urllib.request.OpenerDirector.open", side_effect=fake_open),
+        ):
+            result = await tool.execute(query="example")
+
+        assert result["provider"] == "duckduckgo"
+        assert opened_urls
+        assert opened_urls[0].startswith("https://duckduckgo.com/html/")
+
+    @pytest.mark.asyncio
+    async def test_search_explicit_brave_provider_still_used(self):
+        tool = WebSearchCapability()
+
+        with patch.object(tool, "_load_tool_config", return_value={"provider": "brave"}):
+            result = await tool.execute(query="example")
+
+        assert result["error"] == "web_search provider 'brave' requires api_key"
 
     @pytest.mark.asyncio
     async def test_search_requires_query(self):

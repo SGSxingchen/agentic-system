@@ -273,3 +273,35 @@ class TestLoadConfig:
         """返回结果至少包含 llm 配置"""
         result = load_config()
         assert "llm" in result
+
+    def test_web_search_defaults_to_duckduckgo_without_user_config(self, tmp_path, monkeypatch):
+        """无组件配置、无运行时配置、无环境变量时 Web Search 默认 DuckDuckGo。"""
+        monkeypatch.delenv("WEB_SEARCH_PROVIDER", raising=False)
+        missing_runtime = tmp_path / "missing-config.yaml"
+        empty_config_dir = tmp_path / "empty-config"
+        empty_config_dir.mkdir()
+
+        result = load_config(config_path=missing_runtime, config_dir=empty_config_dir)
+
+        assert result["tools"]["web_search"]["provider"] == "duckduckgo"
+
+    def test_web_search_explicit_brave_config_still_wins(self, tmp_path, monkeypatch):
+        """显式配置为 Brave 时保持 Brave，不被默认值覆盖。"""
+        monkeypatch.delenv("WEB_SEARCH_PROVIDER", raising=False)
+        runtime = tmp_path / "config.yaml"
+        runtime.write_text(
+            yaml.dump({"tools": {"web_search": {"provider": "brave"}}}),
+            encoding="utf-8",
+        )
+
+        result = load_config(config_path=runtime, config_dir=tmp_path / "missing-config-dir")
+
+        assert result["tools"]["web_search"]["provider"] == "brave"
+
+    def test_web_search_explicit_brave_env_still_wins(self, tmp_path, monkeypatch):
+        """显式环境变量配置为 Brave 时保持 Brave。"""
+        monkeypatch.setenv("WEB_SEARCH_PROVIDER", "brave")
+
+        result = load_config(config_path=tmp_path / "missing.yaml", config_dir=tmp_path / "missing-dir")
+
+        assert result["tools"]["web_search"]["provider"] == "brave"
