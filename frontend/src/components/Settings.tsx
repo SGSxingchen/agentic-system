@@ -25,6 +25,21 @@ const optionalNumber = (value: string) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const looksLikeMaskedSecret = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  // 兼容 sk-xxxx********yyyy、sk-xxxx…yyyy、以及常见密码框遮罩。
+  return /[*•●…]/.test(trimmed)
+}
+
+const optionalSecret = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed || looksLikeMaskedSecret(trimmed)) return undefined
+  return trimmed
+}
+
+const optionalSecretOrBlank = (value: string) => optionalSecret(value) || ''
+
 export function Settings({ onClose }: SettingsProps) {
   const [provider, setProvider] = useState('openai')
   const [model, setModel] = useState('gpt-3.5-turbo')
@@ -162,7 +177,7 @@ export function Settings({ onClose }: SettingsProps) {
       payload[name] = {
         enabled: item.enabled,
         base_url: item.baseUrl || '',
-        api_key: item.apiKey || '',
+        api_key: optionalSecretOrBlank(item.apiKey),
         extra,
       }
     }
@@ -187,7 +202,7 @@ export function Settings({ onClose }: SettingsProps) {
       llm: {
         provider,
         model,
-        api_key: apiKey || undefined,
+        api_key: optionalSecret(apiKey),
         base_url: baseUrl || undefined,
         temperature,
         top_p: optionalNumber(topP),
@@ -212,7 +227,7 @@ export function Settings({ onClose }: SettingsProps) {
         web_search: {
           provider: webSearchProvider,
           base_url: webSearchBaseUrl || '',
-          api_key: webSearchApiKey || '',
+          api_key: optionalSecretOrBlank(webSearchApiKey),
           max_results: webSearchMaxResults,
           timeout: webSearchTimeout,
         },
@@ -256,7 +271,7 @@ export function Settings({ onClose }: SettingsProps) {
     const res = await api.listProviderModels({
       provider,
       base_url: baseUrl,
-      api_key: apiKey || undefined, // 留空 → 后端用已保存的 key
+      api_key: optionalSecret(apiKey), // 留空/遮罩值 → 后端用已保存的 key
     })
     if (res.status === 'ok' && res.data && res.data.models.length > 0) {
       setAvailableModels(res.data.models.map((m) => m.id))

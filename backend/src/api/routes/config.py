@@ -97,8 +97,16 @@ def _custom_tools_response(config: Dict[str, Any]) -> Dict[str, Any]:
     return response
 
 
+
+def _looks_like_masked_secret(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return bool(stripped) and any(char in stripped for char in ("*", "•", "●", "…"))
+
 def _preserve_blank_secret(target: Dict[str, Any], existing: Dict[str, Any], key: str = "api_key") -> None:
-    if target.get(key):
+    current = target.get(key)
+    if current and not _looks_like_masked_secret(current):
         return
 
     previous = existing.get(key) if isinstance(existing, dict) else None
@@ -278,7 +286,10 @@ async def list_provider_models(request: ModelListRequest):
     saved_llm = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
 
     provider = (request.provider or saved_llm.get("provider") or "openai").lower()
-    api_key = request.api_key or saved_llm.get("api_key", "")
+    request_api_key = request.api_key
+    if _looks_like_masked_secret(request_api_key):
+        request_api_key = None
+    api_key = request_api_key or saved_llm.get("api_key", "")
     if request.base_url is not None:
         base_url = request.base_url
     else:
