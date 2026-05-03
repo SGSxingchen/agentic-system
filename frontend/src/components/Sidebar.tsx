@@ -95,8 +95,8 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
     label: 'Workspace',
     items: [
       { key: 'chat', icon: Icons.chat, label: '对话', hint: '会话与协作' },
-      { key: 'tasks', icon: Icons.tasks, label: '任务', hint: '提交与跟踪' },
-      { key: 'pipeline', icon: Icons.pipeline, label: '管线', hint: '自动化流程' },
+      { key: 'tasks', icon: Icons.tasks, label: '运行', hint: '多 Agent Run' },
+      { key: 'pipeline', icon: Icons.pipeline, label: '管线(兼容)', hint: '旧模板迁移' },
     ],
   },
   {

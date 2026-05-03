@@ -44,17 +44,30 @@ class TaskRegistry:
         *,
         task_type: TaskType = TaskType.PIPELINE,
         requirement: str,
-        pipeline_name: str,
+        pipeline_name: str = "",
+        agent_name: Optional[str] = None,
+        session_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        mode: str = "autonomous",
+        strategy: str = "agent_decides",
         parent_id: Optional[str] = None,
         output_file: Optional[str] = None,
     ) -> TaskState:
-        """新建一条 TaskState（PENDING）。"""
+        """新建一条 TaskState（PENDING）。
+
+        ``pipeline_name`` 保持默认空值，使新的 Agent Run 不必伪装成管线。
+        """
         task_id = str(uuid.uuid4())
         state = TaskState(
             id=task_id,
             type=task_type,
             requirement=requirement,
             pipeline_name=pipeline_name,
+            agent_name=agent_name,
+            session_id=session_id,
+            workspace_id=workspace_id,
+            mode=mode,
+            strategy=strategy,
             parent_id=parent_id,
             output_file=output_file,
         )

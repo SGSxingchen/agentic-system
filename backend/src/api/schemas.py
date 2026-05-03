@@ -37,10 +37,37 @@ class TaskStatus(str, Enum):
 
 
 class TaskSubmitRequest(BaseModel):
-    """提交任务请求"""
+    """提交任务请求（兼容旧 /api/tasks）。
+
+    默认 pipeline=auto 已迁移为自主 Agent Run；显式指定非 auto 的 pipeline
+    才走旧固定管线兼容路径。
+    """
 
     requirement: str = Field(..., min_length=1, description="用户需求描述")
-    pipeline: str = Field(default="auto", description="管线模板名称（auto 自动选择默认模板）")
+    pipeline: str = Field(default="auto", description="兼容字段：auto=自主 Agent Run；其他值=旧管线模板")
+    agent_name: str = Field(default="assistant", description="auto 模式下使用的 Agent")
+    session_id: Optional[str] = Field(default=None, description="可选会话实例 ID")
+    workspace_id: Optional[str] = Field(default=None, description="可选工作区实例 ID")
+    input: dict[str, Any] = Field(default_factory=dict, description="附加上下文输入")
+
+
+class AgentRunCreateRequest(BaseModel):
+    """创建自主 Agent Run 请求。"""
+
+    goal: str = Field(..., min_length=1, description="本次运行目标")
+    agent_name: str = Field(default="assistant", description="负责本次运行的 Agent")
+    session_id: Optional[str] = Field(default=None, description="会话实例 ID；仅作为上下文/溯源")
+    workspace_id: Optional[str] = Field(default=None, description="工作区实例 ID；为空则自动创建 run- 前缀工作区")
+    mode: str = Field(default="autonomous", description="运行语义：autonomous/interactive/compat")
+    strategy: str = Field(default="agent_decides", description="调度策略说明；不表达固定步骤")
+    input: dict[str, Any] = Field(default_factory=dict, description="附加上下文输入")
+    parent_id: Optional[str] = Field(default=None, description="可选父 run/task ID")
+
+
+class RunControlRequest(BaseModel):
+    """运行控制请求。"""
+
+    action: Literal["cancel"] = Field(default="cancel", description="目前支持 cancel；pause/resume 留给后续协作协议")
 
 
 class TaskResponse(BaseModel):
