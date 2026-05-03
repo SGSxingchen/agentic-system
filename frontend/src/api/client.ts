@@ -11,6 +11,8 @@ import type {
   ChatSessionSummary,
   Message,
   EvolutionGraph,
+  EvolutionSystemStatus,
+  EvolutionCommand,
   ToolPromptInfo,
   Persona,
   PersonaBindings,
@@ -248,6 +250,16 @@ export async function listCapabilities(): Promise<APIResponse<{ name: string; de
 
 export async function getEvolutionGraph(): Promise<APIResponse<EvolutionGraph>> {
   return get<EvolutionGraph>('/api/evolution/graph')
+}
+
+export async function getEvolutionSystemStatus(): Promise<APIResponse<EvolutionSystemStatus>> {
+  return get<EvolutionSystemStatus>('/api/evolution/system-status')
+}
+
+export async function createEvolutionCommand(
+  goal: string
+): Promise<APIResponse<EvolutionCommand>> {
+  return post<EvolutionCommand>('/api/evolution/command', { goal })
 }
 
 export async function createDynamicTool(data: {

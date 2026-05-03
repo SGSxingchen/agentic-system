@@ -762,3 +762,22 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 - 后端只从本地 Artifact store 读取文件，文件名会清洗；不暴露任意路径读取。
 - 不应把密钥、token、个人隐私或临时日志写入 Artifact。
 - 当前实现不做权限隔离，适合本地 AstrBot/毕业设计演示；生产环境需增加用户/会话鉴权、配额和清理策略。
+
+
+---
+
+## 13. 进化中心的系统架构仪表盘（v2.4 新增）
+
+“进化”页面定位为 **Agentic System Architecture Dashboard + Evolution Command Center**，不再把 assistant、Agent CRUD 或 Tool CRUD 误表达为进化本身。assistant 只是系统组件之一；真实进化应先观察当前架构状态，再生成可执行的系统级改造任务。
+
+### 13.1 后端聚合接口
+
+- `GET /api/evolution/system-status` 聚合运行时状态：AgentRegistry、CapabilityRegistry、MemoryStore/Formation/Buffer、LLM 配置、Pipeline 模板、UnifiedBus 指标、config 文件和 Task 统计。
+- `POST /api/evolution/command` 接收 `goal`，基于当前状态生成一条明确进化指令，可提交给现有任务/管线系统执行。
+- 原有 `/api/evolution/graph`、动态 Tool、Tool prompt 和 reload API 保持兼容；它们是组件维护接口，不等同于进化页主叙事。
+
+### 13.2 前端表达
+
+进化页按系统组成展示：Assistants/Agents、Tools、Skills/MCP Context、Memory/Reflection、Models/Providers、Runtime/Orchestration、Evolution/Reflection Pipeline、Observability/Config。每个部分必须展示真实已有数据；缺数据时显示明确 empty state，不使用硬编码假运行数据。
+
+Evolution Command 区域允许用户用一句目标生成系统级任务指令，并可提交为 Pipeline Task。指令必须强调：先审查架构状态、再设计最小可行改造、按文档实现、运行验证。

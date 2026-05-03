@@ -216,3 +216,9 @@ Pipeline 执行 → bus.publish(step_started / step_completed)
 → CoderAgent → bus.publish(code_generated)
 → ReviewerAgent → bus.publish(review_passed/failed)
 ```
+
+## 进化中心：系统架构仪表盘
+
+进化页面的产品定位是 **Agentic System Architecture Dashboard + Evolution Command Center**。它不再把 assistant、Agent CRUD 或 Tool CRUD 作为“进化”本身，而是先聚合展示当前系统状态：Agents、Tools、Skills/MCP、Memory/Reflection、Models/Providers、Runtime/Pipeline、Evolution Pipeline 和 Observability/Config。
+
+后端通过 `GET /api/evolution/system-status` 复用运行时注册中心、配置、记忆、管线和总线指标生成状态摘要；通过 `POST /api/evolution/command` 将用户目标与当前状态快照合成为可提交给任务管线的进化指令。原有动态 Tool 和 Tool prompt 接口继续作为组件维护能力保留。
