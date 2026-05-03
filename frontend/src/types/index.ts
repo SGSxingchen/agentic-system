@@ -9,7 +9,18 @@ export interface Message {
   elapsedMs?: number
   usage?: TokenUsage
   toolCalls?: ToolCallRecord[]
+  timeline?: MessageTimelineItem[]
   progress?: AgentProgressEvent
+}
+
+export type MessageTimelineItemKind = 'text' | 'tool_call'
+
+export interface MessageTimelineItem {
+  id: string
+  kind: MessageTimelineItemKind
+  order: number
+  content?: string
+  toolCall?: ToolCallRecord
 }
 
 export interface TokenUsage {

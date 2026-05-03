@@ -126,6 +126,10 @@ class ChatHistoryStore:
             normalized["toolCalls"] = [
                 item for item in message["toolCalls"] if isinstance(item, dict)
             ]
+        if isinstance(message.get("timeline"), list):
+            normalized["timeline"] = [
+                item for item in message["timeline"] if isinstance(item, dict)
+            ]
 
         session["messages"].append(normalized)
         session["updated_at"] = _utc_now()

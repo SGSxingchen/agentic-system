@@ -7,6 +7,7 @@ import type {
   Message,
   TokenUsage,
   ToolCallRecord,
+  MessageTimelineItem,
 } from '../types'
 import {
   addChatSessionMessage,
@@ -15,6 +16,12 @@ import {
   getChatSession,
   listChatSessions,
 } from '../api/client'
+import {
+  appendTextTimelineItem,
+  getMessageTimeline,
+  updateToolResultTimelineItem,
+  upsertToolCallTimelineItem,
+} from '../utils/messageTimeline'
 import './ChatPanel.css'
 
 const API_BASE = ''
@@ -326,6 +333,40 @@ function ToolCallCard({ call }: { call: ToolCallRecord }) {
   )
 }
 
+
+function MessageTimeline({ items }: { items: MessageTimelineItem[] }) {
+  if (items.length === 0) return null
+
+  return (
+    <div className="message-timeline">
+      {items.map((item) => {
+        if (item.kind === 'text') {
+          if (!item.content) return null
+          return (
+            <div
+              key={item.id}
+              className="chat-bubble-text chat-markdown"
+              dangerouslySetInnerHTML={{
+                __html: renderMarkdown(item.content),
+              }}
+            />
+          )
+        }
+
+        if (item.kind === 'tool_call' && item.toolCall) {
+          return (
+            <div className="tool-call-list" key={item.id}>
+              <ToolCallCard call={item.toolCall} />
+            </div>
+          )
+        }
+
+        return null
+      })}
+    </div>
+  )
+}
+
 function ProgressPill({ progress }: { progress?: AgentProgressEvent | null }) {
   if (!progress) return null
   const activity = progress.activity || 'running'
@@ -354,6 +395,7 @@ export function ChatPanel() {
   // 流式累积文本
   const [streamingText, setStreamingText] = useState('')
   const [streamingTools, setStreamingTools] = useState<ToolCallRecord[]>([])
+  const [streamingTimeline, setStreamingTimeline] = useState<MessageTimelineItem[]>([])
   const [streamingProgress, setStreamingProgress] = useState<AgentProgressEvent | null>(null)
 
   const upsertSessionSummary = useCallback((session: ChatSession) => {
@@ -469,6 +511,7 @@ export function ChatPanel() {
     setInput('')
     setStreamingText('')
     setStreamingTools([])
+    setStreamingTimeline([])
     setStreamingProgress({ activity: 'planning', status: 'running', agent: 'assistant' })
 
     // 添加用户消息
@@ -510,6 +553,8 @@ export function ChatPanel() {
       let responseUsage: TokenUsage | undefined
       let responseElapsedMs: number | undefined
       let responseToolCalls: ToolCallRecord[] = []
+      let responseTimeline: MessageTimelineItem[] = []
+      let streamOrder = 0
       const requestStartedAt = performance.now()
 
       while (true) {
@@ -534,7 +579,10 @@ export function ChatPanel() {
               setStreamingProgress(event as AgentProgressEvent)
             } else if (event.type === 'thinking' && event.content) {
               fullText += event.content
+              streamOrder += 1
+              responseTimeline = appendTextTimelineItem(responseTimeline, event.content, streamOrder)
               setStreamingText(fullText)
+              setStreamingTimeline(responseTimeline)
             } else if (event.type === 'tool_call') {
               const call: ToolCallRecord = {
                 id: String(event.tool_call_id || `${event.tool || 'tool'}-${Date.now()}-${responseToolCalls.length}`),
@@ -544,11 +592,15 @@ export function ChatPanel() {
                 startedAt: new Date().toISOString(),
                 concurrent: Boolean(event.concurrent),
               }
+              streamOrder += 1
               responseToolCalls = [...responseToolCalls, call]
+              responseTimeline = upsertToolCallTimelineItem(responseTimeline, call, streamOrder)
               setStreamingTools(responseToolCalls)
+              setStreamingTimeline(responseTimeline)
             } else if (event.type === 'tool_result') {
               const callId = String(event.tool_call_id || '')
               const resultStatus = event.status === 'error' ? 'error' : 'success'
+              let resultPatch: Partial<ToolCallRecord> | null = null
               responseToolCalls = responseToolCalls.map((call) => {
                 const matches = callId ? call.id === callId : call.tool === event.tool && call.status === 'running'
                 if (!matches) return call
@@ -560,8 +612,7 @@ export function ChatPanel() {
                 const error = resultStatus === 'error'
                   ? (event.result && typeof event.result === 'object' && 'error' in event.result ? (event.result as Record<string, unknown>).error : event.result)
                   : undefined
-                return {
-                  ...call,
+                resultPatch = {
                   status: resultStatus,
                   result: event.result,
                   error,
@@ -569,8 +620,33 @@ export function ChatPanel() {
                   finishedAt: new Date().toISOString(),
                   truncated: Boolean(event.truncated),
                 }
+                return {
+                  ...call,
+                  ...resultPatch,
+                }
               })
+              const fallbackCallId = callId || String(event.tool || `tool-result-${streamOrder + 1}`)
+              if (!resultPatch) {
+                resultPatch = {
+                  id: fallbackCallId,
+                  tool: String(event.tool || 'unknown'),
+                  status: resultStatus,
+                  result: event.result,
+                  error: resultStatus === 'error' ? event.result : undefined,
+                  elapsedMs: typeof event.elapsed_ms === 'number' ? event.elapsed_ms : undefined,
+                  finishedAt: new Date().toISOString(),
+                  truncated: Boolean(event.truncated),
+                }
+              }
+              streamOrder += 1
+              responseTimeline = updateToolResultTimelineItem(
+                responseTimeline,
+                callId || fallbackCallId,
+                resultPatch,
+                streamOrder,
+              )
               setStreamingTools(responseToolCalls)
+              setStreamingTimeline(responseTimeline)
             } else if (event.type === 'done') {
               if (event.usage) {
                 responseUsage = event.usage
@@ -601,6 +677,10 @@ export function ChatPanel() {
 
       // 流结束，添加完整消息
       const responseText = finalContent || fullText || '(无响应)'
+      if (responseTimeline.length === 0 && responseText) {
+        streamOrder += 1
+        responseTimeline = appendTextTimelineItem(responseTimeline, responseText, streamOrder)
+      }
       const assistantMsg: Message = {
         id: `assistant-${Date.now()}`,
         type: 'assistant',
@@ -610,12 +690,14 @@ export function ChatPanel() {
         elapsedMs: responseElapsedMs ?? performance.now() - requestStartedAt,
         usage: responseUsage,
         toolCalls: responseToolCalls,
+        timeline: responseTimeline,
         progress: { activity: 'completed', status: 'completed', agent: 'assistant' },
       }
       dispatch({ type: 'ADD_MESSAGE', payload: assistantMsg })
       await persistMessage(sessionId, assistantMsg)
       setStreamingText('')
       setStreamingTools([])
+      setStreamingTimeline([])
       setStreamingProgress(null)
     } catch (err) {
       // fallback: 非流式
@@ -645,6 +727,7 @@ export function ChatPanel() {
           await persistMessage(sessionId, assistantMsg)
           setStreamingText('')
           setStreamingTools([])
+          setStreamingTimeline([])
           setStreamingProgress(null)
           return
         }
@@ -662,6 +745,7 @@ export function ChatPanel() {
       await persistMessage(sessionId, errorMsg)
       setStreamingText('')
       setStreamingTools([])
+      setStreamingTimeline([])
       setStreamingProgress(null)
     } finally {
       dispatch({ type: 'SET_SENDING', payload: false })
@@ -737,7 +821,7 @@ export function ChatPanel() {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight
     }
-  }, [state.messages, streamingText, streamingTools, streamingProgress])
+  }, [state.messages, streamingText, streamingTools, streamingTimeline, streamingProgress])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -881,19 +965,7 @@ export function ChatPanel() {
                   </div>
                 ) : (
                   <div className={`chat-bubble chat-bubble-${msg.type}`}>
-                    <div
-                      className="chat-bubble-text chat-markdown"
-                      dangerouslySetInnerHTML={{
-                        __html: renderMarkdown(msg.content),
-                      }}
-                    />
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <div className="tool-call-list">
-                        {msg.toolCalls.map((call) => (
-                          <ToolCallCard key={call.id} call={call} />
-                        ))}
-                      </div>
-                    )}
+                    <MessageTimeline items={getMessageTimeline(msg)} />
                     {msg.memoriesUsed != null && msg.memoriesUsed > 0 && (
                       <div className="chat-memory-indicator">
                         使用了 {msg.memoriesUsed} 条记忆
@@ -924,21 +996,7 @@ export function ChatPanel() {
               <div className="chat-avatar">A</div>
               <div className="chat-bubble chat-bubble-assistant">
                 <ProgressPill progress={streamingProgress} />
-                {streamingText && (
-                  <div
-                    className="chat-bubble-text chat-markdown"
-                    dangerouslySetInnerHTML={{
-                      __html: renderMarkdown(streamingText),
-                    }}
-                  />
-                )}
-                {streamingTools.length > 0 && (
-                  <div className="tool-call-list">
-                    {streamingTools.map((call) => (
-                      <ToolCallCard key={call.id} call={call} />
-                    ))}
-                  </div>
-                )}
+                <MessageTimeline items={streamingTimeline} />
                 <span className="streaming-cursor" />
               </div>
             </div>
