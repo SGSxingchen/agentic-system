@@ -250,6 +250,41 @@ LLM 客户端层 (OpenAI / Anthropic)
 - `async_mode` — 异步执行 (默认 True)
 - `enabled` — 是否启用
 
+### 3.4.1 Agent-scoped Skills 与 MCP 配置
+
+Skills 与 MCP servers 必须属于具体 Agent 配置，不能作为全局散配置生效。
+配置位置为 `config/agents.yaml` 中单个 agent 条目：
+
+```yaml
+- name: "assistant"
+  skills:
+    enabled: true
+    directories: ["./skills"]
+    items:
+      - name: "repo_style"
+        description: "项目约定"
+        instructions: "保持最小补丁，先读后改。"
+      - path: "./skills/python/SKILL.md"
+    disabled: ["legacy_skill"]
+    strategy: "metadata_and_instructions"
+  mcp_servers:
+    - name: "filesystem"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      env: {}
+      cwd: "."
+      enabled: true
+      description: "项目文件 MCP server"
+      transport: "stdio"
+```
+
+运行时注入路径：`api/main.py::_create_agents_from_config()` 读取当前 agent 的
+`skills` 与 `mcp_servers`，通过 `core.skills.load_agent_skills()` 解析 SKILL.md
+或内联说明，通过 `core.mcp.normalize_agent_mcp_servers()` 校验启用 server，
+再把格式化后的“非可信运行时资料”追加到该 Agent 的 system prompt。旧 Agent
+没有这些字段时按空配置处理，不影响启动。当前 MCP 配置只传入 Agent 启动上下文
+并做降级提示；真正把 MCP tools 注册到 `CapabilityRegistry` 需要后续 adapter。
+
 ### 3.5 Agent 系统
 
 **BaseAgent** (`core/agent/base.py`):

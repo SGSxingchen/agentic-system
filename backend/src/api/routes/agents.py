@@ -20,6 +20,7 @@ from ..schemas import (
 )
 from ..dependencies import get_agent_registry, get_capability_registry, reload_agent_fn
 from core.config import load_single_yaml, save_yaml_config
+from core.mcp import validate_mcp_server_payload
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -52,6 +53,8 @@ def _agent_config_fields(name: str) -> dict:
         "system_prompt": config.get("system_prompt"),
         "output_format": config.get("output_format"),
         "max_iterations": config.get("max_iterations"),
+        "skills": config.get("skills"),
+        "mcp_servers": config.get("mcp_servers") or [],
     }
 
 
@@ -84,6 +87,8 @@ async def list_agents():
                 system_prompt=config.get("system_prompt") if isinstance(config, dict) else None,
                 output_format=config.get("output_format") if isinstance(config, dict) else None,
                 max_iterations=config.get("max_iterations") if isinstance(config, dict) else None,
+                skills=config.get("skills") if isinstance(config, dict) else None,
+                mcp_servers=config.get("mcp_servers") if isinstance(config, dict) else [],
             ).model_dump()
         )
 
@@ -129,6 +134,12 @@ async def create_agent(req: AgentCreateRequest):
             return APIResponse(status="error", message=f"Agent '{req.name}' 已存在")
 
     # 添加新 agent
+    mcp_servers = [server.model_dump() for server in req.mcp_servers]
+    for server in mcp_servers:
+        errors = validate_mcp_server_payload(server)
+        if errors:
+            return APIResponse(status="error", message=f"MCP server '{server.get('name') or '<unnamed>'}' 配置无效: {', '.join(errors)}")
+
     new_agent = {
         "name": req.name,
         "description": req.description,
@@ -137,6 +148,10 @@ async def create_agent(req: AgentCreateRequest):
         "output_format": req.output_format,
         "max_iterations": req.max_iterations,
     }
+    if req.skills is not None:
+        new_agent["skills"] = req.skills.model_dump()
+    if mcp_servers:
+        new_agent["mcp_servers"] = mcp_servers
     agents_list.append(new_agent)
     data["agents"] = agents_list
 
@@ -173,6 +188,15 @@ async def update_agent(name: str, req: AgentUpdateRequest):
         target["output_format"] = req.output_format
     if req.max_iterations is not None:
         target["max_iterations"] = req.max_iterations
+    if req.skills is not None:
+        target["skills"] = req.skills.model_dump()
+    if req.mcp_servers is not None:
+        mcp_servers = [server.model_dump() for server in req.mcp_servers]
+        for server in mcp_servers:
+            errors = validate_mcp_server_payload(server)
+            if errors:
+                return APIResponse(status="error", message=f"MCP server '{server.get('name') or '<unnamed>'}' 配置无效: {', '.join(errors)}")
+        target["mcp_servers"] = mcp_servers
 
     data["agents"] = agents_list
 

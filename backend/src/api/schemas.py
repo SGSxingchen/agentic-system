@@ -60,6 +60,29 @@ class TaskResponse(BaseModel):
 # Agent 相关
 # ========================
 
+class SkillConfigRequest(BaseModel):
+    """Agent-scoped skills config. Supports directories and inline/file-backed items."""
+
+    enabled: bool = True
+    directories: list[str] = Field(default_factory=list)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    disabled: list[str] = Field(default_factory=list)
+    strategy: str = Field(default="metadata_and_instructions", description="加载策略标记，当前只注入元数据/说明")
+
+
+class MCPServerConfigRequest(BaseModel):
+    """Agent-scoped MCP server config."""
+
+    name: str = Field(..., min_length=1)
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+    enabled: bool = True
+    description: str = ""
+    transport: str = "stdio"
+
+
 
 class AgentInfo(BaseModel):
     """Agent 信息"""
@@ -71,6 +94,8 @@ class AgentInfo(BaseModel):
     system_prompt: Optional[str] = None
     output_format: Optional[str] = None
     max_iterations: Optional[int] = None
+    skills: Optional[SkillConfigRequest] = None
+    mcp_servers: Optional[list[MCPServerConfigRequest]] = None
 
 
 class AgentInvokeRequest(BaseModel):
@@ -206,6 +231,8 @@ class ConfigResponse(BaseModel):
 # ========================
 
 
+
+
 class AgentCreateRequest(BaseModel):
     """创建智能体请求（全配置化）"""
 
@@ -215,6 +242,8 @@ class AgentCreateRequest(BaseModel):
     tools: list[str] = Field(default_factory=list, description="可用工具名称列表")
     output_format: str = Field(default="text", description="输出格式: text | json")
     max_iterations: int = Field(default=10, ge=1, le=50, description="tool_use 最大循环次数")
+    skills: Optional[SkillConfigRequest] = None
+    mcp_servers: list[MCPServerConfigRequest] = Field(default_factory=list)
 
 
 class AgentUpdateRequest(BaseModel):
@@ -225,6 +254,8 @@ class AgentUpdateRequest(BaseModel):
     tools: Optional[list[str]] = None
     output_format: Optional[str] = None
     max_iterations: Optional[int] = None
+    skills: Optional[SkillConfigRequest] = None
+    mcp_servers: Optional[list[MCPServerConfigRequest]] = None
 
 
 # ========================
