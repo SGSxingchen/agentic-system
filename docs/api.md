@@ -136,7 +136,8 @@
 }
 ```
 
-`api_key` 留空会保留已有值；响应中只返回 `api_key_set`，不会明文返回 Key。
+`api_key` 留空、传 `null` 或传入 `********` / `••••••••` 这类遮罩值时，后端会保留已有密钥；响应中只返回 `api_key_set`，不会明文返回 Key。
+OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保存时会规范化为 API 根路径；填写空字符串表示清空自定义地址并使用 SDK 默认端点。
 
 **响应:**
 ```json
@@ -145,6 +146,21 @@
   "message": "配置已更新并重新加载"
 }
 ```
+
+### POST /api/config/models
+
+从当前 provider 拉取可用模型列表，供设置页刷新模型下拉框。
+
+**请求体:**
+```json
+{
+  "provider": "openai",
+  "base_url": "https://proxy.example.com",
+  "api_key": ""
+}
+```
+
+所有字段均可选；空 `api_key` 或遮罩值会沿用服务器已保存的密钥。OpenAI 兼容 `base_url` 会自动规范化到 `/v1` API 根路径；远端失败时返回 `status: "error"` 与可读 `message`，同时 `data.models` 为空，前端可降级到内置短表。
 
 ---
 

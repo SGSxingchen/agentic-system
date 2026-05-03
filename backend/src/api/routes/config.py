@@ -7,6 +7,7 @@
 """
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter
 import yaml
@@ -106,15 +107,65 @@ def _looks_like_masked_secret(value: Any) -> bool:
 
 
 def _normalize_openai_base_url(value: Any) -> str:
+    """Normalize OpenAI-compatible base_url to the API root.
+
+    Users often paste any of the following into the settings page:
+    - https://proxy.example.com
+    - https://proxy.example.com/v1
+    - https://proxy.example.com/v1/models
+    - https://proxy.example.com/v1/chat/completions
+
+    The OpenAI SDK expects base_url to be the API root, so keep only the path
+    up to `/v1` when it is already present, otherwise append `/v1`.
+    """
     if not isinstance(value, str):
         return ""
     stripped = value.strip().rstrip("/")
     if not stripped:
         return ""
-    # OpenAI SDK 的 base_url 需要指向 API 根路径。用户只填域名时自动补 /v1。
-    if stripped.endswith("/v1"):
-        return stripped
-    return f"{stripped}/v1"
+
+    # Avoid urlsplit treating "localhost:8000" as scheme="localhost".
+    if "://" not in stripped:
+        return stripped if stripped.endswith("/v1") else f"{stripped}/v1"
+
+    parts = urlsplit(stripped)
+    path_parts = [part for part in parts.path.split("/") if part]
+    if "v1" in path_parts:
+        v1_index = path_parts.index("v1")
+        normalized_path = "/" + "/".join(path_parts[: v1_index + 1])
+    else:
+        normalized_path = (parts.path.rstrip("/") + "/v1") if parts.path else "/v1"
+
+    return urlunsplit((parts.scheme, parts.netloc, normalized_path, "", ""))
+
+
+def _format_model_list_error(error: Exception, secret: str = "") -> str:
+    """Return a readable, non-sensitive model-list error for the UI."""
+    status_code = getattr(error, "status_code", None)
+    response = getattr(error, "response", None)
+    response_text = ""
+    if response is not None:
+        try:
+            response_text = response.text
+        except Exception:
+            response_text = ""
+
+    raw_message = str(error).strip()
+    parts = []
+    if status_code:
+        parts.append(f"HTTP {status_code}")
+    if raw_message:
+        parts.append(raw_message)
+    if response_text and response_text not in raw_message:
+        parts.append(response_text)
+
+    message = ": ".join(parts) if parts else type(error).__name__
+    if secret and len(secret) >= 6:
+        message = message.replace(secret, "[redacted]")
+    if len(message) > 500:
+        message = message[:497] + "..."
+    return message
+
 
 def _preserve_blank_secret(target: Dict[str, Any], existing: Dict[str, Any], key: str = "api_key") -> None:
     current = target.get(key)
@@ -335,10 +386,11 @@ async def list_provider_models(request: ModelListRequest):
             data={"provider": provider, "models": models},
         )
     except Exception as e:
-        print(f"[WARN] list_provider_models failed: {type(e).__name__}: {e}")
+        message = _format_model_list_error(e, api_key)
+        print(f"[WARN] list_provider_models failed: {type(e).__name__}: {message}")
         return APIResponse(
             status="error",
-            message=str(e),
+            message=message,
             data={"provider": provider, "models": []},
         )
 
