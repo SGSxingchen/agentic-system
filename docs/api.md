@@ -210,6 +210,43 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 }
 ```
 
+
+### GET /api/agents/persona-bindings
+
+获取 Agent 默认人格、Session 人格绑定、绑定优先级和建议展示角色。新前端应从智能体页面调用该接口；旧 `/api/personas/bindings` 保留兼容。
+
+**响应:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "agents": {"assistant": "base-assistant"},
+    "sessions": {"session-1": "base-assistant"},
+    "precedence": ["request_persona_id", "session_binding", "agent_binding", "base_persona"],
+    "base_persona_id": "base-assistant",
+    "roles": ["assistant", "tool_creator", "agent_creator", "planner", "coder", "reviewer"]
+  }
+}
+```
+
+### PUT /api/agents/persona-bindings/agents/{agent_name}
+
+设置 Agent 角色默认人格。生效顺序仍低于请求指定人格和会话绑定。
+
+**请求体:**
+```json
+{ "persona_id": "base-assistant" }
+```
+
+### PUT /api/agents/persona-bindings/sessions/{session_id}
+
+设置某个会话的人格绑定。生效顺序低于请求体显式 `persona_id`，高于 Agent 默认人格。
+
+**请求体:**
+```json
+{ "persona_id": "base-assistant" }
+```
+
 ### POST /api/agents/{name}/invoke
 
 直接调用某个智能体。
@@ -694,3 +731,8 @@ ws://localhost:8001/ws
 - `DELETE /api/artifacts/{id}`：删除 Artifact。
 
 Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会从工具结果中自动提取并显示 Artifact chip。
+
+
+## 人格迭代工具与智能体
+
+`persona_evolution` Agent 仅挂载 `read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。补丁应用工具必须显式 `admin_approved=true` 和 `reviewer`，配置 `PERSONA_ADMIN_TOKEN` 时还需要匹配 token。

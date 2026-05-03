@@ -10,6 +10,7 @@
 - GET  /api/capabilities        — 列出所有可用能力（供 Agent 选择 tools）
 """
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from ..schemas import (
     APIResponse,
@@ -20,9 +21,22 @@ from ..schemas import (
 )
 from ..dependencies import get_agent_registry, get_capability_registry, reload_agent_fn
 from core.config import load_single_yaml, save_yaml_config
+from core.persona import BASE_PERSONA_ID, DEFAULT_BINDABLE_AGENT_ROLES, PersonaBindingService
 from core.mcp import validate_mcp_server_payload
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+
+class AgentPersonaBindRequest(BaseModel):
+    persona_id: str = Field(default=BASE_PERSONA_ID)
+
+
+def _known_agent_roles() -> list[str]:
+    roles = list(DEFAULT_BINDABLE_AGENT_ROLES)
+    for name in _agent_config_map().keys():
+        if name and name not in roles:
+            roles.append(name)
+    return roles
 
 
 # ─── 辅助函数 ─────────────────────────────────────────────
@@ -65,6 +79,43 @@ async def _reload_agents():
 
 
 # ─── 读取端点 ─────────────────────────────────────────────
+
+
+@router.get("/persona-bindings", response_model=APIResponse)
+async def get_agent_persona_bindings():
+    """Return Agent/session persona bindings from the Agent information architecture side.
+
+    Precedence is request persona_id > session binding > Agent binding > base persona.
+    The older /api/personas/bindings endpoints are retained as compatibility aliases.
+    """
+
+    data = PersonaBindingService().get_bindings(known_agents=_known_agent_roles())
+    return APIResponse(status="ok", data=data)
+
+
+@router.put("/persona-bindings/agents/{agent_name}", response_model=APIResponse)
+async def bind_agent_default_persona(agent_name: str, req: AgentPersonaBindRequest):
+    """Bind a default persona to an Agent role."""
+
+    if agent_name not in _known_agent_roles():
+        return APIResponse(status="error", message=f"Agent role '{agent_name}' is not configured")
+    try:
+        binding = PersonaBindingService().bind_agent(agent_name, req.persona_id)
+    except ValueError as exc:
+        return APIResponse(status="error", message=str(exc))
+    return APIResponse(status="ok", data=binding)
+
+
+@router.put("/persona-bindings/sessions/{session_id}", response_model=APIResponse)
+async def bind_session_persona_from_agent_page(session_id: str, req: AgentPersonaBindRequest):
+    """Bind a persona to a session from the Agent page workflow."""
+
+    try:
+        binding = PersonaBindingService().bind_session(session_id, req.persona_id)
+    except ValueError as exc:
+        return APIResponse(status="error", message=str(exc))
+    return APIResponse(status="ok", data=binding)
+
 
 
 @router.get("", response_model=APIResponse)

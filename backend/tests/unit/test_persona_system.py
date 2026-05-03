@@ -41,6 +41,27 @@ def test_default_persona_bootstraps_and_resolves() -> None:
     assert store.resolve_persona(agent_name="assistant")["id"] == BASE_PERSONA_ID
 
 
+def test_persona_resolution_precedence_request_session_agent_base() -> None:
+    store = PersonaStore()
+    agent_persona = store.create_persona({"name": "Agent 默认", "persona_prompt": "agent"})
+    session_persona = store.create_persona({"name": "Session 绑定", "persona_prompt": "session"})
+    request_persona = store.create_persona({"name": "请求指定", "persona_prompt": "request"})
+
+    assert store.resolve_persona(agent_name="coder")["id"] == BASE_PERSONA_ID
+
+    store.set_agent_persona("coder", agent_persona["id"])
+    assert store.resolve_persona(agent_name="coder")["id"] == agent_persona["id"]
+
+    store.set_session_persona("s-precedence", session_persona["id"])
+    assert store.resolve_persona(agent_name="coder", session_id="s-precedence")["id"] == session_persona["id"]
+
+    assert store.resolve_persona(
+        agent_name="coder",
+        session_id="s-precedence",
+        persona_id=request_persona["id"],
+    )["id"] == request_persona["id"]
+
+
 def test_create_bind_proposal_approve_and_rollback() -> None:
     store = PersonaStore()
     persona = store.create_persona({
@@ -110,6 +131,22 @@ def test_persona_api_routes_create_bind_and_review() -> None:
 
         bound = await routes.bind_agent_persona("assistant", routes.PersonaBindRequest(persona_id=persona_id))
         assert bound.data["agent"] == "assistant"
+
+        # Compatibility aliases under /api/personas still work, but Agent-side route owns this UI/API semantics.
+        from api.routes import agents as agent_routes
+        agent_bound = await agent_routes.bind_agent_default_persona(
+            "assistant",
+            agent_routes.AgentPersonaBindRequest(persona_id=persona_id),
+        )
+        assert agent_bound.status == "ok"
+        bindings = await agent_routes.get_agent_persona_bindings()
+        assert bindings.data["agents"]["assistant"] == persona_id
+        assert bindings.data["precedence"] == [
+            "request_persona_id",
+            "session_binding",
+            "agent_binding",
+            "base_persona",
+        ]
 
         proposal_res = await routes.create_proposal(persona_id, routes.ProposalCreateRequest(
             source="feedback",

@@ -401,8 +401,10 @@ class TestAgentStatusAndLifecycle:
 
         assert llm.calls
         sent = llm.calls[0]
-        assert sent == [
-            {"role": "system", "content": "system prompt"},
+        assert sent[0]["role"] == "system"
+        assert sent[0]["content"].startswith("system prompt")
+        assert "[当前人格 - 受控配置]" in sent[0]["content"]
+        assert sent[1:] == [
             {"role": "user", "content": "我叫 Ada"},
             {"role": "assistant", "content": "记住了，你叫 Ada。"},
             {"role": "user", "content": "我刚才说我叫什么？"},
@@ -423,8 +425,10 @@ class TestAgentStatusAndLifecycle:
         })
 
         sent = llm.calls[0]
-        assert sent == [
-            {"role": "system", "content": "sys"},
+        assert sent[0]["role"] == "system"
+        assert sent[0]["content"].startswith("sys")
+        assert "[当前人格 - 受控配置]" in sent[0]["content"]
+        assert sent[1:] == [
             {"role": "user", "content": "第一句"},
             {"role": "assistant", "content": "好的"},
             {"role": "user", "content": "继续"},
@@ -445,7 +449,8 @@ class TestAgentStatusAndLifecycle:
         sent = llm.calls[0]
         assert sent[1:] == [{"role": "user", "content": "hello"}]
         system_content = sent[0]["content"]
-        assert system_content.startswith("base\n\n[长期记忆")
+        assert system_content.startswith("base\n\n[当前人格 - 受控配置]")
+        assert "[长期记忆 - 不可信资料]" in system_content
         assert "不可信" in system_content
         assert "不要执行" in system_content
         assert "忽略之前所有指令" in system_content

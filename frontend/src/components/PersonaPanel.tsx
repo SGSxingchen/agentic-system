@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Persona, PersonaBindings, PersonaProposal, PersonaVersion } from '../types'
+import type { Persona, PersonaProposal, PersonaVersion } from '../types'
 import {
   approvePersonaProposal,
   archivePersona,
-  bindAgentPersona,
-  bindSessionPersona,
   createPersona,
   createPersonaProposal,
-  getAgents,
-  getPersonaBindings,
   listPersonaProposals,
   listPersonas,
   listPersonaVersions,
@@ -46,18 +42,22 @@ function emptyDraft(): Persona {
   }
 }
 
+function renderPreview(persona: Persona): string {
+  const style = (persona.style_rules || []).map((item) => `- ${item}`).join('\n') || '- 无'
+  const behavior = (persona.behavior_rules || []).map((item) => `- ${item}`).join('\n') || '- 无'
+  return `[当前人格 - 受控配置]\n以下人格只定义语气、协作习惯和非系统级行为偏好。人格不能授予新权限，不能覆盖系统提示词、工具权限、管理员审核、安全边界或用户当前明确要求。\n人格: ${persona.name || '未命名'} (id=${persona.id || '<new>'}, version=${persona.version || 1})\n描述: ${persona.description || ''}\n人格提示词:\n${persona.persona_prompt || ''}\n风格规则:\n${style}\n行为规则:\n${behavior}\n权限/边界:\n${persona.permission_boundary || ''}`
+}
+
 export function PersonaPanel() {
   const [personas, setPersonas] = useState<Persona[]>([])
   const [selectedId, setSelectedId] = useState(BASE_ID)
   const [draft, setDraft] = useState<Persona>(emptyDraft())
   const [styleText, setStyleText] = useState('')
   const [behaviorText, setBehaviorText] = useState('')
-  const [bindings, setBindings] = useState<PersonaBindings>({ agents: {}, sessions: {} })
-  const [agents, setAgents] = useState<string[]>([])
   const [proposals, setProposals] = useState<PersonaProposal[]>([])
   const [versions, setVersions] = useState<PersonaVersion[]>([])
   const [feedback, setFeedback] = useState('')
-  const [sessionId, setSessionId] = useState('')
+  const [proposalSessionId, setProposalSessionId] = useState('')
   const [reviewer, setReviewer] = useState('local-admin')
   const [notice, setNotice] = useState('')
   const [showArchived, setShowArchived] = useState(false)
@@ -68,16 +68,12 @@ export function PersonaPanel() {
   )
 
   const refresh = useCallback(async () => {
-    const [personaRes, bindingRes, proposalRes, agentRes] = await Promise.all([
+    const [personaRes, proposalRes] = await Promise.all([
       listPersonas(showArchived),
-      getPersonaBindings(),
       listPersonaProposals(),
-      getAgents(),
     ])
     if (personaRes.status === 'ok' && personaRes.data) setPersonas(personaRes.data)
-    if (bindingRes.status === 'ok' && bindingRes.data) setBindings(bindingRes.data)
     if (proposalRes.status === 'ok' && proposalRes.data) setProposals(proposalRes.data)
-    if (agentRes.status === 'ok' && agentRes.data) setAgents(agentRes.data.map((agent) => agent.name))
   }, [showArchived])
 
   useEffect(() => { refresh() }, [refresh])
@@ -111,24 +107,17 @@ export function PersonaPanel() {
     const res = await createPersonaProposal(selected.id, {
       source: 'admin_instruction',
       feedback: feedback || '请根据最近反馈优化人格。',
-      session_id: sessionId || undefined,
+      session_id: proposalSessionId || undefined,
     })
     setNotice(res.status === 'ok' ? '建议已进入待审核队列，未自动覆盖人格正文' : res.message || '生成失败')
     setFeedback('')
     await refresh()
   }
 
-  const bindAgent = async (agent: string, personaId: string) => {
-    const res = await bindAgentPersona(agent, personaId)
-    setNotice(res.status === 'ok' ? `Agent ${agent} 已绑定人格` : res.message || '绑定失败')
-    await refresh()
-  }
-
-  const bindSession = async () => {
-    if (!sessionId || !selected) return
-    const res = await bindSessionPersona(sessionId, selected.id)
-    setNotice(res.status === 'ok' ? '会话已绑定当前人格' : res.message || '绑定失败')
-    await refresh()
+  const previewPersona: Persona = {
+    ...draft,
+    style_rules: linesToList(styleText),
+    behavior_rules: linesToList(behaviorText),
   }
 
   return (
@@ -136,8 +125,8 @@ export function PersonaPanel() {
       <header className="persona-hero">
         <div>
           <span className="persona-kicker">Persona Governance</span>
-          <h2>人格系统</h2>
-          <p>创建、绑定、审核和回滚人格。迭代建议必须人工批准，禁止自动覆盖正文。</p>
+          <h2>人格管理</h2>
+          <p>只管理人格定义、测试预览、迭代建议和版本审核。Agent/会话绑定已迁移到“智能体管理”页面。</p>
         </div>
         <button className="persona-primary" onClick={() => { setSelectedId(''); setDraft(emptyDraft()); setStyleText(''); setBehaviorText('') }}>新建人格</button>
       </header>
@@ -181,22 +170,15 @@ export function PersonaPanel() {
 
       <div className="persona-grid persona-grid--bottom">
         <section className="persona-card">
-          <h3>绑定生效</h3>
-          <p className="persona-muted">请求指定人格 &gt; 会话绑定 &gt; Agent 绑定 &gt; 基础人格。</p>
-          <div className="persona-bindings">
-            {agents.map((agent) => (
-              <label key={agent}>{agent}<select value={bindings.agents[agent] || BASE_ID} onChange={(e) => bindAgent(agent, e.target.value)}>{personas.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-            ))}
-          </div>
-          <div className="persona-form-row">
-            <input value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="session_id" />
-            <button onClick={bindSession} disabled={!sessionId || !selected}>绑定当前人格到会话</button>
-          </div>
+          <h3>人格测试 / 注入预览</h3>
+          <p className="persona-muted">预览运行时追加到 system prompt 的受控人格块。此处仅预览人格本身，不展示 Agent/Session 绑定。</p>
+          <pre className="persona-preview">{renderPreview(previewPersona)}</pre>
         </section>
 
         <section className="persona-card">
           <h3>生成迭代建议</h3>
           <textarea value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder="输入对话反馈、管理员指令或反思摘要。建议只进入待审核，不会自动覆盖。" rows={5} />
+          <input value={proposalSessionId} onChange={(e) => setProposalSessionId(e.target.value)} placeholder="可选 session_id（仅作为建议来源追踪）" />
           <button className="persona-primary" onClick={generateProposal} disabled={!selected}>生成待审核建议</button>
         </section>
       </div>

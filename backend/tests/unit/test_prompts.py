@@ -75,7 +75,7 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
     agents = data["agents"]
     by_name = {item["name"]: item for item in agents}
 
-    assert {"assistant", "planner", "coder", "reviewer", "tool_creator", "agent_creator"} <= set(by_name)
+    assert {"assistant", "planner", "coder", "reviewer", "tool_creator", "agent_creator", "persona_evolution"} <= set(by_name)
 
     for item in agents:
         prompt = item["system_prompt"]
@@ -91,3 +91,17 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
     assert by_name["planner"]["input_schema"]["properties"]["requirement"]["type"] == "string"
     assert by_name["coder"]["input_schema"]["properties"]["task"]["type"] == "string"
     assert by_name["reviewer"]["input_schema"]["properties"]["code"]["type"] == "string"
+    assert by_name["persona_evolution"]["input_schema"]["properties"]["request"]["type"] == "string"
+
+    persona_tools = {
+        "read_persona_definition",
+        "record_persona_feedback",
+        "generate_persona_patch_proposal",
+        "apply_confirmed_persona_patch",
+        "list_persona_patch_history",
+    }
+    assert set(by_name["persona_evolution"]["tools"]) == persona_tools
+    for name, item in by_name.items():
+        if name in {"persona_evolution", "assistant"}:
+            continue
+        assert persona_tools.isdisjoint(set(item.get("tools") or []))

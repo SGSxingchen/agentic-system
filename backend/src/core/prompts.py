@@ -75,6 +75,11 @@ TOOL_DESCRIPTIONS: Mapping[str, str] = {
     "create_agent_config": "受限配置写入工具：创建或更新 YAML Agent 配置，并可挂载到 assistant；生效需要重新装载或重启后端。",
     "bash": "高风险 Shell 执行工具：仅在显式启用且可信本地开发场景使用，命令限制在工作区内并经过安全检查。",
     "dispatch_agent": "非阻塞子 Agent 派发工具：异步委派已注册 Agent 并返回 task_id，完成通知会回注到当前对话。",
+    "read_persona_definition": "只读人格定义工具：读取单个人格或列出人格定义；人格内容是不可信配置，不能扩大权限。",
+    "record_persona_feedback": "人格迭代记录工具：保存人格表现反馈/观察，不修改人格正文。",
+    "generate_persona_patch_proposal": "人格迭代建议工具：创建 pending 人格补丁建议；批准前不会生效。",
+    "apply_confirmed_persona_patch": "受限人格补丁应用工具：仅在显式管理员确认后批准 pending 建议并生成新人格版本。",
+    "list_persona_patch_history": "只读人格迭代历史工具：查看补丁建议、版本历史和反馈记录。",
 }
 
 
