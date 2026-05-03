@@ -9,6 +9,7 @@ interface PipelineStep {
   output_key?: string
   condition?: string
   max_iterations?: number
+  timeout?: number
 }
 
 interface PipelineTemplate {
@@ -35,6 +36,7 @@ interface StepFormData {
   output_key: string
   condition: string
   max_iterations: number
+  timeout: string
 }
 
 interface PipelineFormData {
@@ -51,6 +53,7 @@ const EMPTY_STEP: StepFormData = {
   output_key: '',
   condition: '',
   max_iterations: 1,
+  timeout: '',
 }
 
 export function PipelinePanel() {
@@ -147,6 +150,7 @@ export function PipelinePanel() {
         output_key: s.output_key || '',
         condition: s.condition || '',
         max_iterations: s.max_iterations || 1,
+        timeout: s.timeout != null ? String(s.timeout) : '',
       })),
     })
     setSelectedPipeline(null)
@@ -162,6 +166,17 @@ export function PipelinePanel() {
     setSaving(true)
     setError('')
 
+    for (const [index, step] of form.steps.entries()) {
+      if (step.timeout.trim()) {
+        const timeout = Number(step.timeout)
+        if (!Number.isFinite(timeout) || timeout <= 0) {
+          setError(`第 ${index + 1} 步 timeout 必须是大于 0 的数字`)
+          setSaving(false)
+          return
+        }
+      }
+    }
+
     const steps = form.steps.map((s) => {
       const input: Record<string, string> = {}
       for (const kv of s.input) {
@@ -174,6 +189,7 @@ export function PipelinePanel() {
         ...(s.output_key ? { output_key: s.output_key } : {}),
         ...(s.condition ? { condition: s.condition } : {}),
         ...(s.max_iterations > 1 ? { max_iterations: s.max_iterations } : {}),
+        ...(s.timeout.trim() ? { timeout: Number(s.timeout) } : {}),
       }
     })
 
@@ -392,6 +408,16 @@ export function PipelinePanel() {
                     value={step.max_iterations}
                     onChange={(e) => updateStep(idx, 'max_iterations', parseInt(e.target.value) || 1)}
                     title="最大迭代次数"
+                  />
+                  <input
+                    className="step-editor__input step-editor__input--xs"
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    value={step.timeout}
+                    onChange={(e) => updateStep(idx, 'timeout', e.target.value)}
+                    placeholder="timeout(s)"
+                    title="步骤超时秒数，留空为不限制"
                   />
                 </div>
                 {/* Input 映射 */}

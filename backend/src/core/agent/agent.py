@@ -246,6 +246,7 @@ class Agent:
                     yield {
                         "type": "tool_call",
                         "tool": tc.name,
+                        "tool_call_id": tc.id,
                         "args": tc.arguments,
                         "concurrent": self._is_concurrent_safe(tc),
                     }
@@ -255,6 +256,7 @@ class Agent:
                     yield {
                         "type": "tool_result",
                         "tool": tc.name,
+                        "tool_call_id": tc.id,
                         "result": result,
                         "truncated": isinstance(result, dict) and bool(result.get("truncated")),
                     }

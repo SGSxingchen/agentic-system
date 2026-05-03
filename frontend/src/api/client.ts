@@ -385,7 +385,7 @@ export async function createPipeline(data: {
   name: string
   description?: string
   mode?: string
-  steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number }[]
+  steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number; timeout?: number }[]
 }): Promise<APIResponse<unknown>> {
   return post('/api/pipelines', data)
 }
@@ -395,7 +395,7 @@ export async function updatePipeline(
   data: {
     description?: string
     mode?: string
-    steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number }[]
+    steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number; timeout?: number }[]
   }
 ): Promise<APIResponse<unknown>> {
   return put(`/api/pipelines/${name}`, data)

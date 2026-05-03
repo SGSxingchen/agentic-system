@@ -58,6 +58,7 @@ from .routes import (
 )
 from .websocket.handlers import (
     build_memory_context,
+    broadcast_monitor_event,
     reflect_chat_exchange,
     register_bus_event_bridge,
     websocket_endpoint as ws_handler,
@@ -437,7 +438,11 @@ async def chat_stream_endpoint(req: dict):
     capability = cap_registry.get("assistant")
 
     async def event_generator():
+        def sse(event: dict[str, Any]) -> str:
+            return f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+
         request_started_at = time.perf_counter()
+        tool_started_at: dict[str, float] = {}
         try:
             payload = {"message": message}
             if isinstance(req.get("messages"), list):
@@ -451,7 +456,72 @@ async def chat_stream_endpoint(req: dict):
 
             if hasattr(capability, "execute_stream"):
                 final_response = ""
+                progress_event = {
+                    "type": "agent_progress",
+                    "agent": "assistant",
+                    "activity": "planning",
+                    "status": "running",
+                    "message": "Preparing context and contacting LLM",
+                }
+                await broadcast_monitor_event("agent_progress", progress_event)
+                yield sse(progress_event)
                 async for event in capability.execute_stream(**payload):
+                    if isinstance(event, dict) and event.get("type") == "tool_call":
+                        tool_name = str(event.get("tool") or "")
+                        call_id = str(event.get("tool_call_id") or f"{tool_name}:{len(tool_started_at) + 1}")
+                        tool_started_at[call_id] = time.perf_counter()
+                        progress_event = {
+                            "type": "agent_progress",
+                            "agent": "assistant",
+                            "activity": "calling_tool",
+                            "status": "running",
+                            "tool": tool_name,
+                            "tool_call_id": call_id,
+                        }
+                        event = dict(event)
+                        event["tool_call_id"] = call_id
+                        event.setdefault("status", "running")
+                        await broadcast_monitor_event("agent_progress", progress_event)
+                        await broadcast_monitor_event(
+                            "tool_call_started",
+                            {
+                                **progress_event,
+                                "args": event.get("args"),
+                                "concurrent": bool(event.get("concurrent")),
+                            },
+                        )
+                        yield sse(progress_event)
+                    elif isinstance(event, dict) and event.get("type") == "tool_result":
+                        tool_name = str(event.get("tool") or "")
+                        call_id = str(event.get("tool_call_id") or f"{tool_name}:latest")
+                        started = tool_started_at.pop(call_id, None)
+                        elapsed_ms = round((time.perf_counter() - started) * 1000, 2) if started else None
+                        result_payload = event.get("result")
+                        is_error = isinstance(result_payload, dict) and bool(result_payload.get("error"))
+                        progress_event = {
+                            "type": "agent_progress",
+                            "agent": "assistant",
+                            "activity": "waiting",
+                            "status": "error" if is_error else "running",
+                            "tool": tool_name,
+                            "tool_call_id": call_id,
+                            "elapsed_ms": elapsed_ms,
+                        }
+                        event = dict(event)
+                        event["tool_call_id"] = call_id
+                        event["status"] = "error" if is_error else "success"
+                        event["elapsed_ms"] = elapsed_ms
+                        await broadcast_monitor_event("agent_progress", progress_event)
+                        await broadcast_monitor_event(
+                            "tool_call_finished",
+                            {
+                                **progress_event,
+                                "status": "error" if is_error else "success",
+                                "result": result_payload,
+                                "truncated": bool(event.get("truncated")),
+                            },
+                        )
+                        yield sse(progress_event)
                     if isinstance(event, dict) and event.get("type") == "done":
                         event = dict(event)
                         event["elapsed_ms"] = round((time.perf_counter() - request_started_at) * 1000, 2)
@@ -464,7 +534,17 @@ async def chat_stream_endpoint(req: dict):
                             final_response = str(content.get("response") or content)
                         else:
                             final_response = str(content or "")
-                    yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+                        done_progress = {
+                            "type": "agent_progress",
+                            "agent": "assistant",
+                            "activity": "completed",
+                            "status": "completed",
+                            "elapsed_ms": event.get("elapsed_ms"),
+                        }
+                        await broadcast_monitor_event("agent_progress", done_progress)
+                    yield sse(event)
+                    if isinstance(event, dict) and event.get("type") == "done":
+                        yield sse(done_progress)
                 if final_response:
                     await reflect_chat_exchange(
                         user_message=message,
@@ -481,17 +561,11 @@ async def chat_stream_endpoint(req: dict):
                     source="rest_chat_stream",
                     session_id=req.get("session_id"),
                 )
-                yield (
-                    f"data: {_json.dumps({'type': 'thinking', 'content': response_text}, ensure_ascii=False)}\n\n"
-                )
+                yield sse({'type': 'thinking', 'content': response_text})
                 elapsed_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
-                yield (
-                    f"data: {_json.dumps({'type': 'done', 'content': result, 'usage': result.get('usage', {}), 'elapsed_ms': elapsed_ms}, ensure_ascii=False)}\n\n"
-                )
+                yield sse({'type': 'done', 'content': result, 'usage': result.get('usage', {}), 'elapsed_ms': elapsed_ms})
         except Exception as exc:
-            yield (
-                f"data: {_json.dumps({'type': 'done', 'content': {'error': str(exc)}}, ensure_ascii=False)}\n\n"
-            )
+            yield sse({'type': 'done', 'content': {'error': str(exc)}})
 
     return StreamingResponse(
         event_generator(),

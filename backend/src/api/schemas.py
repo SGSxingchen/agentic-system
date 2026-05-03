@@ -309,6 +309,7 @@ class ChatMessageCreateRequest(BaseModel):
     memoriesUsed: Optional[int] = Field(default=None, ge=0)
     elapsedMs: Optional[float] = Field(default=None, ge=0)
     usage: Optional[dict[str, int]] = None
+    toolCalls: Optional[list[dict[str, Any]]] = None
 
 
 # ========================

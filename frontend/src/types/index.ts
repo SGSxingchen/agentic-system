@@ -8,6 +8,8 @@ export interface Message {
   memoriesUsed?: number
   elapsedMs?: number
   usage?: TokenUsage
+  toolCalls?: ToolCallRecord[]
+  progress?: AgentProgressEvent
 }
 
 export interface TokenUsage {
@@ -15,6 +17,35 @@ export interface TokenUsage {
   output_tokens?: number
   total_tokens?: number
   [key: string]: number | undefined
+}
+
+export type ToolCallStatus = 'running' | 'success' | 'error'
+
+export interface ToolCallRecord {
+  id: string
+  tool: string
+  status: ToolCallStatus
+  args?: unknown
+  result?: unknown
+  error?: unknown
+  elapsedMs?: number
+  startedAt?: string
+  finishedAt?: string
+  concurrent?: boolean
+  truncated?: boolean
+}
+
+export interface AgentProgressEvent {
+  agent?: string
+  activity: 'planning' | 'calling_tool' | 'waiting' | 'completed' | 'running' | string
+  status?: 'running' | 'success' | 'error' | 'completed' | string
+  message?: string
+  tool?: string
+  tool_call_id?: string
+  current_step?: string
+  task_id?: string
+  elapsed_ms?: number
+  [key: string]: unknown
 }
 
 export interface ChatSessionSummary {

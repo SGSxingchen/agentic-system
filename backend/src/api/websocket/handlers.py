@@ -17,7 +17,15 @@ from ..dependencies import (
     get_memory_retriever,
 )
 
-_BRIDGED_EVENT_TYPES = ("step_started", "step_completed")
+_BRIDGED_EVENT_TYPES = (
+    "step_started",
+    "step_completed",
+    "step_failed",
+    "step_skipped",
+    "agent_progress",
+    "tool_call_started",
+    "tool_call_finished",
+)
 _REGISTERED_BUS_IDS: set[int] = set()
 
 
@@ -85,6 +93,20 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+async def broadcast_monitor_event(
+    event_type: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Broadcast an observability event to monitor clients.
+
+    Chat responses still travel through SSE/WebSocket direct replies, but
+    progress/tool events are also mirrored here so the Monitor panel can show
+    what an Agent is doing right now.
+    """
+
+    await manager.broadcast(_ws_message("event", data or {}, event_type=event_type))
 
 
 async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -195,7 +217,21 @@ async def _handle_user_message(
         return
 
     response_text = ""
+    tool_started_at: dict[str, datetime] = {}
     try:
+        await manager.send_to(
+            websocket,
+            _ws_message(
+                "event",
+                {
+                    "agent": "assistant",
+                    "activity": "planning",
+                    "status": "running",
+                    "message": "Preparing context and contacting LLM",
+                },
+                event_type="agent_progress",
+            ),
+        )
         async for event in stream_fn(**assistant_payload):
             etype = event.get("type")
 
@@ -212,31 +248,89 @@ async def _handle_user_message(
                 )
 
             elif etype == "tool_call":
+                tool_name = str(event.get("tool") or "")
+                call_id = str(event.get("tool_call_id") or f"{tool_name}:{len(tool_started_at) + 1}")
+                tool_started_at[call_id] = datetime.utcnow()
+                progress_data = {
+                    "agent": "assistant",
+                    "activity": "calling_tool",
+                    "status": "running",
+                    "tool": tool_name,
+                    "tool_call_id": call_id,
+                }
+                await manager.send_to(
+                    websocket,
+                    _ws_message("event", progress_data, event_type="agent_progress"),
+                )
                 await manager.send_to(
                     websocket,
                     _ws_message(
                         "event",
                         {
-                            "tool": event.get("tool"),
+                            "tool": tool_name,
+                            "tool_call_id": call_id,
                             "args": event.get("args"),
                             "concurrent": bool(event.get("concurrent")),
+                            "status": "running",
                         },
                         event_type="agent_tool_call",
                     ),
                 )
+                await broadcast_monitor_event(
+                    "tool_call_started",
+                    {
+                        **progress_data,
+                        "args": event.get("args"),
+                        "concurrent": bool(event.get("concurrent")),
+                    },
+                )
 
             elif etype == "tool_result":
+                tool_name = str(event.get("tool") or "")
+                call_id = str(event.get("tool_call_id") or f"{tool_name}:latest")
+                started = tool_started_at.pop(call_id, None)
+                elapsed_ms = (
+                    round((datetime.utcnow() - started).total_seconds() * 1000, 2)
+                    if started
+                    else None
+                )
+                result = event.get("result")
+                is_error = isinstance(result, dict) and bool(result.get("error"))
+                progress_data = {
+                    "agent": "assistant",
+                    "activity": "waiting",
+                    "status": "error" if is_error else "running",
+                    "tool": tool_name,
+                    "tool_call_id": call_id,
+                    "elapsed_ms": elapsed_ms,
+                }
+                await manager.send_to(
+                    websocket,
+                    _ws_message("event", progress_data, event_type="agent_progress"),
+                )
                 await manager.send_to(
                     websocket,
                     _ws_message(
                         "event",
                         {
-                            "tool": event.get("tool"),
-                            "result": event.get("result"),
+                            "tool": tool_name,
+                            "tool_call_id": call_id,
+                            "result": result,
+                            "status": "error" if is_error else "success",
+                            "elapsed_ms": elapsed_ms,
                             "truncated": bool(event.get("truncated")),
                         },
                         event_type="agent_tool_result",
                     ),
+                )
+                await broadcast_monitor_event(
+                    "tool_call_finished",
+                    {
+                        **progress_data,
+                        "status": "error" if is_error else "success",
+                        "result": result,
+                        "truncated": bool(event.get("truncated")),
+                    },
                 )
 
             elif etype == "done":
@@ -257,6 +351,19 @@ async def _handle_user_message(
                             "final": final_text,
                         },
                         event_type="agent_done",
+                    ),
+                )
+                await manager.send_to(
+                    websocket,
+                    _ws_message(
+                        "event",
+                        {
+                            "agent": "assistant",
+                            "activity": "completed",
+                            "status": "completed",
+                            "elapsed_ms": event.get("elapsed_ms"),
+                        },
+                        event_type="agent_progress",
                     ),
                 )
                 # 兼容现有前端：仍然下发 assistant_response 携带最终文本

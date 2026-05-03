@@ -43,6 +43,9 @@ export function MonitorPanel() {
 
   const health = state.health
   const isBackendDown = !health && !loading
+  const latestProgress = [...state.wsEvents]
+    .reverse()
+    .find((event) => (event.event_type || event.type) === 'agent_progress')
 
   const healthDotColor = (ok: boolean | undefined) => {
     if (isBackendDown) return '#9CA3AF'
@@ -176,6 +179,38 @@ export function MonitorPanel() {
         </div>
       </div>
 
+      <div className="monitor-section">
+        <h3>Agent 当前进度</h3>
+        {latestProgress?.data ? (
+          <div className="progress-snapshot">
+            <div>
+              <span className="info-label">Activity</span>
+              <strong>{latestProgress.data.activity || latestProgress.data.current_step || 'running'}</strong>
+            </div>
+            <div>
+              <span className="info-label">Status</span>
+              <strong>{latestProgress.data.status || '-'}</strong>
+            </div>
+            {(latestProgress.data.tool || latestProgress.data.agent) && (
+              <div>
+                <span className="info-label">Target</span>
+                <strong>{latestProgress.data.tool || latestProgress.data.agent}</strong>
+              </div>
+            )}
+            {latestProgress.data.task_id && (
+              <div>
+                <span className="info-label">Task</span>
+                <strong>{latestProgress.data.task_id}</strong>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="event-stream-empty event-stream-empty--compact">
+            等待 Agent 进度事件...
+          </div>
+        )}
+      </div>
+
       {/* Event Stream */}
       <div className="monitor-section event-stream-section">
         <div className="section-header">
@@ -229,11 +264,14 @@ export function MonitorPanel() {
                   {event.event_type || event.type}
                 </span>
                 {event.data && (
-                  <pre className="event-data-preview">
-                    {typeof event.data === 'string'
-                      ? event.data
-                      : JSON.stringify(event.data, null, 2)}
-                  </pre>
+                  <details className="event-data-details">
+                    <summary>详情</summary>
+                    <pre className="event-data-preview">
+                      {typeof event.data === 'string'
+                        ? event.data
+                        : JSON.stringify(event.data, null, 2)}
+                    </pre>
+                  </details>
                 )}
               </div>
             ))

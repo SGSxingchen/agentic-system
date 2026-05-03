@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..schemas import APIResponse, TaskSubmitRequest
 from ..dependencies import get_capability_registry, get_pipeline
+from ..websocket.handlers import broadcast_monitor_event
 from core.task import (
     TaskRegistry,
     TaskStatus,
@@ -145,6 +146,16 @@ async def _run_pipeline_task(
                 current_step=event.get("step"),
                 activity=f"running step '{event.get('step')}'",
             )
+            await broadcast_monitor_event(
+                "agent_progress",
+                {
+                    "task_id": task_id,
+                    "agent": event.get("capability") or event.get("agent"),
+                    "activity": "planning" if event.get("step") == "plan" else "running",
+                    "status": "running",
+                    "current_step": event.get("step"),
+                },
+            )
         elif ev_type in ("step_completed", "step_failed", "step_skipped"):
             # 把中间结果填到 plan / code / review 字段（兼容旧前端）
             step_name = event.get("step")
@@ -157,6 +168,17 @@ async def _run_pipeline_task(
             _registry.set_progress(
                 task_id,
                 activity=f"{ev_type}: {step_name}",
+            )
+            await broadcast_monitor_event(
+                "agent_progress",
+                {
+                    "task_id": task_id,
+                    "activity": "completed" if ev_type == "step_completed" else ev_type,
+                    "status": "completed" if ev_type == "step_completed" else "error",
+                    "current_step": step_name,
+                    "elapsed_ms": event.get("duration_ms"),
+                    "error": event.get("error"),
+                },
             )
 
     writer.write("started", {"requirement": requirement})

@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAppStore } from '../store/appStore'
-import type { ChatSession, ChatSessionSummary, Message, TokenUsage } from '../types'
+import type {
+  AgentProgressEvent,
+  ChatSession,
+  ChatSessionSummary,
+  Message,
+  TokenUsage,
+  ToolCallRecord,
+} from '../types'
 import {
   addChatSessionMessage,
   createChatSession,
@@ -267,6 +274,72 @@ function formatToken(value?: number): string {
   return value.toLocaleString()
 }
 
+function stringifyJson(value: unknown): string {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function JsonDetails({
+  label,
+  value,
+  defaultOpen = false,
+}: {
+  label: string
+  value: unknown
+  defaultOpen?: boolean
+}) {
+  if (value == null) return null
+  const isObject = typeof value === 'object'
+  return (
+    <details className="json-details" open={defaultOpen || !isObject}>
+      <summary>
+        {label}
+        {isObject && <span className="json-details__hint">展开 JSON</span>}
+      </summary>
+      <pre className="json-details__pre">{stringifyJson(value)}</pre>
+    </details>
+  )
+}
+
+function ToolCallCard({ call }: { call: ToolCallRecord }) {
+  const statusLabel = call.status === 'running' ? 'running' : call.status === 'success' ? 'success' : 'error'
+  return (
+    <details className={`tool-call-card tool-call-card--${call.status}`}>
+      <summary>
+        <span className="tool-call-card__title">调用工具 {call.tool}</span>
+        <span className="tool-call-card__status">{statusLabel}</span>
+        {call.elapsedMs != null && (
+          <span className="tool-call-card__duration">{formatDuration(call.elapsedMs)}</span>
+        )}
+      </summary>
+      <div className="tool-call-card__body">
+        <JsonDetails label="args" value={call.args} defaultOpen />
+        <JsonDetails label="result" value={call.result} />
+        <JsonDetails label="error" value={call.error} defaultOpen />
+        {call.truncated && <div className="tool-call-card__note">结果已按后端预算截断</div>}
+      </div>
+    </details>
+  )
+}
+
+function ProgressPill({ progress }: { progress?: AgentProgressEvent | null }) {
+  if (!progress) return null
+  const activity = progress.activity || 'running'
+  const tool = typeof progress.tool === 'string' ? progress.tool : ''
+  return (
+    <div className="agent-progress-pill">
+      <span className={`agent-progress-pill__dot agent-progress-pill__dot--${progress.status || 'running'}`} />
+      <span>{activity}</span>
+      {tool && <strong>{tool}</strong>}
+      {typeof progress.elapsed_ms === 'number' && <span>{formatDuration(progress.elapsed_ms)}</span>}
+    </div>
+  )
+}
+
 export function ChatPanel() {
   const { state, dispatch } = useAppStore()
   const [input, setInput] = useState('')
@@ -280,7 +353,8 @@ export function ChatPanel() {
   const listRef = useRef<HTMLDivElement>(null)
   // 流式累积文本
   const [streamingText, setStreamingText] = useState('')
-  const [streamingTools, setStreamingTools] = useState<{ tool: string; status: 'calling' | 'done'; result?: string }[]>([])
+  const [streamingTools, setStreamingTools] = useState<ToolCallRecord[]>([])
+  const [streamingProgress, setStreamingProgress] = useState<AgentProgressEvent | null>(null)
 
   const upsertSessionSummary = useCallback((session: ChatSession) => {
     const summary = summarizeSession(session)
@@ -395,6 +469,7 @@ export function ChatPanel() {
     setInput('')
     setStreamingText('')
     setStreamingTools([])
+    setStreamingProgress({ activity: 'planning', status: 'running', agent: 'assistant' })
 
     // 添加用户消息
     const userMsg: Message = {
@@ -434,6 +509,7 @@ export function ChatPanel() {
       let memoriesUsed: number | undefined
       let responseUsage: TokenUsage | undefined
       let responseElapsedMs: number | undefined
+      let responseToolCalls: ToolCallRecord[] = []
       const requestStartedAt = performance.now()
 
       while (true) {
@@ -454,22 +530,47 @@ export function ChatPanel() {
           try {
             const event = JSON.parse(jsonStr)
 
-            if (event.type === 'thinking' && event.content) {
+            if (event.type === 'agent_progress') {
+              setStreamingProgress(event as AgentProgressEvent)
+            } else if (event.type === 'thinking' && event.content) {
               fullText += event.content
               setStreamingText(fullText)
             } else if (event.type === 'tool_call') {
-              setStreamingTools((prev) => [
-                ...prev,
-                { tool: event.tool, status: 'calling' },
-              ])
+              const call: ToolCallRecord = {
+                id: String(event.tool_call_id || `${event.tool || 'tool'}-${Date.now()}-${responseToolCalls.length}`),
+                tool: String(event.tool || 'unknown'),
+                status: 'running',
+                args: event.args,
+                startedAt: new Date().toISOString(),
+                concurrent: Boolean(event.concurrent),
+              }
+              responseToolCalls = [...responseToolCalls, call]
+              setStreamingTools(responseToolCalls)
             } else if (event.type === 'tool_result') {
-              setStreamingTools((prev) =>
-                prev.map((t) =>
-                  t.tool === event.tool && t.status === 'calling'
-                    ? { ...t, status: 'done' as const, result: typeof event.result === 'string' ? event.result : JSON.stringify(event.result).slice(0, 100) }
-                    : t
-                )
-              )
+              const callId = String(event.tool_call_id || '')
+              const resultStatus = event.status === 'error' ? 'error' : 'success'
+              responseToolCalls = responseToolCalls.map((call) => {
+                const matches = callId ? call.id === callId : call.tool === event.tool && call.status === 'running'
+                if (!matches) return call
+                const elapsedMs = typeof event.elapsed_ms === 'number'
+                  ? event.elapsed_ms
+                  : call.startedAt
+                    ? Date.now() - new Date(call.startedAt).getTime()
+                    : undefined
+                const error = resultStatus === 'error'
+                  ? (event.result && typeof event.result === 'object' && 'error' in event.result ? (event.result as Record<string, unknown>).error : event.result)
+                  : undefined
+                return {
+                  ...call,
+                  status: resultStatus,
+                  result: event.result,
+                  error,
+                  elapsedMs,
+                  finishedAt: new Date().toISOString(),
+                  truncated: Boolean(event.truncated),
+                }
+              })
+              setStreamingTools(responseToolCalls)
             } else if (event.type === 'done') {
               if (event.usage) {
                 responseUsage = event.usage
@@ -508,11 +609,14 @@ export function ChatPanel() {
         memoriesUsed,
         elapsedMs: responseElapsedMs ?? performance.now() - requestStartedAt,
         usage: responseUsage,
+        toolCalls: responseToolCalls,
+        progress: { activity: 'completed', status: 'completed', agent: 'assistant' },
       }
       dispatch({ type: 'ADD_MESSAGE', payload: assistantMsg })
       await persistMessage(sessionId, assistantMsg)
       setStreamingText('')
       setStreamingTools([])
+      setStreamingProgress(null)
     } catch (err) {
       // fallback: 非流式
       try {
@@ -541,6 +645,7 @@ export function ChatPanel() {
           await persistMessage(sessionId, assistantMsg)
           setStreamingText('')
           setStreamingTools([])
+          setStreamingProgress(null)
           return
         }
       } catch {
@@ -557,6 +662,7 @@ export function ChatPanel() {
       await persistMessage(sessionId, errorMsg)
       setStreamingText('')
       setStreamingTools([])
+      setStreamingProgress(null)
     } finally {
       dispatch({ type: 'SET_SENDING', payload: false })
     }
@@ -565,6 +671,7 @@ export function ChatPanel() {
     ensureActiveSession,
     input,
     persistMessage,
+    state.messages,
     state.sending,
   ])
 
@@ -630,7 +737,7 @@ export function ChatPanel() {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight
     }
-  }, [state.messages, streamingText, streamingTools])
+  }, [state.messages, streamingText, streamingTools, streamingProgress])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -780,6 +887,13 @@ export function ChatPanel() {
                         __html: renderMarkdown(msg.content),
                       }}
                     />
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="tool-call-list">
+                        {msg.toolCalls.map((call) => (
+                          <ToolCallCard key={call.id} call={call} />
+                        ))}
+                      </div>
+                    )}
                     {msg.memoriesUsed != null && msg.memoriesUsed > 0 && (
                       <div className="chat-memory-indicator">
                         使用了 {msg.memoriesUsed} 条记忆
@@ -805,19 +919,11 @@ export function ChatPanel() {
           )}
 
           {/* 流式输出区域 */}
-          {state.sending && (streamingText || streamingTools.length > 0) && (
+          {state.sending && (streamingText || streamingTools.length > 0 || streamingProgress) && (
             <div className="chat-row chat-row-assistant">
               <div className="chat-avatar">A</div>
               <div className="chat-bubble chat-bubble-assistant">
-                {streamingTools.length > 0 && (
-                  <div className="chat-tool-tags">
-                    {streamingTools.map((t, i) => (
-                      <span key={i} className={`chat-tool-tag chat-tool-tag--${t.status}`}>
-                        {t.status === 'calling' ? '...' : '.'} {t.tool}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <ProgressPill progress={streamingProgress} />
                 {streamingText && (
                   <div
                     className="chat-bubble-text chat-markdown"
@@ -826,13 +932,20 @@ export function ChatPanel() {
                     }}
                   />
                 )}
+                {streamingTools.length > 0 && (
+                  <div className="tool-call-list">
+                    {streamingTools.map((call) => (
+                      <ToolCallCard key={call.id} call={call} />
+                    ))}
+                  </div>
+                )}
                 <span className="streaming-cursor" />
               </div>
             </div>
           )}
 
           {/* 等待中指示器（还没收到任何流事件） */}
-          {state.sending && !streamingText && streamingTools.length === 0 && (
+          {state.sending && !streamingText && streamingTools.length === 0 && !streamingProgress && (
             <div className="chat-row chat-row-assistant">
               <div className="chat-avatar">A</div>
               <div className="chat-bubble chat-bubble-assistant">
