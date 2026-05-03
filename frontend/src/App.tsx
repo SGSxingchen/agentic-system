@@ -16,7 +16,6 @@ import './App.css'
 function AppContent() {
   const { state, dispatch } = useAppStore()
   const [showSettings, setShowSettings] = useState(false)
-  const [showMemory, setShowMemory] = useState(false)
 
   const handleWSMessage = useCallback(
     (raw: unknown) => {
@@ -85,28 +84,9 @@ function AppContent() {
       case 'evolution':
         return <EvolutionPanel />
       case 'memory':
-        return (
-          <div className="memory-panel-inline">
-            <div className="panel-header">
-              <h2>记忆管理</h2>
-              <button
-                className="open-modal-btn"
-                onClick={() => setShowMemory(true)}
-              >
-                详细管理
-              </button>
-            </div>
-            <div className="memory-panel-hint">
-              <p>点击 "详细管理" 打开完整的记忆管理面板</p>
-              <button
-                className="open-modal-btn-large"
-                onClick={() => setShowMemory(true)}
-              >
-                打开记忆管理面板
-              </button>
-            </div>
-          </div>
-        )
+        return <MemoryPanel initialTab="memories" />
+      case 'memory-settings':
+        return <MemoryPanel initialTab="settings" />
       case 'monitor':
         return <MonitorPanel />
       default:
@@ -121,9 +101,6 @@ function AppContent() {
 
       {showSettings && (
         <Settings onClose={() => setShowSettings(false)} />
-      )}
-      {showMemory && (
-        <MemoryPanel onClose={() => setShowMemory(false)} />
       )}
     </div>
   )

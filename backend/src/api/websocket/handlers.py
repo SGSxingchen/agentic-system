@@ -405,8 +405,8 @@ async def _handle_user_message(
 async def build_memory_context(
     query: str,
     *,
-    max_results: int = 3,
-    max_chars: int = 1200,
+    max_results: int | None = None,
+    max_chars: int | None = None,
 ) -> tuple[str, int]:
     """Build a compact memory block for Assistant system prompt injection."""
 
@@ -415,8 +415,21 @@ async def build_memory_context(
         return "", 0
 
     try:
+        from core.config import load_config
+
+        memory_config = load_config().get("memory", {})
+        if max_results is None:
+            max_results = int(memory_config.get("recall_max_results", 3))
+        if max_chars is None:
+            max_chars = int(memory_config.get("recall_max_chars", 1200))
+        min_score = float(memory_config.get("recall_score_threshold", 0.0))
+
         if hasattr(retriever, "retrieve_with_scores"):
             scored = await retriever.retrieve_with_scores(query, max_results=max_results)
+            scored = [
+                item for item in scored
+                if float(item.get("retrieval", {}).get("score", 0.0)) >= min_score
+            ]
             memories = [item["memory"] for item in scored]
         else:
             memories = await retriever.retrieve(query, max_results=max_results)
@@ -454,6 +467,11 @@ async def reflect_chat_exchange(
     session_id: str | None = None,
 ) -> None:
     """Append a chat exchange and reflect it into structured memories when ready."""
+
+    from core.config import load_config
+
+    if not bool(load_config().get("memory", {}).get("auto_reflection_enabled", True)):
+        return
 
     buffer = get_memory_buffer()
     formation = get_memory_formation()

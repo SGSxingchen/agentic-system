@@ -282,6 +282,33 @@ class MemorySearchRequest(BaseModel):
     max_results: int = Field(default=5, ge=1, le=50)
 
 
+class MemoryUpdateRequest(BaseModel):
+    """更新记忆请求（部分更新）"""
+
+    content: Optional[str] = Field(default=None, min_length=1)
+    type: Optional[str] = None
+    importance: Optional[float] = Field(default=None, ge=0, le=1)
+    metadata: Optional[dict[str, Any]] = None
+
+
+class MemorySettingsUpdateRequest(BaseModel):
+    """记忆系统设置更新请求。"""
+
+    backend: Optional[str] = Field(default=None, description="memory | chroma")
+    persist_dir: Optional[str] = None
+    collection_name: Optional[str] = None
+    auto_reflection_enabled: Optional[bool] = None
+    reflection_min_turns: Optional[int] = Field(default=None, ge=1, le=20)
+    reflection_max_messages: Optional[int] = Field(default=None, ge=2, le=100)
+    recall_max_results: Optional[int] = Field(default=None, ge=1, le=50)
+    recall_max_chars: Optional[int] = Field(default=None, ge=200, le=8000)
+    recall_score_threshold: Optional[float] = Field(default=None, ge=0, le=1)
+    fallback_to_memory_on_error: Optional[bool] = None
+    consolidation_threshold: Optional[float] = Field(default=None, ge=0, le=1)
+    forget_after_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    forget_min_importance: Optional[float] = Field(default=None, ge=0, le=1)
+
+
 # ========================
 # 聊天会话相关
 # ========================

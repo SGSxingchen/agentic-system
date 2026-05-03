@@ -38,8 +38,20 @@ const Icons = {
   ),
   memory: (
     <svg viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 6v6l4 2" />
+      <path d="M4 7a8 8 0 0 1 16 0v10a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V7z" />
+      <path d="M8 8h8" />
+      <path d="M8 12h5" />
+      <path d="M8 16h7" />
+    </svg>
+  ),
+  memorySettings: (
+    <svg viewBox="0 0 24 24">
+      <path d="M4 7a8 8 0 0 1 16 0v9a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V7z" />
+      <circle cx="12" cy="12" r="2.3" />
+      <path d="M12 6.8v1.4" />
+      <path d="M12 15.8v1.4" />
+      <path d="M7.5 12h1.4" />
+      <path d="M15.1 12h1.4" />
     </svg>
   ),
   monitor: (
@@ -74,7 +86,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'tasks', icon: Icons.tasks, label: '任务' },
   { key: 'agents', icon: Icons.agents, label: '智能体' },
   { key: 'pipeline', icon: Icons.pipeline, label: '管线' },
-  { key: 'memory', icon: Icons.memory, label: '记忆' },
+  { key: 'memory', icon: Icons.memory, label: '记忆管理' },
+  { key: 'memory-settings', icon: Icons.memorySettings, label: '记忆设置' },
   { key: 'evolution', icon: Icons.evolution, label: '进化' },
   { key: 'monitor', icon: Icons.monitor, label: '监控' },
 ]
@@ -100,18 +113,20 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
       {/* Navigation */}
       <nav className="sidebar-nav">
         {NAV_ITEMS.map((item) => (
-          <button
-            key={item.key}
-            className={`sidebar-nav-item ${
-              state.activePanel === item.key ? 'active' : ''
-            }`}
-            onClick={() =>
-              dispatch({ type: 'SET_ACTIVE_PANEL', payload: item.key })
-            }
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span className="nav-label">{item.label}</span>
-          </button>
+          <div key={item.key} className={item.key === 'memory' ? 'sidebar-memory-start' : ''}>
+            {item.key === 'memory' && <div className="sidebar-section-label">记忆中心</div>}
+            <button
+              className={`sidebar-nav-item ${
+                state.activePanel === item.key ? 'active' : ''
+              }`}
+              onClick={() =>
+                dispatch({ type: 'SET_ACTIVE_PANEL', payload: item.key })
+              }
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </button>
+          </div>
         ))}
       </nav>
 

@@ -377,7 +377,8 @@ load_system_config()    # 类型安全版，返回 Pydantic SystemConfig
 
 **环境变量覆盖:**
 `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`,
-`MEMORY_BACKEND`, `MEMORY_PERSIST_DIR`, `BUS_QUEUE_SIZE`, `BUS_HISTORY_SIZE`
+`MEMORY_BACKEND`, `MEMORY_PERSIST_DIR`, `MEMORY_AUTO_REFLECTION_ENABLED`,
+`MEMORY_RECALL_MAX_RESULTS`, `MEMORY_RECALL_SCORE_THRESHOLD`, `BUS_QUEUE_SIZE`, `BUS_HISTORY_SIZE`
 
 记忆默认配置:
 
@@ -386,9 +387,16 @@ memory:
   backend: "chroma"
   persist_dir: "./data/chroma"
   collection_name: "agent_memories"
+  auto_reflection_enabled: true
   reflection_min_turns: 3
   reflection_max_messages: 12
+  recall_max_results: 3
+  recall_max_chars: 1200
+  recall_score_threshold: 0.0
   fallback_to_memory_on_error: true
+  consolidation_threshold: 0.3
+  forget_after_days: 30
+  forget_min_importance: 0.3
 ```
 
 若运行环境没有安装 `chromadb`，启动日志会明确提示安装方式；默认允许降级到
@@ -415,7 +423,7 @@ _CAPABILITY_CLASS_MAP = {
 
 ## 5. API 端点
 
-### 5.1 REST API (19 个端点)
+### 5.1 REST API (22 个端点)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -435,7 +443,10 @@ _CAPABILITY_CLASS_MAP = {
 | GET | `/api/memory/list` | 列出记忆 |
 | POST | `/api/memory/search` | 搜索记忆 |
 | POST | `/api/memory/create` | 创建记忆 |
+| PUT | `/api/memory/{memory_id}` | 更新记忆 |
 | DELETE | `/api/memory/{memory_id}` | 删除记忆 |
+| GET | `/api/memory/settings` | 获取记忆设置与运行状态 |
+| POST | `/api/memory/settings` | 保存记忆设置 |
 | POST | `/api/memory/consolidate` | 记忆巩固 |
 | POST | `/api/memory/forget` | 记忆遗忘 |
 

@@ -424,9 +424,44 @@
 }
 ```
 
+### PUT /api/memory/{memory_id}
+
+更新指定记忆内容、类型、重要性或元数据。
+
+**请求体（均可选）:**
+```json
+{
+  "content": "更新后的记忆内容",
+  "type": "semantic",
+  "importance": 0.75,
+  "metadata": {"memory_kind": "preference"}
+}
+```
+
 ### DELETE /api/memory/{memory_id}
 
 删除指定记忆。
+
+### GET /api/memory/settings
+
+获取记忆系统配置和当前运行后端状态（不包含敏感信息）。
+
+### POST /api/memory/settings
+
+保存记忆系统设置。反思阈值、召回参数、巩固/遗忘阈值会在当前进程内即时生效；后端类型、持久化目录、collection 等存储相关配置写入运行时配置，通常需重启服务后完全切换。
+
+**请求体（均可选）:**
+```json
+{
+  "auto_reflection_enabled": true,
+  "reflection_min_turns": 3,
+  "reflection_max_messages": 12,
+  "recall_max_results": 3,
+  "recall_score_threshold": 0.0,
+  "backend": "chroma",
+  "persist_dir": "./data/chroma"
+}
+```
 
 ### POST /api/memory/consolidate
 

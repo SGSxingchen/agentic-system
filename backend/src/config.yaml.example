@@ -54,9 +54,16 @@ memory:
   backend: "chroma"  # 默认 ChromaDB 持久化；开发测试可改为 "memory"
   persist_dir: "./data/chroma"
   collection_name: "agent_memories"
+  auto_reflection_enabled: true # 是否自动从完整对话回合中反思形成长期记忆
   reflection_min_turns: 3
   reflection_max_messages: 12
+  recall_max_results: 3
+  recall_max_chars: 1200
+  recall_score_threshold: 0.0
   fallback_to_memory_on_error: true
+  consolidation_threshold: 0.3
+  forget_after_days: 30
+  forget_min_importance: 0.3
 
 # 消息总线配置
 bus:
