@@ -40,6 +40,12 @@ const optionalSecret = (value: string) => {
 
 const optionalSecretOrBlank = (value: string) => optionalSecret(value) || ''
 
+const normalizeOpenAIBaseUrl = (provider: string, value: string) => {
+  const trimmed = value.trim().replace(/\/+$/, '')
+  if (!trimmed || provider !== 'openai') return trimmed
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+}
+
 export function Settings({ onClose }: SettingsProps) {
   const [provider, setProvider] = useState('openai')
   const [model, setModel] = useState('gpt-3.5-turbo')
@@ -198,12 +204,14 @@ export function Settings({ onClose }: SettingsProps) {
       return
     }
 
+    const normalizedBaseUrl = normalizeOpenAIBaseUrl(provider, baseUrl)
+
     const res = await api.updateConfig({
       llm: {
         provider,
         model,
         api_key: optionalSecret(apiKey),
-        base_url: baseUrl || undefined,
+        base_url: normalizedBaseUrl || undefined,
         temperature,
         top_p: optionalNumber(topP),
         max_tokens: maxTokens,
@@ -270,7 +278,7 @@ export function Settings({ onClose }: SettingsProps) {
     setModelsError(null)
     const res = await api.listProviderModels({
       provider,
-      base_url: baseUrl,
+      base_url: normalizeOpenAIBaseUrl(provider, baseUrl),
       api_key: optionalSecret(apiKey), // 留空/遮罩值 → 后端用已保存的 key
     })
     if (res.status === 'ok' && res.data && res.data.models.length > 0) {

@@ -104,6 +104,18 @@ def _looks_like_masked_secret(value: Any) -> bool:
     stripped = value.strip()
     return bool(stripped) and any(char in stripped for char in ("*", "•", "●", "…"))
 
+
+def _normalize_openai_base_url(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    stripped = value.strip().rstrip("/")
+    if not stripped:
+        return ""
+    # OpenAI SDK 的 base_url 需要指向 API 根路径。用户只填域名时自动补 /v1。
+    if stripped.endswith("/v1"):
+        return stripped
+    return f"{stripped}/v1"
+
 def _preserve_blank_secret(target: Dict[str, Any], existing: Dict[str, Any], key: str = "api_key") -> None:
     current = target.get(key)
     if current and not _looks_like_masked_secret(current):
@@ -192,6 +204,8 @@ async def update_config(config_data: ConfigUpdateRequest):
             config_data.llm.model_dump(exclude_none=True),
         )
         _preserve_blank_secret(llm, existing_llm)
+        if (llm.get("provider") or "openai").lower() == "openai":
+            llm["base_url"] = _normalize_openai_base_url(llm.get("base_url", ""))
 
         config_dict = {
             **existing,
@@ -294,6 +308,8 @@ async def list_provider_models(request: ModelListRequest):
         base_url = request.base_url
     else:
         base_url = saved_llm.get("base_url", "")
+    if provider == "openai":
+        base_url = _normalize_openai_base_url(base_url)
     base_url = base_url or None
 
     if not api_key:
