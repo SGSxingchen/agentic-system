@@ -47,6 +47,10 @@ capabilities:
   type: native
   class: capabilities.tools.write_file.WriteFileCapability
   description: 受限工作区文件写入工具：仅在用户明确要求创建或修改文件时使用，写入完整内容并限制在工作区内。
+- name: create_frontend_artifact
+  type: native
+  class: capabilities.tools.frontend_artifact.FrontendArtifactCapability
+  description: 受限前端 Artifact 创建工具：把生成的 HTML、Markdown、代码、图片或文件保存为可预览、可切换、可下载和可打开的前端附件；不要写入敏感信息。
 - name: json_tool
   type: native
   class: capabilities.tools.json_tool.JsonToolCapability

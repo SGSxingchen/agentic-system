@@ -1,3 +1,26 @@
+// ===== Artifact / 前端附件 =====
+
+export type ArtifactKind = 'html' | 'markdown' | 'code' | 'image' | 'file' | 'text'
+
+export interface Artifact {
+  id: string
+  kind: ArtifactKind | string
+  title: string
+  filename: string
+  mime_type: string
+  size: number
+  previewable: boolean
+  session_id?: string | null
+  message_id?: string | null
+  source?: string
+  metadata?: Record<string, any>
+  created_at: string
+  updated_at: string
+  download_url: string
+  open_url: string
+  content_url: string
+}
+
 // ===== 消息和事件 =====
 
 export interface Message {
@@ -11,6 +34,7 @@ export interface Message {
   toolCalls?: ToolCallRecord[]
   timeline?: MessageTimelineItem[]
   progress?: AgentProgressEvent
+  artifacts?: Artifact[]
 }
 
 export type MessageTimelineItemKind = 'text' | 'tool_call'
