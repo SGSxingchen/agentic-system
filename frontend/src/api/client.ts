@@ -183,6 +183,8 @@ export async function createAgent(data: {
   tools?: string[]
   output_format?: string
   max_iterations?: number
+  skills?: Record<string, unknown> | null
+  mcp_servers?: Array<Record<string, unknown>>
 }): Promise<APIResponse<unknown>> {
   return post('/api/agents', data)
 }
@@ -195,6 +197,8 @@ export async function updateAgent(
     tools?: string[]
     output_format?: string
     max_iterations?: number
+    skills?: Record<string, unknown> | null
+    mcp_servers?: Array<Record<string, unknown>>
   }
 ): Promise<APIResponse<unknown>> {
   return put(`/api/agents/${name}`, data)

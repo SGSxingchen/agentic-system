@@ -17,6 +17,10 @@
 #   output_format   — LLM 最终输出的解析方式: "text"（原样返回）| "json"（JSON 解析）
 #   max_iterations  — tool_use 循环最大次数（默认 10）
 #   input_schema    — 当该 Agent 被其他 Agent 当工具调用时，LLM 看到的参数定义（JSON Schema）
+#   skills          — 可选，Agent 专属 skill 配置；支持 enabled/directories/items/disabled/strategy。
+#                     directories 会扫描子目录下的 SKILL.md；items 可内联 name/description/instructions 或 path。
+#   mcp_servers     — 可选，Agent 专属 MCP server 配置列表；字段 name/command/args/env/cwd/enabled/description/transport。
+#                     当前通用 Agent 会把启用 server 作为运行时上下文注入；实际工具暴露依赖后续 MCP adapter。
 
 agents:
   # ─── 对话助手 ───────────────────────────────────────────

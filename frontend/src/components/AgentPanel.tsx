@@ -20,6 +20,8 @@ interface AgentFormData {
   tools: string[]
   output_format: string
   max_iterations: number
+  skills_json: string
+  mcp_servers_json: string
 }
 
 const EMPTY_FORM: AgentFormData = {
@@ -29,6 +31,8 @@ const EMPTY_FORM: AgentFormData = {
   tools: [],
   output_format: 'text',
   max_iterations: 10,
+  skills_json: JSON.stringify({ enabled: true, directories: [], items: [], disabled: [], strategy: 'metadata_and_instructions' }, null, 2),
+  mcp_servers_json: JSON.stringify([], null, 2),
 }
 
 interface CapabilityOption {
@@ -44,6 +48,8 @@ interface AgentCardData {
   system_prompt?: string
   output_format?: string
   max_iterations?: number
+  skills?: any
+  mcp_servers?: Array<any>
 }
 
 export function AgentPanel() {
@@ -110,6 +116,8 @@ export function AgentPanel() {
       tools: agent.capabilities || [],
       output_format: agent.output_format || 'text',
       max_iterations: agent.max_iterations || 10,
+      skills_json: JSON.stringify(agent.skills || { enabled: true, directories: [], items: [], disabled: [], strategy: 'metadata_and_instructions' }, null, 2),
+      mcp_servers_json: JSON.stringify(agent.mcp_servers || [], null, 2),
     })
     setConfirmDelete(null)
     setCapabilityFilter('')
@@ -124,6 +132,8 @@ export function AgentPanel() {
         tools: res.data.capabilities || [],
         output_format: res.data.output_format || 'text',
         max_iterations: res.data.max_iterations || 10,
+        skills_json: JSON.stringify(res.data.skills || { enabled: true, directories: [], items: [], disabled: [], strategy: 'metadata_and_instructions' }, null, 2),
+        mcp_servers_json: JSON.stringify(res.data.mcp_servers || [], null, 2),
       })
     }
   }
@@ -143,9 +153,32 @@ export function AgentPanel() {
     })
   }
 
+  const parseAgentRuntimeConfig = () => {
+    const rawSkills = form.skills_json.trim()
+    const rawMcp = form.mcp_servers_json.trim()
+    const skills = rawSkills ? JSON.parse(rawSkills) : null
+    if (skills !== null && (typeof skills !== 'object' || Array.isArray(skills))) {
+      throw new Error('Skills 配置必须是 JSON 对象')
+    }
+    const mcpServers = rawMcp ? JSON.parse(rawMcp) : []
+    if (!Array.isArray(mcpServers)) {
+      throw new Error('MCP servers 配置必须是 JSON 数组')
+    }
+    return { skills, mcpServers }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setError(null)
+
+    let runtimeConfig
+    try {
+      runtimeConfig = parseAgentRuntimeConfig()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Agent scoped 配置 JSON 解析失败')
+      setSaving(false)
+      return
+    }
 
     let res
     if (editingAgent === '__new__') {
@@ -161,6 +194,8 @@ export function AgentPanel() {
         tools: form.tools,
         output_format: form.output_format,
         max_iterations: form.max_iterations,
+        skills: runtimeConfig.skills,
+        mcp_servers: runtimeConfig.mcpServers,
       })
     } else {
       res = await api.updateAgent(editingAgent!, {
@@ -169,6 +204,8 @@ export function AgentPanel() {
         tools: form.tools,
         output_format: form.output_format,
         max_iterations: form.max_iterations,
+        skills: runtimeConfig.skills,
+        mcp_servers: runtimeConfig.mcpServers,
       })
     }
 
@@ -238,6 +275,8 @@ export function AgentPanel() {
               <span><strong>{form.tools.length}</strong> 已选能力</span>
               <span><strong>{selectedAgentTools}</strong> 子 Agent</span>
               <span><strong>{selectedNativeTools}</strong> 工具</span>
+              <span><strong>{(() => { try { return (JSON.parse(form.skills_json || '{}').items || []).length } catch { return 0 } })()}</strong> Skills</span>
+              <span><strong>{(() => { try { return (JSON.parse(form.mcp_servers_json || '[]') || []).length } catch { return 0 } })()}</strong> MCP</span>
             </div>
           </div>
 
@@ -368,6 +407,42 @@ export function AgentPanel() {
             <span className="form-hint">LLM 会根据 Prompt 和上下文自主决定何时使用这些能力。</span>
           </div>
 
+          <div className="agent-form__section agent-form__section--runtime">
+            <div className="agent-form__section-title">
+              <span>04</span>
+              <div>
+                <h4>Skills 与 MCP（Agent 专属）</h4>
+                <p>只保存到当前 Agent。启动/调用该 Agent 时，才会加载启用的 SKILL.md 元数据和 MCP server 定义。</p>
+              </div>
+            </div>
+
+            <div className="agent-runtime-grid">
+              <div className="form-group">
+                <label>Skills JSON</label>
+                <textarea
+                  className="runtime-json-editor"
+                  value={form.skills_json}
+                  onChange={(e) => setForm({ ...form, skills_json: e.target.value })}
+                  rows={11}
+                  spellCheck={false}
+                />
+                <span className="form-hint">支持 directories、items、disabled、strategy；items 可内联 name/description/instructions 或 path。</span>
+              </div>
+
+              <div className="form-group">
+                <label>MCP servers JSON</label>
+                <textarea
+                  className="runtime-json-editor"
+                  value={form.mcp_servers_json}
+                  onChange={(e) => setForm({ ...form, mcp_servers_json: e.target.value })}
+                  rows={11}
+                  spellCheck={false}
+                />
+                <span className="form-hint">数组项字段：name、command、args、env、cwd、enabled、description、transport。</span>
+              </div>
+            </div>
+          </div>
+
           {error && <div className="agent-error">{error}</div>}
 
           <div className="button-group agent-form__actions">
@@ -388,6 +463,8 @@ export function AgentPanel() {
     const delegatedAgentCount = (agent.capabilities || []).filter((cap) =>
       state.agents.some((item) => item.name === cap)
     ).length
+    const skillCount = Array.isArray(agent.skills?.items) ? agent.skills.items.length : 0
+    const mcpCount = Array.isArray(agent.mcp_servers) ? agent.mcp_servers.filter((server) => server.enabled !== false).length : 0
 
     return (
       <div key={agent.name} className="agent-card">
@@ -428,6 +505,8 @@ export function AgentPanel() {
           <span>{toolCount} 个能力</span>
           <span>{delegatedAgentCount} 个子 Agent</span>
           <span>{agent.output_format || 'text'}</span>
+          <span>{skillCount} skills</span>
+          <span>{mcpCount} MCP</span>
         </div>
 
         {/* 当前工具标签 + 管理按钮 */}

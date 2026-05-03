@@ -25,6 +25,8 @@ from core.bus import UnifiedBus
 from core.config import load_config, load_yaml_configs
 from core.context import ContextStore
 from core.llm import create_llm_client
+from core.mcp import format_mcp_servers_for_prompt, normalize_agent_mcp_servers
+from core.skills import format_skills_for_prompt, load_agent_skills
 from core.memory import (
     ConversationMemoryBuffer,
     MemoryFormation,
@@ -222,10 +224,29 @@ def _create_agents_from_config(
             else:
                 print(f"[WARN] agent '{name}' references missing tool '{tool_name}'")
 
+        loaded_skills = load_agent_skills(agent_def, project_root=PROJECT_ROOT)
+        mcp_servers = normalize_agent_mcp_servers(agent_def)
+        runtime_blocks = [
+            block
+            for block in (
+                format_skills_for_prompt(loaded_skills),
+                format_mcp_servers_for_prompt(mcp_servers),
+            )
+            if block
+        ]
+        system_prompt = agent_def.get("system_prompt", "")
+        if runtime_blocks:
+            system_prompt = system_prompt.rstrip() + "\n\n" + "\n\n".join(runtime_blocks)
+
+        if loaded_skills:
+            print(f"  [skills] agent '{name}' loaded {len(loaded_skills)} skill(s): {', '.join(skill.name for skill in loaded_skills)}")
+        if mcp_servers:
+            print(f"  [mcp] agent '{name}' configured {len(mcp_servers)} MCP server(s): {', '.join(server.name for server in mcp_servers)} (adapter not auto-started)")
+
         agent = Agent(
             name=name,
             llm_client=llm_client,
-            system_prompt=agent_def.get("system_prompt", ""),
+            system_prompt=system_prompt,
             tools=tools,
             output_format=agent_def.get("output_format", "text"),
             max_iterations=agent_def.get("max_iterations", 10),
@@ -234,6 +255,11 @@ def _create_agents_from_config(
             token_budget_nudge_threshold=agent_def.get(
                 "token_budget_nudge_threshold", 0.85
             ),
+            runtime_config={
+                "skills": [skill.__dict__ for skill in loaded_skills],
+                "mcp_servers": [server.__dict__ for server in mcp_servers],
+                "mcp_capability_status": "configured_not_connected" if mcp_servers else "not_configured",
+            },
         )
         agents.append(agent)
 

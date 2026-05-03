@@ -67,6 +67,8 @@ class AgentConfig(BaseModel):
     type: str = Field(default="builtin", description="智能体类型")
     description: str = Field(default="", description="智能体描述")
     capabilities: List[str] = Field(default_factory=list, description="能力列表")
+    skills: Dict[str, Any] = Field(default_factory=dict, description="该 Agent 专属 skills 配置")
+    mcp_servers: List[Dict[str, Any]] = Field(default_factory=list, description="该 Agent 专属 MCP server 配置")
     config: Dict[str, Any] = Field(default_factory=dict, description="智能体私有配置")
 
 

@@ -71,6 +71,7 @@ class Agent:
         description: str = "",
         token_budget: Optional[int] = None,
         token_budget_nudge_threshold: float = 0.85,
+        runtime_config: Optional[Dict[str, Any]] = None,
     ):
         self.name = name
         self.llm = llm_client
@@ -81,6 +82,7 @@ class Agent:
         self._description = description
         self._token_budget = token_budget if (token_budget and token_budget > 0) else None
         self._token_budget_nudge_threshold = max(0.0, min(1.0, token_budget_nudge_threshold))
+        self._runtime_config = runtime_config or {}
         self._status = AgentStatus.IDLE
 
     # ─── 主循环 ─────────────────────────────────────────────

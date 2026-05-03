@@ -81,6 +81,25 @@ export interface WSEvent {
 
 // ===== 智能体 =====
 
+export interface AgentSkillConfig {
+  enabled?: boolean
+  directories?: string[]
+  items?: Array<Record<string, any>>
+  disabled?: string[]
+  strategy?: string
+}
+
+export interface AgentMCPServerConfig {
+  name: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  cwd?: string
+  enabled?: boolean
+  description?: string
+  transport?: string
+}
+
 export interface AgentInfo {
   name: string
   status: 'idle' | 'busy' | 'error' | 'stopped'
@@ -89,6 +108,8 @@ export interface AgentInfo {
   system_prompt?: string
   output_format?: string
   max_iterations?: number
+  skills?: AgentSkillConfig | null
+  mcp_servers?: AgentMCPServerConfig[]
 }
 
 // ===== 记忆 =====
