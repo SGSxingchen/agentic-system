@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store/appStore'
 import type {
   AgentProgressEvent,
@@ -296,6 +296,16 @@ function stringifyJson(value: unknown): string {
   }
 }
 
+function summarizeUnknownValue(value: unknown): string {
+  if (value == null) return 'empty'
+  if (Array.isArray(value)) return `${value.length} items`
+  if (typeof value === 'object') {
+    const keys = Object.keys(value as Record<string, unknown>)
+    return keys.length ? keys.slice(0, 4).join(' · ') : 'object'
+  }
+  const text = String(value).replace(/\s+/g, ' ').trim()
+  return text.length > 72 ? `${text.slice(0, 72)}…` : text
+}
 
 function formatBytes(value?: number): string {
   if (typeof value !== 'number' || Number.isNaN(value)) return '-'
@@ -424,6 +434,7 @@ function ArtifactPreview({
       </div>
     </aside>
   )
+
 }
 
 function JsonDetails({
@@ -440,8 +451,9 @@ function JsonDetails({
   return (
     <details className="json-details" open={defaultOpen || !isObject}>
       <summary>
-        {label}
-        {isObject && <span className="json-details__hint">展开 JSON</span>}
+        <span className="json-details__label">{label}</span>
+        <span className="json-details__summary">{summarizeUnknownValue(value)}</span>
+        {isObject && <span className="json-details__hint">展开详情</span>}
       </summary>
       <pre className="json-details__pre">{stringifyJson(value)}</pre>
     </details>
@@ -449,11 +461,16 @@ function JsonDetails({
 }
 
 function ToolCallCard({ call }: { call: ToolCallRecord }) {
-  const statusLabel = call.status === 'running' ? 'running' : call.status === 'success' ? 'success' : 'error'
+  const statusLabel = call.status === 'running' ? '运行中' : call.status === 'success' ? '完成' : '错误'
+  const statusIcon = call.status === 'running' ? '◌' : call.status === 'success' ? '✓' : '!'
   return (
     <details className={`tool-call-card tool-call-card--${call.status}`}>
       <summary>
-        <span className="tool-call-card__title">调用工具 {call.tool}</span>
+        <span className="tool-call-card__rail-dot">{statusIcon}</span>
+        <span className="tool-call-card__copy">
+          <span className="tool-call-card__eyebrow">工具调用</span>
+          <span className="tool-call-card__title">{call.tool}</span>
+        </span>
         <span className="tool-call-card__status">{statusLabel}</span>
         {call.elapsedMs != null && (
           <span className="tool-call-card__duration">{formatDuration(call.elapsedMs)}</span>
@@ -508,11 +525,18 @@ function ProgressPill({ progress }: { progress?: AgentProgressEvent | null }) {
   const activity = progress.activity || 'running'
   const tool = typeof progress.tool === 'string' ? progress.tool : ''
   return (
-    <div className="agent-progress-pill">
-      <span className={`agent-progress-pill__dot agent-progress-pill__dot--${progress.status || 'running'}`} />
-      <span>{activity}</span>
-      {tool && <strong>{tool}</strong>}
-      {typeof progress.elapsed_ms === 'number' && <span>{formatDuration(progress.elapsed_ms)}</span>}
+    <div className="agent-progress-card">
+      <span className={`agent-progress-card__dot agent-progress-card__dot--${progress.status || 'running'}`} />
+      <div className="agent-progress-card__copy">
+        <span className="agent-progress-card__kicker">Agent progress</span>
+        <span className="agent-progress-card__title">
+          {activity}
+          {tool && <strong>{tool}</strong>}
+        </span>
+      </div>
+      {typeof progress.elapsed_ms === 'number' && (
+        <span className="agent-progress-card__time">{formatDuration(progress.elapsed_ms)}</span>
+      )}
     </div>
   )
 }
@@ -526,6 +550,7 @@ export function ChatPanel() {
   const [sessionBusy, setSessionBusy] = useState(false)
   const [sessionError, setSessionError] = useState('')
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
+  const [sessionQuery, setSessionQuery] = useState('')
   const [personas, setPersonas] = useState<Persona[]>([])
   const [selectedPersonaId, setSelectedPersonaId] = useState('base-assistant')
   const activeSessionIdRef = useRef<string | null>(null)
@@ -1028,8 +1053,17 @@ export function ChatPanel() {
   )
   const sessionMessageCount = state.messages.filter((msg) => msg.type !== 'system').length
   const sessionHasUsage = hasUsage(sessionUsage)
+  const filteredSessions = useMemo(() => {
+    const query = sessionQuery.trim().toLowerCase()
+    if (!query) return sessions
+    return sessions.filter((session) => {
+      const haystack = `${session.title} ${session.last_message || ''}`.toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [sessionQuery, sessions])
   const sessionArtifacts = state.messages.flatMap(artifactsFromMessage)
     .filter((artifact, index, all) => all.findIndex((item) => item.id === artifact.id) === index)
+
 
   return (
     <div className="chat-panel">
@@ -1072,11 +1106,23 @@ export function ChatPanel() {
         )}
 
         {!sessionsCollapsed && (
+          <>
+          <label className="chat-session-search">
+            <span>搜索</span>
+            <input
+              value={sessionQuery}
+              onChange={(event) => setSessionQuery(event.target.value)}
+              placeholder="标题或消息片段"
+              disabled={loadingSessions}
+            />
+          </label>
           <div className="chat-session-list">
             {loadingSessions ? (
               <div className="chat-session-loading">加载历史中...</div>
+            ) : filteredSessions.length === 0 ? (
+              <div className="chat-session-empty-list">没有匹配的会话</div>
             ) : (
-              sessions.map((session) => (
+              filteredSessions.map((session) => (
                 <div
                   key={session.id}
                   className={`chat-session-item ${session.id === activeSessionId ? 'chat-session-item--active' : ''}`}
@@ -1106,6 +1152,7 @@ export function ChatPanel() {
               ))
             )}
           </div>
+          </>
         )}
       </aside>
 
@@ -1143,6 +1190,7 @@ export function ChatPanel() {
         </div>
         {/* Messages Area */}
         <div className="chat-messages" ref={listRef}>
+          <div className="chat-thread">
           {state.messages.length === 0 && !streamingText ? (
             <div className="chat-empty">
               <div className="chat-empty-icon">
@@ -1152,6 +1200,17 @@ export function ChatPanel() {
               </div>
               <h3>多智能体协作系统</h3>
               <p>{sessionBusy ? '正在加载聊天分页...' : '发送消息开始与 AI 智能体交互'}</p>
+              <div className="chat-empty-prompts" aria-label="示例提示">
+                <button onClick={() => setInput('帮我把这个需求拆成可执行任务，并给出风险点。')}>
+                  需求拆解
+                </button>
+                <button onClick={() => setInput('审查最近生成的代码，按安全性、可维护性和测试建议总结。')}>
+                  代码审查
+                </button>
+                <button onClick={() => setInput('总结当前系统状态，并指出下一步最值得优化的地方。')}>
+                  系统巡检
+                </button>
+              </div>
               {!state.connected && (
                 <p style={{ color: 'var(--color-warning)', fontSize: '13px', marginTop: '8px' }}>
                   尚未连接到后端服务
@@ -1224,10 +1283,12 @@ export function ChatPanel() {
               </div>
             </div>
           )}
+          </div>
         </div>
 
         {/* Input Area */}
         <div className="chat-input-area">
+          <div className="chat-composer-shell">
           <div className="chat-input-wrapper">
             <textarea
               className="chat-input"
@@ -1246,9 +1307,17 @@ export function ChatPanel() {
               {state.sending ? (
                 <span className="send-spinner" />
               ) : (
-                '发送'
+                <>
+                  <span className="chat-send-label">发送</span>
+                  <span className="chat-send-icon">↵</span>
+                </>
               )}
             </button>
+          </div>
+          <div className="chat-input-footer">
+            <span>Enter 发送 · Shift Enter 换行</span>
+            <span>{selectedPersonaId || 'base-assistant'}</span>
+          </div>
           </div>
         </div>
       </section>

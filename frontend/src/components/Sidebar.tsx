@@ -6,6 +6,7 @@ interface NavItem {
   key: PanelType
   icon: React.ReactNode
   label: string
+  hint: string
 }
 
 // SVG icons (simple line icons)
@@ -89,16 +90,36 @@ const Icons = {
   ),
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { key: 'chat', icon: Icons.chat, label: '对话' },
-  { key: 'tasks', icon: Icons.tasks, label: '任务' },
-  { key: 'agents', icon: Icons.agents, label: '智能体' },
-  { key: 'pipeline', icon: Icons.pipeline, label: '管线' },
-  { key: 'memory', icon: Icons.memory, label: '记忆管理' },
-  { key: 'memory-settings', icon: Icons.memorySettings, label: '记忆设置' },
-  { key: 'evolution', icon: Icons.evolution, label: '进化' },
-  { key: 'personas', icon: Icons.personas, label: '人格' },
-  { key: 'monitor', icon: Icons.monitor, label: '监控' },
+const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
+  {
+    label: 'Workspace',
+    items: [
+      { key: 'chat', icon: Icons.chat, label: '对话', hint: '会话与协作' },
+      { key: 'tasks', icon: Icons.tasks, label: '任务', hint: '提交与跟踪' },
+      { key: 'pipeline', icon: Icons.pipeline, label: '管线', hint: '自动化流程' },
+    ],
+  },
+  {
+    label: 'Agents',
+    items: [
+      { key: 'agents', icon: Icons.agents, label: '智能体', hint: '角色与状态' },
+      { key: 'evolution', icon: Icons.evolution, label: '进化', hint: '能力图谱' },
+      { key: 'personas', icon: Icons.personas, label: '人格', hint: '语气与偏好' },
+    ],
+  },
+  {
+    label: 'Memory',
+    items: [
+      { key: 'memory', icon: Icons.memory, label: '记忆管理', hint: '长期资料' },
+      { key: 'memory-settings', icon: Icons.memorySettings, label: '记忆设置', hint: '召回策略' },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { key: 'monitor', icon: Icons.monitor, label: '监控', hint: '事件流' },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -121,20 +142,26 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="sidebar-nav">
-        {NAV_ITEMS.map((item) => (
-          <div key={item.key} className={item.key === 'memory' ? 'sidebar-memory-start' : ''}>
-            {item.key === 'memory' && <div className="sidebar-section-label">记忆中心</div>}
-            <button
-              className={`sidebar-nav-item ${
-                state.activePanel === item.key ? 'active' : ''
-              }`}
-              onClick={() =>
-                dispatch({ type: 'SET_ACTIVE_PANEL', payload: item.key })
-              }
-            >
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-            </button>
+        {NAV_SECTIONS.map((section) => (
+          <div className="sidebar-nav-section" key={section.label}>
+            <div className="sidebar-section-label">{section.label}</div>
+            {section.items.map((item) => (
+              <button
+                key={item.key}
+                className={`sidebar-nav-item ${
+                  state.activePanel === item.key ? 'active' : ''
+                }`}
+                onClick={() =>
+                  dispatch({ type: 'SET_ACTIVE_PANEL', payload: item.key })
+                }
+              >
+                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-copy">
+                  <span className="nav-label">{item.label}</span>
+                  <span className="nav-hint">{item.hint}</span>
+                </span>
+              </button>
+            ))}
           </div>
         ))}
       </nav>
