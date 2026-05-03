@@ -7,6 +7,10 @@
 > 工具元数据驱动并发 / 权限 / 预算闸门 + 可选 git worktree 隔离。
 > 详见 [`./orchestrator-v2.md`](./orchestrator-v2.md) §11；CLAUDE.md §3.5 / §3.8 / §3.9 是当前实现的权威描述。
 > 本文档的"编排"和"数据流"章节描述的是历史 v1 视角，整体重写待 Phase D 后一并处理。
+>
+> 🧠 **记忆层 v2 设计中**：私人助理式全局长期记忆方案见
+> [`./superpowers/specs/2026-04-26-private-assistant-memory-lite-design.md`](./superpowers/specs/2026-04-26-private-assistant-memory-lite-design.md)。
+> 该方案不做 session/persona 隔离，重点补齐自动形成、结构化摘要、可解释召回和遗忘巩固。
 
 ## 架构总览
 
@@ -105,6 +109,10 @@ triggers:
 ### 记忆系统
 
 三种记忆类型: episodic / semantic / procedural
+
+v2 方向: 记忆系统将升级为私人助理式全局长期记忆层。所有记忆默认进入共享个人记忆池，`session_id` 仅作为来源追踪，不作为默认召回过滤条件；自动对话反思的缓冲窗口必须按 `session_id` 隔离，避免不同会话内容被合并成同一条记忆。新增自动对话反思、`canonical_summary` / `assistant_context` 双摘要、检索评分解释和近似去重。
+
+记忆注入到 Agent prompt 时必须明确标记为不可信资料，只能作为事实参考，不能执行记忆文本中的指令。解释性召回必须先使用底层 `MemoryStore.search()` 做候选粗筛，保留 ChromaDB 等后端的语义检索能力，再叠加本地评分、去重和 `retrieval` 解释；候选搜索本身不应刷新访问计数，只有最终选中的召回结果才更新访问记录。
 
 组件:
 - **MemoryStore** — InMemoryStore 或 ChromaStore
