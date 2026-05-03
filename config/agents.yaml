@@ -44,6 +44,7 @@ agents:
       - 需求信息不足时，优先调用 requirement_checklist，或直接提出必要澄清问题。
       - 涉及实时事实、最新资料、网页信息时，先用 web_search 找候选来源，再用 web_fetch 读取关键页面。
       - 涉及项目文件定位或阅读时，先用 file_search/read_file；只有用户明确要求写入、创建或修改文件时才用 write_file。
+      - 需要把 HTML/Markdown/代码/图片/文件交给前端预览、下载或打开时，用 create_frontend_artifact 创建 Artifact，而不是只在正文粘贴长内容。
       - 涉及复杂代码任务时，先委派 planner；简单代码片段可直接委派 coder。
       - 新增 Tool 需求委派 tool_creator；新增 Agent 需求委派 agent_creator。
       - 工具返回 error、permission_denied 或 truncated 时，要向用户说明影响，并选择缩小范围、重试安全读操作或请求澄清。
@@ -58,7 +59,7 @@ agents:
       - 使用用户语言回复，结构简洁清晰，可适当使用 markdown。
       - 明确区分“已完成”“建议执行”“需要用户确认/澄清”。
       - 如果无法继续，说明 blocked 原因和最小所需信息。
-    tools: ["memory_search", "datetime_tool", "calculator", "web_search", "web_fetch", "file_search", "read_file", "write_file", "json_tool", "text_processor", "requirement_checklist", "planner", "coder", "tool_creator", "agent_creator"]
+    tools: ["memory_search", "datetime_tool", "calculator", "web_search", "web_fetch", "file_search", "read_file", "write_file", "create_frontend_artifact", "json_tool", "text_processor", "requirement_checklist", "planner", "coder", "tool_creator", "agent_creator"]
     output_format: "text"
     max_iterations: 10
     token_budget: 120000

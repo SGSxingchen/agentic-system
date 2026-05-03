@@ -680,3 +680,17 @@ ws://localhost:8001/ws
 | POST | `/api/personas/{persona_id}/rollback` | 回滚到旧版本，必须 `admin_approved=true`，生成新版本 |
 
 安全边界：建议永远以 `pending` 保存，批准前不会修改人格正文；若配置 `PERSONA_ADMIN_TOKEN`，变更/审核接口需要 `X-Admin-Token`。人格提示词注入时被标记为“受控配置”，不得扩大工具、Shell、写入、管理员或系统级权限。
+
+## Artifact / 前端附件 API
+
+- `GET /api/artifacts?session_id=&limit=`：列出 Artifact 元数据。
+- `POST /api/artifacts`：创建 Artifact。
+  - `kind`: `html | markdown | code | image | file | text`
+  - `title`, `content`, `mime_type`, `filename`, `content_encoding(text|base64)`
+- `GET /api/artifacts/{id}`：获取元数据。
+- `GET /api/artifacts/{id}/content`：获取文本型预览内容。
+- `GET /api/artifacts/{id}/download`：作为附件下载。
+- `GET /api/artifacts/{id}/open`：inline 打开，用于图片/HTML/文件预览。
+- `DELETE /api/artifacts/{id}`：删除 Artifact。
+
+Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会从工具结果中自动提取并显示 Artifact chip。

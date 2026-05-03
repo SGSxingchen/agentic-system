@@ -722,3 +722,43 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 ### 11.5 前端入口
 
 前端新增“人格”面板：人格列表、详情编辑、Agent/Session 绑定、迭代建议生成与审核、版本历史与回滚。ChatPanel 顶部提供会话人格选择器，选择后写入 session binding。
+
+---
+
+## 12. AstrBot 前端 Artifact / 附件能力（v2.3 新增）
+
+### 12.1 定位
+
+系统新增与 AstrBot 前端关联的 Artifact 能力，用于把 Agent 或用户生成的 HTML、Markdown、代码、图片和普通文件保存为前端可见对象，并提供类似 Claude 网页版 Artifact 的预览、切换、下载和新窗口打开体验。该能力是最小闭环实现，不改变原有聊天、任务、记忆和 Agent API。
+
+### 12.2 后端数据流
+
+- 存储层：`backend/src/core/artifacts.py` 使用项目本地 `data/artifacts/` 保存 `artifacts.json` manifest 和文件内容；环境变量 `ARTIFACT_STORE_DIR` 可覆盖。
+- REST API：`backend/src/api/routes/artifacts.py`
+  - `GET /api/artifacts?session_id=&limit=` 列出 Artifact。
+  - `POST /api/artifacts` 创建文本或 base64 文件 Artifact。
+  - `GET /api/artifacts/{id}` 获取元数据。
+  - `GET /api/artifacts/{id}/content` 获取可文本预览内容。
+  - `GET /api/artifacts/{id}/download` 下载文件。
+  - `GET /api/artifacts/{id}/open` inline 打开/预览文件。
+  - `DELETE /api/artifacts/{id}` 删除 Artifact。
+- Agent 能力：`create_frontend_artifact` 位于 `backend/src/capabilities/tools/frontend_artifact.py`，已挂载到 assistant。Agent 需要把长 HTML/Markdown/代码/图片/文件交给前端展示时，应调用该工具而不是只把内容粘贴到聊天正文。
+- 会话兼容：`ChatMessageCreateRequest` 和 `ChatHistoryStore` 支持保存消息级 `artifacts` 字段；旧消息不受影响。
+
+### 12.3 前端体验
+
+`ChatPanel` 会从消息 `artifacts`、工具结果中的 `artifact/artifacts` 自动收集对象，在消息气泡中显示 Artifact chip。点击 chip 后打开右侧预览栏：
+
+- HTML：使用 sandbox iframe 预览。
+- Markdown/代码/文本：以只读文本预览。
+- 图片：直接使用 `/open` inline 预览。
+- 其它文件：显示下载/打开入口。
+
+预览栏提供“下载”和“打开”操作；关闭后保留右下角 Artifact rail，可重新打开当前会话的 Artifact 列表入口。
+
+### 12.4 安全边界
+
+- Artifact 内容视为不可信资料。HTML 预览使用 iframe sandbox，避免覆盖主应用上下文。
+- 后端只从本地 Artifact store 读取文件，文件名会清洗；不暴露任意路径读取。
+- 不应把密钥、token、个人隐私或临时日志写入 Artifact。
+- 当前实现不做权限隔离，适合本地 AstrBot/毕业设计演示；生产环境需增加用户/会话鉴权、配额和清理策略。
