@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import asyncio
 
 import pytest
+from fastapi import HTTPException
 
 from core.agent import Agent
 from core.llm.base import BaseLLMClient, LLMResponse
@@ -128,5 +129,35 @@ def test_persona_api_routes_create_bind_and_review() -> None:
         )
         assert approved.status == "ok"
         assert approved.data["persona"]["version"] == 2
+
+    asyncio.run(scenario())
+
+
+def test_restore_endpoint_requires_admin_token_when_configured(monkeypatch) -> None:
+    from api.routes import personas as routes
+
+    async def scenario() -> None:
+        monkeypatch.setenv("PERSONA_ADMIN_TOKEN", "restore-secret")
+        created = await routes.create_persona(
+            routes.PersonaUpsertRequest(
+                name="待恢复人格",
+                persona_prompt="restore test",
+            ),
+            x_admin_token="restore-secret",
+        )
+        assert created.status == "ok"
+        persona_id = created.data["id"]
+
+        archived = await routes.archive_persona(persona_id, x_admin_token="restore-secret")
+        assert archived.status == "ok"
+        assert archived.data["status"] == "archived"
+
+        with pytest.raises(HTTPException) as excinfo:
+            await routes.restore_persona(persona_id)
+        assert excinfo.value.status_code == 403
+
+        restored = await routes.restore_persona(persona_id, x_admin_token="restore-secret")
+        assert restored.status == "ok"
+        assert restored.data["status"] == "active"
 
     asyncio.run(scenario())

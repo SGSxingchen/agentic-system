@@ -283,7 +283,12 @@ async def archive_persona(
 
 
 @router.post("/{persona_id}/restore", response_model=APIResponse)
-async def restore_persona(persona_id: str) -> APIResponse:
+async def restore_persona(
+    persona_id: str,
+    x_admin_token: Optional[str] = Header(default=None),
+    x_admin_user: Optional[str] = Header(default=None),
+) -> APIResponse:
+    _require_admin("local-admin", x_admin_token=x_admin_token, x_admin_user=x_admin_user)
     persona = _store().restore_persona(persona_id)
     if not persona:
         raise HTTPException(status_code=404, detail="persona not found")
