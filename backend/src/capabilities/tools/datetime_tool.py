@@ -7,6 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 class DateTimeCapability(CapabilityBase):
@@ -18,7 +19,7 @@ class DateTimeCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "获取当前日期时间，支持 IANA 时区，例如 Asia/Shanghai、Asia/Singapore、UTC"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

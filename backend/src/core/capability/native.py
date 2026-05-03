@@ -9,6 +9,7 @@ import ast
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+from ..prompts import get_tool_description
 from .base import CapabilityBase, CapabilitySchema
 
 
@@ -37,7 +38,7 @@ class CodeParserCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "深度解析 Python 代码，提取函数、类、导入、文档字符串等 AST 信息"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -344,7 +345,7 @@ class StaticAnalyzerCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "基于 AST 的静态代码分析：未使用导入、命名规范、复杂度、函数长度等"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(
@@ -687,7 +688,7 @@ class TestRunnerCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "解析测试文件结构，提取测试用例、断言统计、fixture 信息"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

@@ -18,7 +18,7 @@ DEFAULT_TEXT_SCHEMA: Dict[str, Any] = {
     "properties": {
         "text": {
             "type": "string",
-            "description": "Text to process",
+            "description": "待处理文本",
         },
     },
     "required": ["text"],
@@ -40,10 +40,10 @@ class DynamicToolCapability(CapabilityBase):
     ) -> None:
         super().__init__(config=config)
         if mode not in self.SUPPORTED_MODES:
-            raise ValueError(f"Unsupported dynamic tool mode: {mode}")
+            raise ValueError(f"不支持的动态工具模式: {mode}")
 
         self._name = name
-        self._description = description or f"Dynamic {mode} tool"
+        self._description = description or f"动态 {mode} 工具"
         self._mode = mode
         self._input_schema = input_schema or self._default_schema(mode)
 
@@ -64,7 +64,7 @@ class DynamicToolCapability(CapabilityBase):
             name=self.name,
             description=self.description,
             parameters=self._input_schema,
-            returns="Structured dynamic tool result",
+            returns="结构化动态工具执行结果",
             is_read_only=True,
             is_concurrency_safe=True,
             max_result_size=8000,
@@ -77,7 +77,7 @@ class DynamicToolCapability(CapabilityBase):
             return self._execute_checklist(kwargs)
         if self._mode == "regex_extract":
             return self._execute_regex_extract(kwargs)
-        return {"error": f"Unsupported mode: {self._mode}"}
+        return {"error": f"不支持的动态工具模式: {self._mode}"}
 
     @classmethod
     def from_config(cls, capability_def: Mapping[str, Any]) -> "DynamicToolCapability":
@@ -100,7 +100,7 @@ class DynamicToolCapability(CapabilityBase):
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": "Primary text passed into the template",
+                        "description": "传入模板的主要文本",
                     }
                 },
                 "required": ["text"],

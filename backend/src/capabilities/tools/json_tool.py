@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 class JsonToolCapability(CapabilityBase):
@@ -17,7 +18,7 @@ class JsonToolCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "JSON 工具：校验、格式化、压缩，并支持简单路径查询"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

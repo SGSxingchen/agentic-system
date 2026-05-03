@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 from core.task import (
     TaskStatus,
     TaskType,
@@ -48,11 +49,7 @@ class DispatchAgentCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return (
-            "派发一个已注册的子 Agent 异步执行子任务，立即返回 task_id；"
-            "子任务完成时会以 <task-notification> 形式追加到本对话。"
-            "适合在 planner / coder 内并行委派工作，无需阻塞等待。"
-        )
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

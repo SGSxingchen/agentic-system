@@ -10,6 +10,7 @@ import ast
 from typing import Any, Dict, List, Optional, Union
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 class CodeParserCapability(CapabilityBase):
@@ -29,7 +30,7 @@ class CodeParserCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "深度解析 Python 代码，提取函数、类、导入、文档字符串等 AST 信息"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

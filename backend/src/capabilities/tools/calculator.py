@@ -8,6 +8,7 @@ import operator
 from typing import Any, Callable
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 class CalculatorCapability(CapabilityBase):
@@ -49,7 +50,7 @@ class CalculatorCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "安全计算数学表达式，支持基础四则运算、幂、取模和常见数学函数"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

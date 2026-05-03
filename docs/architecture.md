@@ -119,6 +119,16 @@ v2 方向: 记忆系统将升级为私人助理式全局长期记忆层。所有
 - **MemoryFormation** — 创建 / 巩固 (去重) / 遗忘 (衰减)
 - **MemoryRetriever** — 多信号加权检索
 
+### 提示词组织方式
+
+提示词体系已统一为“配置化 Agent 主提示词 + Python 共享运行时片段 + Tool Schema 描述”三层:
+
+1. **Agent 主提示词**: `config/agents.yaml` 中的 `system_prompt` 是各 Agent 的可编辑主契约。所有 Agent 统一使用以下章节：`角色边界`、`输入变量`、`工具调用规则/工作流程`、`安全与权限约束`、`输出契约`。`output_format=json` 的 Agent 必须明确“严格输出纯 JSON，不输出 markdown”。
+2. **共享运行时片段**: `backend/src/core/prompts.py` 集中维护运行时代码拼接的提示词片段，包括长期记忆不可信注入块、token 预算 nudge、对话反思 prompt、内置 Tool 描述。`Agent._build_messages()` 和 `MemoryProcessor._build_messages()` 只能通过这些构建函数拼接动态 prompt，避免各模块文案漂移。
+3. **Tool 描述**: 内置 Tool 的 `CapabilitySchema.description` 统一来自 `core.prompts.TOOL_DESCRIPTIONS`。`config/capabilities.yaml` 的 `description` 保持同风格，用于配置展示和动态能力描述；`prompt` 字段仅作为显式覆盖层，仍不得修改 `parameters` JSON Schema。
+
+新增或修改提示词时必须保持字段名与 `input_schema` 一致，变量名使用 snake_case；失败处理统一用 blocked / error / permission_denied / truncated 语义说明，不编造未执行的结果。涉及写入、Shell、联网、记忆注入和外部资料时必须保留安全/权限边界。
+
 ### 能力系统
 
 能力系统由 `CapabilityRegistry` 统一管理，Agent、原生 Tool、动态 Tool 都以同一接口暴露。

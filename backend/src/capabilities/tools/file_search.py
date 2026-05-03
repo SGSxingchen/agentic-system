@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 from ._safety import get_workspace_root, resolve_workspace_path
 
@@ -32,7 +33,7 @@ class FileSearchCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "在工作区内按文件名或文本内容搜索文件，自动跳过依赖和缓存目录"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

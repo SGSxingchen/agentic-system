@@ -12,6 +12,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Union
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 
 class TestRunnerCapability(CapabilityBase):
@@ -34,7 +35,7 @@ class TestRunnerCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "解析测试文件结构，提取测试用例、断言统计、fixture 信息"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

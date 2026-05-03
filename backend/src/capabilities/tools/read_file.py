@@ -3,6 +3,7 @@
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.prompts import get_tool_description
 
 from ._safety import resolve_workspace_path
 
@@ -16,7 +17,7 @@ class ReadFileCapability(CapabilityBase):
 
     @property
     def description(self) -> str:
-        return "读取工作区内指定路径的文件内容"
+        return get_tool_description(self.name)
 
     def get_schema(self) -> CapabilitySchema:
         return CapabilitySchema(

@@ -54,7 +54,7 @@ class AgentCapability(CapabilityBase):
             name=self.name,
             description=self.description,
             parameters=self._input_schema,
-            returns="Agent processing result dict",
+            returns="Agent 处理结果字典",
         )
 
     async def execute(self, **kwargs: Any) -> Any:
