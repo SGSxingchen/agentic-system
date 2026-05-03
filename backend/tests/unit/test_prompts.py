@@ -95,6 +95,8 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
 
     persona_tools = {
         "read_persona_definition",
+        "manage_persona_definition",
+        "manage_persona_binding",
         "record_persona_feedback",
         "generate_persona_patch_proposal",
         "apply_confirmed_persona_patch",

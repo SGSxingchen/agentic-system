@@ -4,6 +4,8 @@ import * as api from '../api/client'
 import type { Persona, PersonaBindings } from '../types'
 import './AgentPanel.css'
 
+const PERSONA_CACHE_TTL_MS = 30_000
+
 const STATUS_CONFIG: Record<
   string,
   { bg: string; color: string; dotColor: string; label: string }
@@ -96,29 +98,63 @@ export function AgentPanel() {
     }
   }, [])
 
-  const fetchPersonaContext = useCallback(async () => {
+  const fetchPersonaContext = useCallback(async (force = false) => {
+    const cache = state.personaCache
+    const now = Date.now()
+    const personasFresh =
+      !force &&
+      cache.personasFetchedAt > 0 &&
+      now - cache.personasFetchedAt < PERSONA_CACHE_TTL_MS &&
+      cache.personas.length > 0 &&
+      cache.includeArchived === false
+    const bindingsFresh =
+      !force &&
+      cache.bindingsFetchedAt > 0 &&
+      now - cache.bindingsFetchedAt < PERSONA_CACHE_TTL_MS &&
+      cache.bindings
+
+    if (personasFresh) {
+      setPersonas(cache.personas)
+      setSessionPersonaId((current) =>
+        cache.personas.some((p) => p.id === current)
+          ? current
+          : cache.personas[0]?.id || 'base-assistant'
+      )
+    }
+    if (bindingsFresh) {
+      setPersonaBindings(cache.bindings!)
+    }
+    if (personasFresh && bindingsFresh) return
+
     const [personaRes, bindingRes] = await Promise.all([
-      api.listPersonas(false),
-      api.getAgentPersonaBindings(),
+      personasFresh ? Promise.resolve({ status: 'ok' as const, data: cache.personas }) : api.listPersonas(false),
+      bindingsFresh ? Promise.resolve({ status: 'ok' as const, data: cache.bindings! }) : api.getAgentPersonaBindings(),
     ])
     if (personaRes.status === 'ok' && personaRes.data) {
       setPersonas(personaRes.data)
-      if (!personaRes.data.some((p) => p.id === sessionPersonaId)) {
-        setSessionPersonaId(personaRes.data[0]?.id || 'base-assistant')
-      }
+      dispatch({ type: 'SET_PERSONAS_CACHE', payload: { personas: personaRes.data, includeArchived: false } })
+      setSessionPersonaId((current) =>
+        personaRes.data!.some((p) => p.id === current)
+          ? current
+          : personaRes.data![0]?.id || 'base-assistant'
+      )
     }
     if (bindingRes.status === 'ok' && bindingRes.data) {
       setPersonaBindings(bindingRes.data)
+      dispatch({ type: 'SET_PERSONA_BINDINGS_CACHE', payload: { bindings: bindingRes.data } })
     }
-  }, [sessionPersonaId])
+  }, [dispatch, state.personaCache])
 
   useEffect(() => {
     fetchAgents()
     fetchCapabilities()
     fetchPersonaContext()
+  }, [fetchAgents, fetchCapabilities, fetchPersonaContext])
+
+  useEffect(() => {
     const timer = setInterval(fetchAgents, 10000)
     return () => clearInterval(timer)
-  }, [fetchAgents, fetchCapabilities, fetchPersonaContext])
+  }, [fetchAgents])
 
   // 开始创建
   const startCreate = () => {
@@ -271,7 +307,15 @@ export function AgentPanel() {
   const bindAgentPersona = async (agentName: string, personaId: string) => {
     const res = await api.bindAgentPersona(agentName, personaId)
     setPersonaNotice(res.status === 'ok' ? `${agentName} 默认人格已更新` : res.message || 'Agent 人格绑定失败')
-    await fetchPersonaContext()
+    dispatch({ type: 'INVALIDATE_PERSONA_CACHE' })
+    await fetchPersonaContext(true)
+  }
+
+  const unbindAgentPersona = async (agentName: string) => {
+    const res = await api.unbindAgentPersona(agentName)
+    setPersonaNotice(res.status === 'ok' ? `${agentName} 已恢复为基础人格回退` : res.message || 'Agent 人格解绑失败')
+    dispatch({ type: 'INVALIDATE_PERSONA_CACHE' })
+    await fetchPersonaContext(true)
   }
 
   const bindSessionPersona = async () => {
@@ -281,7 +325,15 @@ export function AgentPanel() {
     }
     const res = await api.bindSessionPersona(sessionBindId.trim(), sessionPersonaId)
     setPersonaNotice(res.status === 'ok' ? `会话 ${sessionBindId.trim()} 已绑定人格` : res.message || '会话人格绑定失败')
-    await fetchPersonaContext()
+    dispatch({ type: 'INVALIDATE_PERSONA_CACHE' })
+    await fetchPersonaContext(true)
+  }
+
+  const unbindSessionPersona = async (sessionId: string) => {
+    const res = await api.unbindSessionPersona(sessionId)
+    setPersonaNotice(res.status === 'ok' ? `会话 ${sessionId} 已解绑人格` : res.message || '会话人格解绑失败')
+    dispatch({ type: 'INVALIDATE_PERSONA_CACHE' })
+    await fetchPersonaContext(true)
   }
 
   const personaName = (personaId?: string) => personas.find((p) => p.id === personaId)?.name || personaId || '基础人格'
@@ -289,6 +341,7 @@ export function AgentPanel() {
   const renderPersonaBindingPanel = () => {
     const baseId = personaBindings.base_persona_id || 'base-assistant'
     const activePersonas = personas.filter((persona) => persona.status === 'active')
+    const sessionEntries = Object.entries(personaBindings.sessions || {})
     const roles = Array.from(new Set([
       ...(personaBindings.roles || []),
       'assistant',
@@ -305,10 +358,10 @@ export function AgentPanel() {
         <div className="agent-persona-card__header">
           <div>
             <span className="agent-form__kicker">Persona Routing</span>
-            <h3>Agent 人格绑定</h3>
-            <p>绑定属于 Agent 页面：请求指定人格 &gt; 会话绑定 &gt; Agent 默认人格 &gt; 基础人格。</p>
+            <h3>Agent 人格路由</h3>
+            <p>此处只管理“谁使用哪种人格”。人格定义、版本与审核请到“人格管理”页面。</p>
           </div>
-          <button className="refresh-btn" onClick={fetchPersonaContext}>刷新人格</button>
+          <button className="refresh-btn" onClick={() => fetchPersonaContext(true)}>刷新人格</button>
         </div>
 
         {personaNotice && <div className="agent-persona-notice">{personaNotice}</div>}
@@ -325,16 +378,21 @@ export function AgentPanel() {
             <label key={role} className="agent-persona-row">
               <span>
                 <strong>{role}</strong>
-                <small>默认：{personaName(personaBindings.agents?.[role] || baseId)}</small>
+                <small>{personaBindings.agents?.[role] ? `已绑定：${personaName(personaBindings.agents?.[role])}` : `未绑定，回退到：${personaName(baseId)}`}</small>
               </span>
-              <select
-                value={personaBindings.agents?.[role] || baseId}
-                onChange={(event) => bindAgentPersona(role, event.target.value)}
-              >
-                {activePersonas.map((persona) => (
-                  <option key={persona.id} value={persona.id}>{persona.name} · v{persona.version}</option>
-                ))}
-              </select>
+              <div className="agent-persona-row__controls">
+                <select
+                  value={personaBindings.agents?.[role] || baseId}
+                  onChange={(event) => bindAgentPersona(role, event.target.value)}
+                >
+                  {activePersonas.map((persona) => (
+                    <option key={persona.id} value={persona.id}>{persona.name} · v{persona.version}</option>
+                  ))}
+                </select>
+                <button type="button" onClick={() => unbindAgentPersona(role)} disabled={!personaBindings.agents?.[role]}>
+                  解绑
+                </button>
+              </div>
             </label>
           ))}
         </div>
@@ -352,6 +410,18 @@ export function AgentPanel() {
           </select>
           <button className="btn-primary-sm" onClick={bindSessionPersona}>绑定会话</button>
         </div>
+
+        {sessionEntries.length > 0 && (
+          <div className="agent-session-list">
+            <h4>当前会话绑定</h4>
+            {sessionEntries.map(([sessionId, personaId]) => (
+              <div key={sessionId} className="agent-session-row">
+                <span><strong>{sessionId}</strong><small>{personaName(personaId)}</small></span>
+                <button type="button" onClick={() => unbindSessionPersona(sessionId)}>解绑</button>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     )
   }

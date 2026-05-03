@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAppStore } from '../store/appStore'
 import type { Persona, PersonaProposal, PersonaVersion } from '../types'
 import {
   approvePersonaProposal,
@@ -16,6 +17,7 @@ import {
 import './PersonaPanel.css'
 
 const BASE_ID = 'base-assistant'
+const PERSONA_CACHE_TTL_MS = 30_000
 
 function linesToList(value: string): string[] {
   return value.split('\n').map((line) => line.replace(/^[-•]\s*/, '').trim()).filter(Boolean)
@@ -49,6 +51,7 @@ function renderPreview(persona: Persona): string {
 }
 
 export function PersonaPanel() {
+  const { state, dispatch } = useAppStore()
   const [personas, setPersonas] = useState<Persona[]>([])
   const [selectedId, setSelectedId] = useState(BASE_ID)
   const [draft, setDraft] = useState<Persona>(emptyDraft())
@@ -67,14 +70,28 @@ export function PersonaPanel() {
     [personas, selectedId]
   )
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
+    const cache = state.personaCache
+    const now = Date.now()
+    const personasFresh =
+      !force &&
+      cache.personasFetchedAt > 0 &&
+      now - cache.personasFetchedAt < PERSONA_CACHE_TTL_MS &&
+      cache.includeArchived === showArchived &&
+      cache.personas.length > 0
+
     const [personaRes, proposalRes] = await Promise.all([
-      listPersonas(showArchived),
+      personasFresh
+        ? Promise.resolve({ status: 'ok' as const, data: cache.personas })
+        : listPersonas(showArchived),
       listPersonaProposals(),
     ])
-    if (personaRes.status === 'ok' && personaRes.data) setPersonas(personaRes.data)
+    if (personaRes.status === 'ok' && personaRes.data) {
+      setPersonas(personaRes.data)
+      dispatch({ type: 'SET_PERSONAS_CACHE', payload: { personas: personaRes.data, includeArchived: showArchived } })
+    }
     if (proposalRes.status === 'ok' && proposalRes.data) setProposals(proposalRes.data)
-  }, [showArchived])
+  }, [dispatch, showArchived, state.personaCache])
 
   useEffect(() => { refresh() }, [refresh])
 
@@ -98,7 +115,8 @@ export function PersonaPanel() {
       ? await updatePersona(draft.id, payload)
       : await createPersona({ ...payload, name: payload.name || '新人格' })
     setNotice(res.status === 'ok' ? '人格已保存' : res.message || '保存失败')
-    await refresh()
+    dispatch({ type: 'INVALIDATE_PERSONA_CACHE' })
+    await refresh(true)
     if (res.status === 'ok' && res.data) setSelectedId((res.data as Persona).id)
   }
 
@@ -111,7 +129,7 @@ export function PersonaPanel() {
     })
     setNotice(res.status === 'ok' ? '建议已进入待审核队列，未自动覆盖人格正文' : res.message || '生成失败')
     setFeedback('')
-    await refresh()
+    await refresh(true)
   }
 
   const previewPersona: Persona = {
@@ -162,8 +180,8 @@ export function PersonaPanel() {
           <label>权限/边界说明<textarea value={draft.permission_boundary} onChange={(e) => setDraft({ ...draft, permission_boundary: e.target.value })} rows={3} /></label>
           <div className="persona-actions">
             <button className="persona-primary" onClick={saveDraft}>保存</button>
-            {draft.id && draft.id !== BASE_ID && draft.status !== 'archived' && <button onClick={async () => { await archivePersona(draft.id); await refresh() }}>归档</button>}
-            {draft.id && draft.status === 'archived' && <button onClick={async () => { await restorePersona(draft.id); await refresh() }}>恢复</button>}
+            {draft.id && draft.id !== BASE_ID && draft.status !== 'archived' && <button onClick={async () => { await archivePersona(draft.id); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) }}>归档</button>}
+            {draft.id && draft.status === 'archived' && <button onClick={async () => { await restorePersona(draft.id); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) }}>恢复</button>}
           </div>
         </section>
       </div>
@@ -192,7 +210,7 @@ export function PersonaPanel() {
               <div><strong>{proposal.source}</strong><span>{proposal.status} · {proposal.persona_id} @ v{proposal.base_version}</span></div>
               <p>{proposal.summary}</p>
               <details><summary>查看 diff / 变更说明</summary><pre>{proposal.diff}</pre><pre>{proposal.proposal_text}</pre></details>
-              {proposal.status === 'pending' && <div className="persona-actions"><button className="persona-primary" onClick={async () => { await approvePersonaProposal(proposal.id, reviewer); await refresh() }}>批准生成新版本</button><button onClick={async () => { await rejectPersonaProposal(proposal.id, reviewer); await refresh() }}>拒绝</button></div>}
+              {proposal.status === 'pending' && <div className="persona-actions"><button className="persona-primary" onClick={async () => { await approvePersonaProposal(proposal.id, reviewer); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) }}>批准生成新版本</button><button onClick={async () => { await rejectPersonaProposal(proposal.id, reviewer); await refresh(true) }}>拒绝</button></div>}
             </article>
           ))}
         </div>
@@ -204,7 +222,7 @@ export function PersonaPanel() {
           {versions.map((version) => (
             <div key={`${version.version}-${version.created_at}`} className="persona-version-item">
               <span>v{version.version} · {version.reason} · {new Date(version.created_at).toLocaleString()}</span>
-              {selected && version.version !== selected.version && <button onClick={async () => { if (window.confirm(`确认回滚到 v${version.version}？会生成新的版本。`)) { await rollbackPersona(selected.id, version.version, reviewer); await refresh() } }}>回滚到此版本</button>}
+              {selected && version.version !== selected.version && <button onClick={async () => { if (window.confirm(`确认回滚到 v${version.version}？会生成新的版本。`)) { await rollbackPersona(selected.id, version.version, reviewer); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) } }}>回滚到此版本</button>}
             </div>
           ))}
         </div>

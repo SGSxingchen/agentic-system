@@ -190,6 +190,14 @@ async def bind_agent_persona(agent_name: str, req: PersonaBindRequest) -> APIRes
     return APIResponse(status="ok", data=binding)
 
 
+@router.delete("/bindings/agents/{agent_name}", response_model=APIResponse)
+async def unbind_agent_persona(agent_name: str) -> APIResponse:
+    """Compatibility alias. Prefer DELETE /api/agents/persona-bindings/agents/{agent_name}."""
+
+    binding = PersonaBindingService().unbind_agent(agent_name)
+    return APIResponse(status="ok", data=binding)
+
+
 @router.put("/bindings/sessions/{session_id}", response_model=APIResponse)
 async def bind_session_persona(session_id: str, req: PersonaBindRequest) -> APIResponse:
     """Compatibility alias. Prefer PUT /api/agents/persona-bindings/sessions/{session_id}."""
@@ -198,6 +206,14 @@ async def bind_session_persona(session_id: str, req: PersonaBindRequest) -> APIR
         binding = PersonaBindingService().bind_session(session_id, req.persona_id)
     except ValueError as exc:
         return APIResponse(status="error", message=str(exc))
+    return APIResponse(status="ok", data=binding)
+
+
+@router.delete("/bindings/sessions/{session_id}", response_model=APIResponse)
+async def unbind_session_persona(session_id: str) -> APIResponse:
+    """Compatibility alias. Prefer DELETE /api/agents/persona-bindings/sessions/{session_id}."""
+
+    binding = PersonaBindingService().unbind_session(session_id)
     return APIResponse(status="ok", data=binding)
 
 
@@ -266,7 +282,10 @@ async def update_persona(
     x_admin_user: Optional[str] = Header(default=None),
 ) -> APIResponse:
     _require_admin("local-admin", x_admin_token=x_admin_token, x_admin_user=x_admin_user)
-    persona = _store().update_persona(persona_id, req.model_dump(exclude_none=True))
+    try:
+        persona = _store().update_persona(persona_id, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        return APIResponse(status="error", message=str(exc))
     if not persona:
         raise HTTPException(status_code=404, detail="persona not found")
     return APIResponse(status="ok", data=persona)
@@ -295,7 +314,10 @@ async def restore_persona(
     x_admin_user: Optional[str] = Header(default=None),
 ) -> APIResponse:
     _require_admin("local-admin", x_admin_token=x_admin_token, x_admin_user=x_admin_user)
-    persona = _store().restore_persona(persona_id)
+    try:
+        persona = _store().restore_persona(persona_id)
+    except ValueError as exc:
+        return APIResponse(status="error", message=str(exc))
     if not persona:
         raise HTTPException(status_code=404, detail="persona not found")
     return APIResponse(status="ok", data=persona)
