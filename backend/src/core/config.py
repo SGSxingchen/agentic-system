@@ -106,7 +106,7 @@ class WebFetchToolConfig(BaseModel):
 class FileToolConfig(BaseModel):
     """Workspace file tool configuration."""
 
-    workspace_root: str = Field(default="", description="Optional workspace root override")
+    workspace_root: str = Field(default="./workspace", description="Workspace root for file/shell tools")
 
 
 class ShellToolConfig(BaseModel):
@@ -391,7 +391,7 @@ def load_config(
                 "max_chars": 4000,
             },
             "file": {
-                "workspace_root": "",
+                "workspace_root": "./workspace",
             },
             "shell": {
                 "enabled": False,

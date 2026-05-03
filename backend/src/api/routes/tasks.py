@@ -9,7 +9,7 @@
 
 实现要点:
 - 用 core.task.TaskRegistry 替代旧的 _tasks 字典
-- 用 core.task.TranscriptWriter 把 step 事件落到 data/tasks/{task_id}.jsonl
+- 用 core.task.TranscriptWriter 把 step 事件落到 workspace/tasks/{task_id}.jsonl
 - DELETE 真正 cancel 后台 asyncio.Task；finally 块捕获 CancelledError 把状态置 KILLED
 """
 from __future__ import annotations

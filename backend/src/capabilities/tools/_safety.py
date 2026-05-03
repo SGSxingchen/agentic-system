@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from core.workspace import project_root, resolve_project_path, resolve_workspace_root
+
 
 def get_workspace_root() -> Path:
     """Return the allowed workspace root for tool access.
@@ -13,7 +15,7 @@ def get_workspace_root() -> Path:
     1. ``core.task.context._workspace_root_cv`` 设置的 worktree 路径（Phase C 子 Agent 隔离）
     2. ``AGENTIC_WORKSPACE_ROOT`` 环境变量
     3. ``core.config.get_tool_runtime_config("file").workspace_root``
-    4. 项目根目录
+    4. 项目根目录下 ``./workspace``
     """
 
     try:
@@ -21,24 +23,26 @@ def get_workspace_root() -> Path:
 
         override = get_workspace_root_override()
         if override is not None:
-            return Path(override).expanduser().resolve()
+            root = Path(override).expanduser().resolve()
+            root.mkdir(parents=True, exist_ok=True)
+            return root
     except Exception:
         pass
 
     configured = os.getenv("AGENTIC_WORKSPACE_ROOT", "").strip()
     if configured:
-        return Path(configured).expanduser().resolve()
+        return resolve_workspace_root(configured)
 
     try:
         from core.config import get_tool_runtime_config
 
         configured = get_tool_runtime_config("file").get("workspace_root", "")
         if configured:
-            return Path(str(configured)).expanduser().resolve()
+            return resolve_workspace_root(str(configured))
     except Exception:
         pass
 
-    return Path(__file__).resolve().parents[4]
+    return resolve_workspace_root()
 
 
 def resolve_workspace_path(raw_path: str) -> Path:
@@ -70,6 +74,18 @@ def resolve_workspace_cwd(raw_cwd: str | None) -> Path:
     if raw_cwd:
         return resolve_workspace_path(raw_cwd)
     return get_workspace_root()
+
+
+def get_project_root() -> Path:
+    """Return repository root for operations that must run against git/config."""
+
+    return project_root()
+
+
+def resolve_project_relative_path(raw_path: str | os.PathLike[str], default: str) -> Path:
+    """Resolve a user-configurable storage path relative to the project root."""
+
+    return resolve_project_path(raw_path, default=default)
 
 
 def ensure_shell_tool_enabled() -> None:

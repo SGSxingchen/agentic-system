@@ -362,7 +362,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 | `TaskType` 枚举 | 当前仅 `pipeline`；预留 `sub_agent` / `shell`（Phase C/D） |
 | `AgentProgress` | 增量进度：tool_count（累加）/ total_tokens（累加）/ activity / last_tool / current_step |
 | `TaskRegistry` | 进程级单例：create / attach asyncio.Task / get / list / set_progress / mark_done / kill |
-| `TranscriptWriter` + `read_transcript` | 每任务一份 JSONL 文件（`data/tasks/{task_id}.jsonl`），写 created/started/step_*/done/killed/error |
+| `TranscriptWriter` + `read_transcript` | 每任务一份 JSONL 文件（`workspace/tasks/{task_id}.jsonl`），写 created/started/step_*/done/killed/error |
 
 **API**:
 - `POST /api/tasks { requirement, pipeline }` — 提交任务，返回 task_id（v1 字段 `workflow` 重命名为 `pipeline`）
@@ -382,7 +382,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - 子 Agent 完成时把结果以 `<task-notification>` user 消息追加到当前 Agent 的对话历史；父 Agent 在下一轮采样前 drain
 - 嵌套保护：`max_depth=1`（被派发的子 Agent 不能再调 dispatch_agent）
 - 父 task 取消时所有 SUB_AGENT 子 task 级联 KILLED（TaskRegistry.kill 递归）
-- Worktree 隔离（可选）：`worktree=true` 时用 `git worktree add --detach` 在 `data/worktrees/{task_id}/` 建临时工作树；通过 contextvar 覆盖 `_safety.get_workspace_root()`，让子 Agent 的文件 tool 在隔离目录运行
+- Worktree 隔离（可选）：`worktree=true` 时用 `git worktree add --detach` 在 `workspace/worktrees/{task_id}/` 建临时工作树；通过 contextvar 覆盖 `_safety.get_workspace_root()`，让子 Agent 的文件 tool 在隔离目录运行
 
 跨 async 调用栈传递的运行时上下文集中在 `core/task/context.py`：`parent_task_id` / `notification_box` / `workspace_root_override` / `dispatch_depth` 共 4 个 ContextVar。所有 setter 返回 `Token`，调用方用 try/finally reset。
 

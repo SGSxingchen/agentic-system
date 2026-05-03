@@ -102,7 +102,7 @@ agentic-system/
 - 能力抽象接口 + JSON Schema 描述
 - 内置能力：代码解析器 (AST)、静态分析器、测试运行器
 - 常规助理工具：`calculator`、`datetime_tool`、`web_fetch`、`file_search`、`json_tool`、`text_processor`
-- 工作区工具：`read_file`、`write_file`、`bash`（默认关闭，需显式启用）
+- 工作区工具：`read_file`、`write_file`、`bash`（默认关闭，需显式启用）。默认工作区为项目根目录下 `./workspace`，bash 默认在该目录执行，工具生成的临时/中间产物默认落在该目录。
 - 能力注册中心，支持动态加载
 - 动态能力：通过配置/API 创建 `template`、`checklist`、`regex_extract` Tool，并热挂载到 Agent
 - Tool 提示词管理：可编辑 LLM-facing prompt，JSON Schema 只读
@@ -277,7 +277,7 @@ python scripts/verify_memory_persistence.py
 
 补充说明:
 - 默认服务监听地址已收紧为 `127.0.0.1`
-- `bash` 工具默认关闭，只有在显式设置 `ENABLE_SHELL_TOOL=true` 时才允许使用
+- `bash` 工具默认关闭，只有在显式设置 `ENABLE_SHELL_TOOL=true` 时才允许使用；启用后默认 cwd 是项目根目录下 `./workspace`，可用 `tools.file.workspace_root` / `AGENTIC_WORKSPACE_ROOT` 改为显式目录。
 
 ### 环境变量
 

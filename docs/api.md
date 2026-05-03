@@ -76,7 +76,7 @@
         "max_chars": 4000
       },
       "file": {
-        "workspace_root": ""
+        "workspace_root": "./workspace"
       },
       "shell": {
         "enabled": false,
@@ -125,7 +125,7 @@
       "max_chars": 4000
     },
     "file": {
-      "workspace_root": ""
+      "workspace_root": "./workspace"
     },
     "shell": {
       "enabled": false,
