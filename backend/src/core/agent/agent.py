@@ -22,6 +22,7 @@ from ..task.context import (
 )
 from ..task.notifications import make_user_message
 from ..prompts import build_token_budget_nudge, format_untrusted_memory_context
+from ..persona import build_persona_prompt_block, get_effective_persona
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +306,16 @@ class Agent:
         """Build LLM messages, preserving chat history when provided."""
 
         system_prompt = self.system_prompt
+
+        persona_id = str(input_data.get("persona_id") or "").strip() or None
+        session_id = str(input_data.get("session_id") or "").strip() or None
+        persona = get_effective_persona(
+            agent_name=self.name,
+            session_id=session_id,
+            persona_id=persona_id,
+        )
+        system_prompt = f"{system_prompt}\n\n{build_persona_prompt_block(persona)}"
+
         memory_context = str(input_data.get("memory_context") or "").strip()
         if memory_context:
             system_prompt = format_untrusted_memory_context(system_prompt, memory_context)

@@ -53,6 +53,7 @@ from .routes import (
     config_router,
     evolution_router,
     memory_router,
+    personas_router,
     pipelines_router,
     tasks_router,
 )
@@ -396,6 +397,7 @@ app.include_router(tasks_router)
 app.include_router(agents_router)
 app.include_router(pipelines_router)
 app.include_router(memory_router)
+app.include_router(personas_router)
 app.include_router(config_router)
 app.include_router(evolution_router)
 app.include_router(chat_sessions_router)
@@ -415,6 +417,10 @@ async def chat_endpoint(req: dict):
 
     try:
         payload = {"message": message}
+        if req.get("session_id"):
+            payload["session_id"] = req.get("session_id")
+        if req.get("persona_id"):
+            payload["persona_id"] = req.get("persona_id")
         if isinstance(req.get("messages"), list):
             payload["messages"] = req["messages"]
         elif isinstance(req.get("history"), list):
@@ -468,6 +474,10 @@ async def chat_stream_endpoint(req: dict):
         tool_started_at: dict[str, float] = {}
         try:
             payload = {"message": message}
+            if req.get("session_id"):
+                payload["session_id"] = req.get("session_id")
+            if req.get("persona_id"):
+                payload["persona_id"] = req.get("persona_id")
             if isinstance(req.get("messages"), list):
                 payload["messages"] = req["messages"]
             elif isinstance(req.get("history"), list):

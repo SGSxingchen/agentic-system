@@ -61,6 +61,7 @@ def _create_test_app():
         memory_router,
         config_router,
         evolution_router,
+        personas_router,
     )
 
     @asynccontextmanager
@@ -82,6 +83,7 @@ def _create_test_app():
     test_app.include_router(memory_router)
     test_app.include_router(config_router)
     test_app.include_router(evolution_router)
+    test_app.include_router(personas_router)
     test_app.include_router(chat_sessions_router)
 
     return test_app

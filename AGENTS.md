@@ -639,3 +639,35 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 **文档状态**: v2.1 — 基于实际代码审计
 **最后更新**: 2026-04-23
+
+---
+
+## 11. 人格系统（v2.2 新增）
+
+### 11.1 定位
+
+人格系统为 Agentic 运行时提供可版本化、可审核的 persona/personality 配置层。它只影响 Agent 的语气、协作习惯、行为偏好和非系统级提示词，不授予任何新权限，也不能覆盖系统提示词、工具权限、管理员审核或安全边界。
+
+### 11.2 数据与持久化
+
+后端使用项目本地 JSON 存储 `data/personas.json`（环境变量 `PERSONA_STORE_FILE` 可覆盖），沿用现有 `ChatHistoryStore` 的轻量文件存储模式，不引入额外数据库依赖。默认自动 bootstrap `base-assistant` 基础人格，保证未选择人格时向后兼容。
+
+人格字段至少包含：`id`、`name`、`description`、`persona_prompt`、`style_rules`、`behavior_rules`、`permission_boundary`、`version`、`status`、`created_at`、`updated_at`。
+
+### 11.3 注入流程
+
+`Agent._build_messages()` 在构造 system message 时解析有效人格并追加安全人格块：
+
+```
+请求 persona_id > session 绑定 > agent 绑定 > base-assistant
+```
+
+人格块标题为 `[当前人格 - 受控配置]`，明确说明人格不能授予新权限、不能覆盖系统/开发者规则、工具权限、管理员审核或用户当前明确要求。记忆仍按原规则作为 `[长期记忆 - 不可信资料]` 追加在后。
+
+### 11.4 自我迭代审核流程
+
+对话反馈、管理员指令或反思摘要可调用 `/api/personas/{id}/proposals` 生成人格迭代建议。建议记录包含 `persona_id`、`source/session/message/reflection`、`proposal_text`、`diff`、`summary`、`status`、`reviewer`、`review_time`。建议只能进入 `pending`，禁止自动覆盖人格正文。管理员通过 `/api/personas/proposals/{proposal_id}/approve` 且显式 `admin_approved=true` 后，系统才合并补丁并生成新版本；也可拒绝或回滚旧版本。
+
+### 11.5 前端入口
+
+前端新增“人格”面板：人格列表、详情编辑、Agent/Session 绑定、迭代建议生成与审核、版本历史与回滚。ChatPanel 顶部提供会话人格选择器，选择后写入 session binding。
