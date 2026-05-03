@@ -1,55 +1,46 @@
 /* ===== CSS Variables - Claude-style Warm Light Theme ===== */
+/* ===== CSS Variables - Claude-style Warm Light Theme ===== */
 :root {
-  /* Primary - Warm terracotta accent */
-  --color-primary: #C4704B;
-  --color-primary-dark: #A85D3B;
-  --color-primary-light: rgba(196, 112, 75, 0.10);
-  --color-primary-glow: rgba(196, 112, 75, 0.15);
+  --color-primary: #b85f3f;
+  --color-primary-dark: #8f472f;
+  --color-primary-light: rgba(184, 95, 63, 0.10);
+  --color-primary-glow: rgba(184, 95, 63, 0.14);
 
-  /* Accent */
-  --color-accent: #A85D3B;
-  --color-accent-light: rgba(168, 93, 59, 0.10);
+  --color-accent: #9d6b4f;
+  --color-accent-light: rgba(157, 107, 79, 0.10);
 
-  /* Backgrounds */
-  --color-bg: #FAF9F6;
-  --color-bg-secondary: #F5F3EF;
-  --color-surface: #FFFFFF;
-  --color-surface-elevated: #FFFFFF;
-  --color-hover: rgba(196, 112, 75, 0.06);
+  --color-bg: #f7f5f0;
+  --color-bg-secondary: #efebe3;
+  --color-surface: #fffdf8;
+  --color-surface-elevated: #ffffff;
+  --color-hover: rgba(88, 76, 64, 0.055);
 
-  /* Text */
-  --color-text-primary: #2D2B28;
-  --color-text-secondary: #6B6560;
-  --color-text-muted: #9C9590;
+  --color-text-primary: #2f2a24;
+  --color-text-secondary: #655d54;
+  --color-text-muted: #948b80;
 
-  /* Borders */
-  --color-border: #E8E4DE;
-  --color-border-light: #D9D4CD;
+  --color-border: #e7dfd3;
+  --color-border-light: #d8cec0;
 
-  /* Status */
-  --color-success: #16A34A;
-  --color-danger: #DC2626;
-  --color-warning: #D97706;
-  --color-info: #2563EB;
+  --color-success: #4b7f52;
+  --color-danger: #b94a3d;
+  --color-warning: #b87828;
+  --color-info: #55739c;
 
-  /* Gradients - all flat in light theme */
-  --gradient-primary: #C4704B;
-  --gradient-surface: #FFFFFF;
-  --gradient-sidebar: #F0EDE8;
+  --gradient-primary: #b85f3f;
+  --gradient-surface: #fffdf8;
+  --gradient-sidebar: #eee9df;
 
-  /* Shadows - very soft */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.10);
-  --shadow-glow: 0 0 0 3px rgba(196, 112, 75, 0.12);
+  --shadow-sm: 0 1px 2px rgba(57, 47, 36, 0.04), 0 1px 8px rgba(57, 47, 36, 0.035);
+  --shadow-md: 0 10px 28px rgba(57, 47, 36, 0.07);
+  --shadow-lg: 0 22px 60px rgba(57, 47, 36, 0.10);
+  --shadow-glow: 0 0 0 4px rgba(184, 95, 63, 0.12);
 
-  /* Border Radius */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-sm: 11px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
   --radius-xl: 24px;
 
-  /* Transitions */
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
 }
@@ -70,8 +61,8 @@ html {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   background: var(--color-bg);
   color: var(--color-text-primary);
   line-height: 1.6;

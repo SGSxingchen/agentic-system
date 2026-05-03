@@ -13,6 +13,7 @@ import { PersonaPanel } from './components/PersonaPanel'
 import { Settings } from './components/Settings'
 import type { WSEvent, Message } from './types'
 import './App.css'
+import './theme.css'
 
 function AppContent() {
   const { state, dispatch } = useAppStore()

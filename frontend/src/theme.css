@@ -1,0 +1,522 @@
+/* ===== Claude-like product theme overrides =====
+   Imported last from App.tsx to keep every panel visually consistent without
+   touching business logic. The direction is warm, quiet, spacious and card-led.
+*/
+
+:root {
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-serif: Georgia, "Times New Roman", "Songti SC", serif;
+  --font-mono: "SFMono-Regular", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+
+  --color-primary: #b85f3f;
+  --color-primary-dark: #8f472f;
+  --color-primary-soft: #f4e6dc;
+  --color-primary-light: rgba(184, 95, 63, 0.105);
+  --color-primary-glow: rgba(184, 95, 63, 0.15);
+  --color-accent: #9d6b4f;
+  --color-accent-light: rgba(157, 107, 79, 0.10);
+
+  --color-bg: #f7f5f0;
+  --color-bg-secondary: #efebe3;
+  --color-bg-tertiary: #faf8f3;
+  --color-surface: #fffdf8;
+  --color-surface-elevated: #ffffff;
+  --color-surface-muted: rgba(255, 253, 248, 0.74);
+  --color-hover: rgba(88, 76, 64, 0.055);
+
+  --color-text-primary: #2f2a24;
+  --color-text-secondary: #655d54;
+  --color-text-muted: #948b80;
+  --color-text-faint: #b8afa4;
+
+  --color-border: #e7dfd3;
+  --color-border-light: #d8cec0;
+  --color-border-strong: #cbbda9;
+
+  --color-success: #4b7f52;
+  --color-danger: #b94a3d;
+  --color-warning: #b87828;
+  --color-info: #55739c;
+
+  --gradient-sidebar: #eee9df;
+  --shadow-sm: 0 1px 2px rgba(57, 47, 36, 0.04), 0 1px 8px rgba(57, 47, 36, 0.035);
+  --shadow-md: 0 10px 28px rgba(57, 47, 36, 0.07);
+  --shadow-lg: 0 22px 60px rgba(57, 47, 36, 0.10);
+  --shadow-glow: 0 0 0 4px rgba(184, 95, 63, 0.12);
+
+  --radius-xs: 8px;
+  --radius-sm: 11px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-2xl: 30px;
+
+  --page-padding: clamp(20px, 3vw, 34px);
+  --panel-max-width: 1440px;
+}
+
+body {
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(circle at 14% -8%, rgba(184, 95, 63, 0.065), transparent 28%),
+    radial-gradient(circle at 86% 0%, rgba(126, 98, 69, 0.045), transparent 26%),
+    var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  letter-spacing: -0.005em;
+}
+
+/* Shared page shells */
+.agent-panel,
+.task-panel,
+.pipeline-panel,
+.monitor-panel,
+.persona-panel,
+.memory-page-shell,
+.evolution-panel {
+  background:
+    radial-gradient(circle at 12% 3%, rgba(184, 95, 63, 0.07), transparent 26%),
+    radial-gradient(circle at 92% 1%, rgba(120, 99, 74, 0.05), transparent 24%),
+    var(--color-bg) !important;
+}
+
+.agent-panel,
+.task-panel,
+.pipeline-panel,
+.monitor-panel,
+.persona-panel,
+.evolution-panel {
+  padding: var(--page-padding) !important;
+  color: var(--color-text-primary);
+}
+
+.panel-header,
+.mc-header,
+.settings-header {
+  align-items: flex-start;
+}
+
+.panel-header {
+  max-width: var(--panel-max-width);
+  margin: 0 auto 22px !important;
+  padding: 0 2px;
+}
+
+.panel-header h2 {
+  font-family: var(--font-serif);
+  font-size: clamp(26px, 3vw, 36px) !important;
+  font-weight: 600 !important;
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+  color: var(--color-text-primary) !important;
+}
+
+.panel-header h2::after {
+  content: '';
+  display: block;
+  width: 44px;
+  height: 2px;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  opacity: 0.65;
+}
+
+/* Shared cards */
+.agent-card,
+.task-submit-area,
+.task-card,
+.template-card,
+.pipeline-form,
+.pipeline-execute-area,
+.execution-results,
+.monitor-section,
+.health-card,
+.persona-hero,
+.persona-card,
+.persona-list-card,
+.persona-editor-card,
+.mc-hero-card,
+.mc-metric-card,
+.mc-status-card,
+.mc-list-pane,
+.mc-detail,
+.mc-form-card,
+.mc-settings-section,
+.settings-section,
+.settings-overview-card,
+.agent-persona-card,
+.agent-form,
+.tool-picker,
+.command-center,
+.architecture-map,
+.system-card,
+.evolution-stat-card {
+  background: var(--color-surface-muted) !important;
+  border: 1px solid rgba(231, 223, 211, 0.92) !important;
+  border-radius: var(--radius-xl) !important;
+  box-shadow: var(--shadow-sm) !important;
+  backdrop-filter: blur(10px);
+}
+
+.agent-card:hover,
+.task-card:hover,
+.template-card:hover,
+.health-card:hover,
+.persona-card:hover,
+.mc-metric-card:hover,
+.system-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(184, 95, 63, 0.24) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+/* Buttons */
+.refresh-btn,
+.btn-primary,
+.btn-primary-sm,
+.btn-secondary,
+.btn-secondary-sm,
+.task-submit-btn,
+.pipeline-execute-btn,
+.clear-events-btn,
+.mc-primary-btn,
+.mc-ghost-btn,
+.mc-danger-btn,
+.persona-primary,
+.persona-panel button,
+.settings-close-btn,
+.form-inline-btn,
+.chat-session-new,
+.chat-send-btn,
+.artifact-preview__actions a,
+.artifact-preview__actions button,
+.artifact-preview__close,
+.btn-icon,
+.task-cancel-btn {
+  border-radius: 999px !important;
+  font-weight: 700 !important;
+  transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast) !important;
+}
+
+.btn-primary,
+.btn-primary-sm,
+.task-submit-btn,
+.pipeline-execute-btn,
+.mc-primary-btn,
+.persona-primary,
+.chat-send-btn {
+  background: var(--color-primary) !important;
+  color: #fff !important;
+  border: 1px solid rgba(143, 71, 47, 0.22) !important;
+  box-shadow: 0 8px 20px rgba(143, 71, 47, 0.14) !important;
+}
+
+.btn-primary:hover:not(:disabled),
+.btn-primary-sm:hover:not(:disabled),
+.task-submit-btn:hover:not(:disabled),
+.pipeline-execute-btn:hover:not(:disabled),
+.mc-primary-btn:hover:not(:disabled),
+.persona-primary:hover:not(:disabled),
+.chat-send-btn:hover:not(:disabled) {
+  background: var(--color-primary-dark) !important;
+  transform: translateY(-1px);
+}
+
+.refresh-btn,
+.btn-secondary,
+.btn-secondary-sm,
+.clear-events-btn,
+.mc-ghost-btn,
+.persona-panel button,
+.form-inline-btn,
+.chat-session-new,
+.artifact-preview__actions a,
+.artifact-preview__actions button,
+.btn-icon {
+  background: rgba(255, 253, 248, 0.82) !important;
+  color: var(--color-text-secondary) !important;
+  border: 1px solid var(--color-border) !important;
+  box-shadow: none !important;
+}
+
+.refresh-btn:hover:not(:disabled),
+.btn-secondary:hover:not(:disabled),
+.btn-secondary-sm:hover:not(:disabled),
+.clear-events-btn:hover:not(:disabled),
+.mc-ghost-btn:hover:not(:disabled),
+.persona-panel button:hover:not(:disabled),
+.form-inline-btn:hover:not(:disabled),
+.chat-session-new:hover:not(:disabled),
+.artifact-preview__actions a:hover,
+.artifact-preview__actions button:hover,
+.btn-icon:hover:not(:disabled) {
+  background: var(--color-primary-light) !important;
+  color: var(--color-primary-dark) !important;
+  border-color: rgba(184, 95, 63, 0.26) !important;
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.52 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+/* Forms */
+input:not([type='checkbox']):not([type='radio']),
+textarea,
+select,
+.task-input,
+.pipeline-input,
+.step-editor__input,
+.step-editor__select,
+.tool-search,
+.prompt-editor,
+.runtime-json-editor,
+.mc-code-textarea,
+.chat-input {
+  background: rgba(255, 253, 248, 0.88) !important;
+  color: var(--color-text-primary) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+
+input:not([type='checkbox']):not([type='radio']):focus,
+textarea:focus,
+select:focus,
+.task-input:focus,
+.pipeline-input:focus,
+.step-editor__input:focus,
+.step-editor__select:focus,
+.tool-search:focus,
+.prompt-editor:focus,
+.runtime-json-editor:focus,
+.mc-code-textarea:focus,
+.chat-input:focus {
+  outline: none !important;
+  border-color: rgba(184, 95, 63, 0.46) !important;
+  box-shadow: 0 0 0 4px rgba(184, 95, 63, 0.10) !important;
+}
+
+::placeholder {
+  color: var(--color-text-faint) !important;
+}
+
+/* Badges / pills */
+.task-status-badge,
+.agent-status-badge,
+.template-mode,
+.mc-kind-pill,
+.mc-score-pill,
+.mc-type-pill,
+.state-pill,
+.edge-kind,
+.tool-kind-badge,
+.event-count,
+.event-type-tag,
+.chat-memory-indicator,
+.chat-meta-warning,
+.artifact-chip__kind {
+  border-radius: 999px !important;
+  border: 1px solid rgba(0, 0, 0, 0.035);
+  font-weight: 700 !important;
+  letter-spacing: 0.01em !important;
+}
+
+/* Empty / loading / error states */
+.agent-loading,
+.task-loading,
+.pipeline-loading,
+.settings-loading,
+.event-stream-empty,
+.task-empty,
+.pipeline-empty,
+.agent-empty,
+.chat-empty,
+.mc-state.empty,
+.evolution-placeholder,
+.custom-tool-empty {
+  background: rgba(255, 253, 248, 0.54);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-xl);
+  color: var(--color-text-muted) !important;
+}
+
+.task-error,
+.pipeline-error,
+.agent-error,
+.monitor-error,
+.settings-error,
+.evolution-error,
+.chat-session-error,
+.mc-alert.error {
+  background: rgba(185, 74, 61, 0.075) !important;
+  border: 1px solid rgba(185, 74, 61, 0.17) !important;
+  color: var(--color-danger) !important;
+  border-radius: var(--radius-lg) !important;
+}
+
+.mc-alert.success,
+.persona-notice,
+.agent-persona-notice,
+.task-message {
+  background: rgba(75, 127, 82, 0.09) !important;
+  border: 1px solid rgba(75, 127, 82, 0.16) !important;
+  color: var(--color-success) !important;
+  border-radius: var(--radius-lg) !important;
+}
+
+/* Warm code/details blocks instead of dashboard black */
+pre,
+.json-details__pre,
+.detail-section pre,
+.event-data-preview,
+.mc-json-block,
+.persona-preview,
+.persona-proposal pre,
+.command-output pre {
+  font-family: var(--font-mono) !important;
+  background: #f2ede4 !important;
+  color: #3f372e !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+/* Chat and artifact polish */
+.chat-session-sidebar {
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.68), rgba(239, 235, 227, 0.76)), var(--color-bg-secondary) !important;
+}
+
+.chat-session-item,
+.chat-session-item--active,
+.chat-bubble,
+.agent-progress-card,
+.tool-call-card,
+.json-details,
+.artifact-preview,
+.artifact-chip-list,
+.chat-composer-shell,
+.chat-persona-bar {
+  border-color: var(--color-border) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.chat-bubble-assistant,
+.chat-system-msg,
+.artifact-preview,
+.agent-progress-card,
+.tool-call-card,
+.json-details {
+  background: rgba(255, 253, 248, 0.78) !important;
+}
+
+.chat-row-user .chat-bubble,
+.chat-bubble-user {
+  background: var(--color-primary) !important;
+  color: #fff !important;
+}
+
+.chat-composer-shell {
+  background: rgba(255, 253, 248, 0.76) !important;
+  border-radius: 24px !important;
+}
+
+.artifact-preview__topbar {
+  background: rgba(250, 248, 243, 0.92) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+}
+
+.artifact-preview__fallback,
+.artifact-preview__loading {
+  background: rgba(255, 253, 248, 0.68) !important;
+  color: var(--color-text-secondary) !important;
+}
+
+/* Monitor and pipeline density */
+.info-item,
+.progress-snapshot > div,
+.step-pipeline,
+.step-editor__item,
+.execution-header,
+.execution-status,
+.component-item,
+.mini-metric,
+.metric-strip {
+  background: rgba(250, 248, 243, 0.74) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+/* Responsive comfortable shells */
+@media (max-width: 900px) {
+  :root { --page-padding: 18px; }
+
+  .panel-header {
+    flex-direction: column;
+    gap: 14px;
+  }
+}
+
+/* Final state-specific corrections after broad button normalization */
+.persona-primary,
+.persona-panel .persona-primary,
+.mc-primary-btn,
+.pipeline-execute-btn,
+.task-submit-btn,
+.btn-primary,
+.btn-primary-sm {
+  background: var(--color-primary) !important;
+  color: #fff !important;
+  border-color: rgba(143, 71, 47, 0.22) !important;
+}
+
+.mc-danger-btn,
+.btn-danger-sm,
+.task-cancel-btn,
+.btn-icon--danger {
+  background: rgba(185, 74, 61, 0.07) !important;
+  color: var(--color-danger) !important;
+  border-color: rgba(185, 74, 61, 0.20) !important;
+}
+
+.mc-danger-btn:hover:not(:disabled),
+.btn-danger-sm:hover:not(:disabled),
+.task-cancel-btn:hover:not(:disabled),
+.btn-icon--danger:hover:not(:disabled) {
+  background: rgba(185, 74, 61, 0.12) !important;
+  color: var(--color-danger) !important;
+  border-color: rgba(185, 74, 61, 0.28) !important;
+}
+
+.selected,
+.active,
+.mode-option--active,
+.template-card.selected,
+.task-card.expanded,
+.tool-checkbox--active,
+.chat-session-item--active,
+.persona-list-item.active {
+  border-color: rgba(184, 95, 63, 0.28) !important;
+  background: rgba(244, 230, 220, 0.48) !important;
+  box-shadow: 0 0 0 3px rgba(184, 95, 63, 0.08) !important;
+}
+
+.mode-sequential,
+.mode-parallel,
+.status-ok,
+.status-warn,
+.health-card.healthy,
+.health-card.unhealthy {
+  filter: saturate(0.72);
+}
