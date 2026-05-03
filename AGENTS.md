@@ -394,6 +394,11 @@ memory:
 若运行环境没有安装 `chromadb`，启动日志会明确提示安装方式；默认允许降级到
 内存后端以便开发环境仍能启动，但生产/验收环境应安装依赖并保持 chroma。
 
+工具默认配置:
+
+- `tools.web_search.provider` 在无用户显式配置和无 `WEB_SEARCH_PROVIDER` 环境变量时必须默认为 `duckduckgo`。
+- 只有运行时配置、组件配置或环境变量明确写入 `brave` 时，Web Search 才允许使用 Brave Search API。
+
 ### 4.4 动态加载 (main.py)
 
 使用**类型映射表**将 YAML 中的字符串映射到 Python 类:
