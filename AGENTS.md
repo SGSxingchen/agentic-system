@@ -281,8 +281,10 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 **当前闭环:** 记忆系统默认使用 `chroma` 后端并持久化到项目内
 `./data/chroma`。REST chat、REST SSE stream 和 WebSocket 流式对话都会在生成
 前按用户消息召回相关记忆，将 `assistant_context` / `canonical_summary` 作为
-「长期记忆 - 不可信资料」注入 Agent system prompt；完整 assistant 回复结束后，
-`ConversationMemoryBuffer` 按 `session_id` 隔离反思窗口，交给
+「长期记忆 - 不可信资料」注入 Agent system prompt；完整 assistant 回复结束后
+仅将对话片段追加到后台反思缓冲。`ConversationMemoryBuffer` 按 `session_id`
+隔离反思窗口，默认累计 3 轮后反思；遇到“记住/以后默认/我喜欢/待办/需求变更”
+等显著长期信号时可提前触发。触发后交给后台任务中的
 `MemoryProcessor` 生成结构化候选，再由 `MemoryFormation` 去重、巩固并写入
 存储。不会按 token 写入。
 
@@ -311,7 +313,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 | 组件 | 职责 |
 |------|------|
 | `MemoryStore` | 存储后端 (默认 ChromaStore；缺依赖时清晰提示并可降级 InMemoryStore) |
-| `ConversationMemoryBuffer` | 收集完整用户/助手回合，按 session 隔离自动反思窗口 |
+| `ConversationMemoryBuffer` | 收集完整用户/助手回合，按 session 隔离并按阈值/显著信号触发自动反思窗口 |
 | `MemoryProcessor` | LLM 反思对话窗口，输出 `canonical_summary` / `assistant_context` 等候选 |
 | `MemoryFormation` | 创建、巩固 (去重合并)、遗忘 (时间衰减) |
 | `MemoryRetriever` | 多信号加权检索 (相关性 + 时间 + 重要性 + 频率) 并返回召回解释 |
@@ -384,8 +386,8 @@ memory:
   backend: "chroma"
   persist_dir: "./data/chroma"
   collection_name: "agent_memories"
-  reflection_min_turns: 1
-  reflection_max_messages: 8
+  reflection_min_turns: 3
+  reflection_max_messages: 12
   fallback_to_memory_on_error: true
 ```
 

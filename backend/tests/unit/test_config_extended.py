@@ -166,7 +166,8 @@ class TestConfigModels:
     def test_memory_config_defaults(self):
         config = MemoryConfig()
         assert config.backend == "chroma"
-        assert config.reflection_min_turns == 1
+        assert config.reflection_min_turns == 3
+        assert config.reflection_max_messages == 12
 
     def test_bus_config_defaults(self):
         config = BusConfig()

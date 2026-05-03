@@ -251,11 +251,14 @@ llm:
 memory:
   backend: "chroma"         # 默认 ChromaDB 持久化；开发测试可改 "memory"
   persist_dir: "./data/chroma"
-  reflection_min_turns: 1   # 完整助手回复结束后触发自动反思
+  reflection_min_turns: 3   # 默认累计 3 轮后反思；显著偏好/待办/项目决策可提前触发
+  reflection_max_messages: 12
 ```
 
 对话记忆现在不是只靠 `/api/memory/create` 手动写入：REST chat、SSE stream 和
-WebSocket 流式聊天会在完整回复结束后自动反思生成结构化记忆；下一次生成前会
+WebSocket 流式聊天会在完整回复结束后后台追加到反思缓冲，默认累计后生成结构化
+记忆；如果用户明确说“记住/以后默认/我喜欢/待办/需求变更”等显著长期信息，会
+提前触发。下一次生成前会
 检索相关记忆，并以「不可信资料」方式注入上下文。可用以下脚本验证持久化闭环:
 
 ```bash

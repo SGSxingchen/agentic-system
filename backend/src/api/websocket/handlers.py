@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from core.memory import MemoryProcessor
+from core.memory import MemoryProcessor, should_reflect_early
 
 from ..dependencies import (
     get_capability_registry,
@@ -208,7 +209,7 @@ async def _handle_user_message(
                 },
             ),
         )
-        await reflect_chat_exchange(
+        schedule_memory_reflection(
             user_message=user_message,
             assistant_text=response_text,
             source="websocket_chat",
@@ -382,7 +383,7 @@ async def _handle_user_message(
                 )
                 response_text = final_text
 
-        await reflect_chat_exchange(
+        schedule_memory_reflection(
             user_message=user_message,
             assistant_text=response_text,
             source="websocket_chat",
@@ -466,6 +467,7 @@ async def reflect_chat_exchange(
             assistant_text,
             source=source,
             session_id=session_id,
+            significant=should_reflect_early(user_message),
         )
         if not window:
             return
@@ -483,10 +485,46 @@ async def reflect_chat_exchange(
         print(
             "[MEMORY] reflected chat window "
             f"source={source} session_id={session_id or '-'} "
+            f"trigger={window['source_window'].get('trigger_reason')} "
             f"candidates={len(candidates)} saved={saved}"
         )
     except Exception as exc:
         print(f"[WARN] memory reflection failed: {exc}")
+
+
+def schedule_memory_reflection(
+    *,
+    user_message: str,
+    assistant_text: str,
+    source: str,
+    session_id: str | None = None,
+) -> asyncio.Task | None:
+    """Schedule chat reflection in the background and swallow task errors."""
+
+    try:
+        task = asyncio.create_task(
+            reflect_chat_exchange(
+                user_message=user_message,
+                assistant_text=assistant_text,
+                source=source,
+                session_id=session_id,
+            ),
+            name=f"memory-reflection:{source}",
+        )
+    except RuntimeError:
+        # No running loop. This should not happen in FastAPI paths, but keeping
+        # the function safe makes direct script/test calls easier to reason about.
+        print("[WARN] memory reflection was not scheduled: no running event loop")
+        return None
+
+    def _log_task_result(done: asyncio.Task) -> None:
+        try:
+            done.result()
+        except Exception as exc:  # pragma: no cover - reflect_chat_exchange catches internally
+            print(f"[WARN] background memory reflection failed: {exc}")
+
+    task.add_done_callback(_log_task_result)
+    return task
 
 
 def register_bus_event_bridge(bus: Any) -> None:

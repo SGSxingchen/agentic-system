@@ -59,8 +59,8 @@ from .routes import (
 from .websocket.handlers import (
     build_memory_context,
     broadcast_monitor_event,
-    reflect_chat_exchange,
     register_bus_event_bridge,
+    schedule_memory_reflection,
     websocket_endpoint as ws_handler,
 )
 
@@ -146,8 +146,8 @@ async def init_memory_system(config: Dict[str, Any]):
     memory_formation = MemoryFormation(store=memory_store)
     memory_retriever = MemoryRetriever(store=memory_store)
     memory_buffer = ConversationMemoryBuffer(
-        min_turns=int(memory_config.get("reflection_min_turns", 1)),
-        max_window_messages=int(memory_config.get("reflection_max_messages", 8)),
+        min_turns=int(memory_config.get("reflection_min_turns", 3)),
+        max_window_messages=int(memory_config.get("reflection_max_messages", 12)),
     )
 
     set_memory_store(memory_store)
@@ -427,7 +427,7 @@ async def chat_endpoint(req: dict):
         start = time.perf_counter()
         result = await cap_registry.execute("assistant", **payload)
         response_text = result.get("response", str(result))
-        await reflect_chat_exchange(
+        schedule_memory_reflection(
             user_message=message,
             assistant_text=response_text,
             source="rest_chat",
@@ -569,7 +569,7 @@ async def chat_stream_endpoint(req: dict):
                     if isinstance(event, dict) and event.get("type") == "done":
                         yield sse(done_progress)
                 if final_response:
-                    await reflect_chat_exchange(
+                    schedule_memory_reflection(
                         user_message=message,
                         assistant_text=final_response,
                         source="rest_chat_stream",
@@ -578,7 +578,7 @@ async def chat_stream_endpoint(req: dict):
             else:
                 result = await cap_registry.execute("assistant", **payload)
                 response_text = result.get("response", str(result))
-                await reflect_chat_exchange(
+                schedule_memory_reflection(
                     user_message=message,
                     assistant_text=response_text,
                     source="rest_chat_stream",

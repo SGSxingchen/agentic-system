@@ -5,7 +5,7 @@ from .retriever import MemoryRetriever
 from .formation import MemoryFormation
 from .embedding import EmbeddingClient, create_embedding_fn
 from .processor import MemoryProcessor, PRIVATE_MEMORY_SCHEMA_VERSION
-from .buffer import ConversationMemoryBuffer
+from .buffer import ConversationMemoryBuffer, should_reflect_early
 
 __all__ = [
     "Memory",
@@ -20,6 +20,7 @@ __all__ = [
     "MemoryProcessor",
     "PRIVATE_MEMORY_SCHEMA_VERSION",
     "ConversationMemoryBuffer",
+    "should_reflect_early",
     "EmbeddingClient",
     "create_embedding_fn",
 ]

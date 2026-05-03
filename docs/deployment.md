@@ -51,7 +51,8 @@ llm:
 memory:
   backend: "chroma"         # 默认 ChromaDB 持久化；开发测试可改 "memory"
   persist_dir: "./data/chroma"
-  reflection_min_turns: 1
+  reflection_min_turns: 3   # 默认累计后反思；显著偏好/待办/项目决策可提前触发
+  reflection_max_messages: 12
 ```
 
 或使用环境变量:

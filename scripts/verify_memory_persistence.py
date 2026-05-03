@@ -65,11 +65,11 @@ async def main() -> int:
     collection_name = "agent_memories_verify"
     store = ChromaStore(collection_name=collection_name, persist_dir=str(persist_dir))
     formation = MemoryFormation(store)
-    buffer = ConversationMemoryBuffer(min_turns=1)
+    buffer = ConversationMemoryBuffer(min_turns=3)
     processor = MemoryProcessor(FakeReflectionLLM())
 
     window = buffer.append_exchange(
-        "我喜欢你回答简洁一点",
+        "以后默认用中文回答，我喜欢你回答简洁一点",
         "好的，我会保持简洁。",
         source="verify_script",
         session_id="verify-session",

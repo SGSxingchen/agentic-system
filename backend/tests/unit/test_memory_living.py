@@ -11,7 +11,7 @@ import pytest
 
 from core.llm.base import BaseLLMClient, LLMResponse
 from core.memory import InMemoryStore, Memory, MemoryFormation, MemoryRetriever, MemoryType
-from core.memory.buffer import ConversationMemoryBuffer
+from core.memory.buffer import ConversationMemoryBuffer, should_reflect_early
 from core.memory.processor import MemoryProcessor
 from core.memory.types import MemoryQuery
 
@@ -267,21 +267,51 @@ async def test_retrieve_with_scores_uses_store_search_for_context_candidates():
     assert store.search_queries[0].max_results >= 3
 
 
-async def test_conversation_buffer_returns_reflection_window():
-    buffer = ConversationMemoryBuffer(min_turns=1)
+async def test_conversation_buffer_default_three_turns_triggers_on_third_ordinary_exchange():
+    buffer = ConversationMemoryBuffer(min_turns=3)
+
+    first = buffer.append_exchange("你好", "你好，有什么可以帮你？", source="rest_chat")
+    second = buffer.append_exchange("今天天气怎么样", "我无法查看实时天气。", source="rest_chat")
+    third = buffer.append_exchange("讲个笑话", "好的。", source="rest_chat")
+
+    assert first is None
+    assert second is None
+    assert third is not None
+    assert len(third["turns"]) == 6
+    assert third["source_window"]["message_count"] == 6
+    assert third["source_window"]["trigger_reason"] == "threshold"
+
+
+async def test_conversation_buffer_reflects_significant_preference_on_first_turn():
+    buffer = ConversationMemoryBuffer(min_turns=3)
 
     window = buffer.append_exchange(
-        "我喜欢简洁回答",
-        "好的，我会保持简洁。",
+        "以后默认用中文回答，我喜欢简洁回答",
+        "好的，我会默认用中文并保持简洁。",
         source="rest_chat",
         session_id="chat-1",
     )
 
+    assert should_reflect_early("以后默认用中文回答，我喜欢简洁回答") is True
     assert window is not None
     assert len(window["turns"]) == 2
     assert window["source_window"]["message_count"] == 2
     assert window["source_window"]["session_id"] == "chat-1"
     assert window["source_window"]["source"] == "rest_chat"
+    assert window["source_window"]["trigger_reason"] == "significant"
+
+
+async def test_conversation_buffer_does_not_reflect_first_smalltalk_turn():
+    buffer = ConversationMemoryBuffer(min_turns=3)
+
+    window = buffer.append_exchange(
+        "你好，在吗",
+        "在的，有什么可以帮你？",
+        source="rest_chat",
+    )
+
+    assert should_reflect_early("你好，在吗") is False
+    assert window is None
 
 
 async def test_conversation_buffer_waits_until_threshold():
@@ -330,7 +360,7 @@ async def test_chat_reflection_creates_retrievable_memory_after_complete_exchang
     set_memory_store(store)
     set_memory_formation(formation)
     set_memory_retriever(retriever)
-    set_memory_buffer(ConversationMemoryBuffer(min_turns=1))
+    set_memory_buffer(ConversationMemoryBuffer(min_turns=3))
     set_llm_client(
         FakeReflectionLLM(
             """{
@@ -352,7 +382,7 @@ async def test_chat_reflection_creates_retrievable_memory_after_complete_exchang
     )
 
     await reflect_chat_exchange(
-        user_message="我喜欢你回答简洁一点",
+        user_message="以后默认用中文回答，我喜欢你回答简洁一点",
         assistant_text="好的，我会保持简洁。",
         source="rest_chat",
         session_id="chat-auto",

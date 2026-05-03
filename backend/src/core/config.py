@@ -42,8 +42,8 @@ class MemoryConfig(BaseModel):
     backend: str = Field(default="chroma", description="存储后端: memory, chroma")
     persist_dir: str = Field(default="./data/chroma", description="持久化目录")
     collection_name: str = Field(default="agent_memories", description="集合名称")
-    reflection_min_turns: int = Field(default=1, ge=1, description="自动反思触发轮数")
-    reflection_max_messages: int = Field(default=8, ge=2, description="反思窗口最大消息数")
+    reflection_min_turns: int = Field(default=3, ge=1, description="自动反思触发轮数")
+    reflection_max_messages: int = Field(default=12, ge=2, description="反思窗口最大消息数")
     fallback_to_memory_on_error: bool = Field(default=True, description="Chroma 初始化失败时是否降级内存")
 
 
@@ -352,8 +352,8 @@ def load_config(
             "backend": "chroma",
             "persist_dir": "./data/chroma",
             "collection_name": "agent_memories",
-            "reflection_min_turns": 1,
-            "reflection_max_messages": 8,
+            "reflection_min_turns": 3,
+            "reflection_max_messages": 12,
             "fallback_to_memory_on_error": True,
         },
     }
