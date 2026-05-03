@@ -211,7 +211,8 @@ export function Settings({ onClose }: SettingsProps) {
         provider,
         model,
         api_key: optionalSecret(apiKey),
-        base_url: normalizedBaseUrl || undefined,
+        // 空字符串要显式提交给后端，用于清空已保存的 OpenAI compatible base_url。
+        base_url: normalizedBaseUrl,
         temperature,
         top_p: optionalNumber(topP),
         max_tokens: maxTokens,
@@ -276,20 +277,27 @@ export function Settings({ onClose }: SettingsProps) {
   const fetchModels = async () => {
     setModelsLoading(true)
     setModelsError(null)
-    const res = await api.listProviderModels({
-      provider,
-      base_url: normalizeOpenAIBaseUrl(provider, baseUrl),
-      api_key: optionalSecret(apiKey), // 留空/遮罩值 → 后端用已保存的 key
-    })
-    if (res.status === 'ok' && res.data && res.data.models.length > 0) {
-      setAvailableModels(res.data.models.map((m) => m.id))
-      setModelsSource('remote')
-    } else {
+    try {
+      const res = await api.listProviderModels({
+        provider,
+        base_url: normalizeOpenAIBaseUrl(provider, baseUrl),
+        api_key: optionalSecret(apiKey), // 留空/遮罩值 → 后端用已保存的 key
+      })
+      if (res.status === 'ok' && res.data && res.data.models.length > 0) {
+        setAvailableModels(res.data.models.map((m) => m.id))
+        setModelsSource('remote')
+      } else {
+        setAvailableModels(fallbackModels[provider] || [])
+        setModelsSource('fallback')
+        setModelsError(res.message || '远端未返回可用模型')
+      }
+    } catch (err) {
       setAvailableModels(fallbackModels[provider] || [])
       setModelsSource('fallback')
-      setModelsError(res.message || null)
+      setModelsError(err instanceof Error ? err.message : '模型列表刷新失败')
+    } finally {
+      setModelsLoading(false)
     }
-    setModelsLoading(false)
   }
 
   // 初次加载完毕、或 provider/base_url 变化时自动拉一次

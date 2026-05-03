@@ -136,7 +136,7 @@ class LLMConfigRequest(BaseModel):
     """LLM 配置更新请求"""
 
     provider: str
-    api_key: str = ""
+    api_key: Optional[str] = ""
     model: str
     base_url: str = ""
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
@@ -152,7 +152,7 @@ class WebSearchToolConfigRequest(BaseModel):
 
     provider: str = "duckduckgo"
     base_url: str = ""
-    api_key: str = ""
+    api_key: Optional[str] = ""
     max_results: int = Field(default=5, ge=1, le=10)
     timeout: float = Field(default=10, gt=0)
 
@@ -182,7 +182,7 @@ class CustomToolConfigRequest(BaseModel):
 
     enabled: bool = True
     base_url: str = ""
-    api_key: str = ""
+    api_key: Optional[str] = ""
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

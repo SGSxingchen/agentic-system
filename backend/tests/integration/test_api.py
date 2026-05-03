@@ -606,6 +606,151 @@ class TestConfigAPI:
         assert "api_key" not in data["tools"]["custom"]["ticket_api"]
         assert "token" not in data["tools"]["custom"]["ticket_api"]["extra"]
 
+    async def test_update_config_preserves_masked_key_and_normalizes_or_clears_base_url(
+        self,
+        client,
+        tmp_path,
+        monkeypatch,
+    ):
+        import api.routes.config as config_route
+        import core.config as core_config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump(
+                {
+                    "llm": {
+                        "provider": "openai",
+                        "model": "gpt-old",
+                        "api_key": "real-key",
+                        "base_url": "https://old.example/v1",
+                        "temperature": 0.2,
+                        "max_tokens": 1024,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(config_route, "_runtime_config_path", lambda: config_file)
+        monkeypatch.setattr(core_config, "_default_runtime_config_path", lambda: config_file)
+
+        resp = await client.post(
+            "/api/config",
+            json={
+                "llm": {
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "api_key": "********",
+                    "base_url": "https://proxy.example.com/openai/v1/models",
+                    "temperature": 0.4,
+                    "max_tokens": 4096,
+                }
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        saved = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+        assert saved["llm"]["api_key"] == "real-key"
+        assert saved["llm"]["base_url"] == "https://proxy.example.com/openai/v1"
+
+        clear_resp = await client.post(
+            "/api/config",
+            json={
+                "llm": {
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "api_key": "",
+                    "base_url": "",
+                    "temperature": 0.4,
+                    "max_tokens": 4096,
+                }
+            },
+        )
+
+        assert clear_resp.status_code == 200
+        assert clear_resp.json()["status"] == "ok"
+        saved = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+        assert saved["llm"]["api_key"] == "real-key"
+        assert saved["llm"]["base_url"] == ""
+
+    async def test_model_list_uses_saved_key_and_normalizes_openai_base_url(
+        self,
+        client,
+        tmp_path,
+        monkeypatch,
+    ):
+        import api.routes.config as config_route
+        import core.config as core_config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump(
+                {
+                    "llm": {
+                        "provider": "openai",
+                        "api_key": "saved-key",
+                        "base_url": "https://saved.example/v1",
+                        "model": "gpt-old",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(config_route, "_runtime_config_path", lambda: config_file)
+        monkeypatch.setattr(core_config, "_default_runtime_config_path", lambda: config_file)
+
+        fetch_mock = AsyncMock(return_value=[{"id": "gpt-test"}])
+        monkeypatch.setattr(config_route, "_fetch_openai_models", fetch_mock)
+
+        resp = await client.post(
+            "/api/config/models",
+            json={
+                "provider": "openai",
+                "api_key": "••••••••",
+                "base_url": "https://proxy.example.com/api/v1/chat/completions",
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["data"]["models"] == [{"id": "gpt-test"}]
+        fetch_mock.assert_awaited_once_with(
+            "saved-key",
+            "https://proxy.example.com/api/v1",
+        )
+
+    async def test_model_list_failure_returns_readable_error(
+        self,
+        client,
+        tmp_path,
+        monkeypatch,
+    ):
+        import api.routes.config as config_route
+        import core.config as core_config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({"llm": {"provider": "openai", "api_key": "saved-key"}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(config_route, "_runtime_config_path", lambda: config_file)
+        monkeypatch.setattr(core_config, "_default_runtime_config_path", lambda: config_file)
+        monkeypatch.setattr(
+            config_route,
+            "_fetch_openai_models",
+            AsyncMock(side_effect=RuntimeError("connection refused by model provider")),
+        )
+
+        resp = await client.post("/api/config/models", json={"provider": "openai"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "error"
+        assert "connection refused" in body["message"]
+        assert body["data"]["models"] == []
+
 
 # ========================
 # 进化能力图
