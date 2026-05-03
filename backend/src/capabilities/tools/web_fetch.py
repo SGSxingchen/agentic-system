@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 import re
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -16,11 +16,12 @@ from core.prompts import get_tool_description
 
 from ._web_safety import open_public_url, validate_public_http_url
 
-_WEB_FETCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="web-fetch")
-
 
 class WebFetchCapability(CapabilityBase):
     """Fetch a public HTTP(S) URL and return a compact text preview."""
+
+    _CONFIG_CACHE: dict[str, Any] = {"loaded_at": 0.0, "config": None}
+    _CONFIG_CACHE_TTL = 5.0
 
     @property
     def name(self) -> str:
@@ -61,23 +62,18 @@ class WebFetchCapability(CapabilityBase):
         )
 
     async def execute(self, **kwargs: Any) -> dict[str, Any]:
-        config = self._load_tool_config()
         url = str(kwargs.get("url", "")).strip()
-        timeout = float(kwargs.get("timeout", config.get("timeout", 10)) or 10)
-        max_chars = int(kwargs.get("max_chars", config.get("max_chars", 4000)) or 4000)
 
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return {"error": "url must be a valid http(s) URL"}
 
         try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                _WEB_FETCH_EXECUTOR,
-                self._fetch_sync,
+            return await asyncio.to_thread(
+                self._fetch_sync_with_config,
                 url,
-                timeout,
-                max_chars,
+                kwargs.get("timeout"),
+                kwargs.get("max_chars"),
             )
         except urllib.error.HTTPError as exc:
             return {"error": f"HTTP {exc.code}: {exc.reason}"}
@@ -87,6 +83,26 @@ class WebFetchCapability(CapabilityBase):
             return {"error": str(exc)}
         except Exception as exc:
             return {"error": f"web_fetch failed: {str(exc)}"}
+
+    @classmethod
+    def _fetch_sync_with_config(
+        cls,
+        url: str,
+        timeout_value: Any,
+        max_chars_value: Any,
+    ) -> dict[str, Any]:
+        """Load runtime config and perform fetch off the event loop.
+
+        ``get_tool_runtime_config`` can touch YAML/env state, so doing it before
+        the first await would serialize otherwise concurrent ``execute`` calls.
+        """
+
+        config = cls._load_tool_config()
+        timeout = float(timeout_value if timeout_value is not None else config.get("timeout", 10) or 10)
+        max_chars = int(
+            max_chars_value if max_chars_value is not None else config.get("max_chars", 4000) or 4000
+        )
+        return cls._fetch_sync(url, timeout, max_chars)
 
     @classmethod
     def _fetch_sync(
@@ -136,9 +152,23 @@ class WebFetchCapability(CapabilityBase):
 
     @staticmethod
     def _load_tool_config() -> dict[str, Any]:
+        now = time.monotonic()
+        cached = WebFetchCapability._CONFIG_CACHE.get("config")
+        loaded_at = float(WebFetchCapability._CONFIG_CACHE.get("loaded_at") or 0.0)
+        if isinstance(cached, dict) and now - loaded_at < WebFetchCapability._CONFIG_CACHE_TTL:
+            return dict(cached)
+
         try:
             from core.config import get_tool_runtime_config
 
-            return get_tool_runtime_config("web_fetch")
+            config = get_tool_runtime_config("web_fetch")
         except Exception:
-            return {}
+            config = {}
+        WebFetchCapability._CONFIG_CACHE = {"loaded_at": now, "config": dict(config)}
+        return dict(config)
+
+
+# Pre-warm runtime config at import time.  The config loader can touch YAML/env
+# state; warming it before request handling keeps concurrent fetch calls from
+# spending their first event-loop slice on synchronous config loading.
+WebFetchCapability._load_tool_config()
