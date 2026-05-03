@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.request
 from typing import Any
@@ -14,6 +15,8 @@ from core.capability.base import CapabilityBase, CapabilitySchema
 from core.prompts import get_tool_description
 
 from ._web_safety import open_public_url, validate_public_http_url
+
+_WEB_FETCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="web-fetch")
 
 
 class WebFetchCapability(CapabilityBase):
@@ -68,12 +71,9 @@ class WebFetchCapability(CapabilityBase):
             return {"error": "url must be a valid http(s) URL"}
 
         try:
-            validate_public_http_url(url)
-        except PermissionError as exc:
-            return {"error": str(exc)}
-
-        try:
-            return await asyncio.to_thread(
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                _WEB_FETCH_EXECUTOR,
                 self._fetch_sync,
                 url,
                 timeout,

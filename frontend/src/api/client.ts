@@ -22,6 +22,56 @@ import type {
 } from '../types'
 
 const API_BASE = ''
+const DEFAULT_GET_CACHE_TTL_MS = 30_000
+
+interface CachedResponse<T> {
+  expiresAt: number
+  response?: APIResponse<T>
+  promise?: Promise<APIResponse<T>>
+}
+
+const getCache = new Map<string, CachedResponse<unknown>>()
+
+function getCached<T>(path: string, ttlMs = DEFAULT_GET_CACHE_TTL_MS): Promise<APIResponse<T>> {
+  const now = Date.now()
+  const cached = getCache.get(path) as CachedResponse<T> | undefined
+  if (cached?.response && cached.expiresAt > now) {
+    return Promise.resolve(cached.response)
+  }
+  if (cached?.promise) {
+    return cached.promise
+  }
+
+  const promise = get<T>(path).then((response) => {
+    if (response.status === 'ok') {
+      getCache.set(path, {
+        response,
+        expiresAt: Date.now() + ttlMs,
+      })
+    } else {
+      getCache.delete(path)
+    }
+    return response
+  }).catch((error) => {
+    getCache.delete(path)
+    throw error
+  })
+
+  getCache.set(path, { promise, expiresAt: now + ttlMs })
+  return promise
+}
+
+function invalidateGetCache(...prefixes: string[]) {
+  if (prefixes.length === 0) {
+    getCache.clear()
+    return
+  }
+  for (const key of Array.from(getCache.keys())) {
+    if (prefixes.some((prefix) => key.startsWith(prefix))) {
+      getCache.delete(key)
+    }
+  }
+}
 
 // ===== 通用请求 helper =====
 
@@ -199,7 +249,7 @@ export async function forgetMemories(): Promise<APIResponse<{ forgotten: number 
 // ===== 智能体 API =====
 
 export async function listAgents(): Promise<APIResponse<AgentInfo[]>> {
-  return get<AgentInfo[]>('/api/agents')
+  return getCached<AgentInfo[]>('/api/agents', 1_000)
 }
 
 export async function getAgent(
@@ -218,7 +268,9 @@ export async function createAgent(data: {
   skills?: Record<string, unknown> | null
   mcp_servers?: Array<Record<string, unknown>>
 }): Promise<APIResponse<unknown>> {
-  return post('/api/agents', data)
+  const response = await post('/api/agents', data)
+  if (response.status === 'ok') invalidateGetCache('/api/agents')
+  return response
 }
 
 export async function updateAgent(
@@ -233,17 +285,21 @@ export async function updateAgent(
     mcp_servers?: Array<Record<string, unknown>>
   }
 ): Promise<APIResponse<unknown>> {
-  return put(`/api/agents/${name}`, data)
+  const response = await put(`/api/agents/${name}`, data)
+  if (response.status === 'ok') invalidateGetCache('/api/agents')
+  return response
 }
 
 export async function deleteAgent(name: string): Promise<APIResponse<void>> {
-  return del<void>(`/api/agents/${name}`)
+  const response = await del<void>(`/api/agents/${name}`)
+  if (response.status === 'ok') invalidateGetCache('/api/agents')
+  return response
 }
 
 // ===== 能力 API =====
 
 export async function listCapabilities(): Promise<APIResponse<{ name: string; description: string; parameters?: any }[]>> {
-  return get('/api/agents/capabilities/list')
+  return getCached('/api/agents/capabilities/list', 60_000)
 }
 
 // ===== 进化 API =====
@@ -477,45 +533,69 @@ export async function getPipelineExecutions(): Promise<APIResponse<PipelineExecu
 
 
 export async function listPersonas(includeArchived = false): Promise<APIResponse<Persona[]>> {
-  return get<Persona[]>(`/api/personas?include_archived=${includeArchived ? 'true' : 'false'}`)
+  return getCached<Persona[]>(`/api/personas?include_archived=${includeArchived ? 'true' : 'false'}`)
 }
 
 export async function createPersona(data: Partial<Persona> & { name: string }): Promise<APIResponse<Persona>> {
-  return post<Persona>('/api/personas', data)
+  const response = await post<Persona>('/api/personas', data)
+  if (response.status === 'ok') invalidateGetCache('/api/personas', '/api/agents/persona-bindings')
+  return response
 }
 
 export async function updatePersona(id: string, data: Partial<Persona>): Promise<APIResponse<Persona>> {
-  return put<Persona>(`/api/personas/${encodeURIComponent(id)}`, data)
+  const response = await put<Persona>(`/api/personas/${encodeURIComponent(id)}`, data)
+  if (response.status === 'ok') invalidateGetCache('/api/personas', '/api/agents/persona-bindings')
+  return response
 }
 
 export async function archivePersona(id: string): Promise<APIResponse<Persona>> {
-  return del<Persona>(`/api/personas/${encodeURIComponent(id)}`)
+  const response = await del<Persona>(`/api/personas/${encodeURIComponent(id)}`)
+  if (response.status === 'ok') invalidateGetCache('/api/personas', '/api/agents/persona-bindings')
+  return response
 }
 
 export async function restorePersona(id: string): Promise<APIResponse<Persona>> {
-  return post<Persona>(`/api/personas/${encodeURIComponent(id)}/restore`)
+  const response = await post<Persona>(`/api/personas/${encodeURIComponent(id)}/restore`)
+  if (response.status === 'ok') invalidateGetCache('/api/personas', '/api/agents/persona-bindings')
+  return response
 }
 
 export async function getAgentPersonaBindings(): Promise<APIResponse<PersonaBindings>> {
-  return get<PersonaBindings>('/api/agents/persona-bindings')
+  return getCached<PersonaBindings>('/api/agents/persona-bindings')
 }
 
 // Compatibility reader for older deployments. New UI should prefer getAgentPersonaBindings().
 export async function getPersonaBindings(): Promise<APIResponse<PersonaBindings>> {
-  return get<PersonaBindings>('/api/personas/bindings')
+  return getCached<PersonaBindings>('/api/personas/bindings')
 }
 
 export async function bindAgentPersona(agentName: string, personaId: string): Promise<APIResponse<unknown>> {
-  return put(`/api/agents/persona-bindings/agents/${encodeURIComponent(agentName)}`, { persona_id: personaId })
+  const response = await put(`/api/agents/persona-bindings/agents/${encodeURIComponent(agentName)}`, { persona_id: personaId })
+  if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
+  return response
+}
+
+export async function unbindAgentPersona(agentName: string): Promise<APIResponse<unknown>> {
+  const response = await del(`/api/agents/persona-bindings/agents/${encodeURIComponent(agentName)}`)
+  if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
+  return response
 }
 
 export async function bindSessionPersona(sessionId: string, personaId: string): Promise<APIResponse<unknown>> {
-  return put(`/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`, { persona_id: personaId })
+  const response = await put(`/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`, { persona_id: personaId })
+  if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
+  return response
+}
+
+export async function unbindSessionPersona(sessionId: string): Promise<APIResponse<unknown>> {
+  const response = await del(`/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`)
+  if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
+  return response
 }
 
 export async function listPersonaProposals(status?: string): Promise<APIResponse<PersonaProposal[]>> {
   const suffix = status ? `?status=${encodeURIComponent(status)}` : ''
-  return get<PersonaProposal[]>(`/api/personas/proposals${suffix}`)
+  return getCached<PersonaProposal[]>(`/api/personas/proposals${suffix}`, 10_000)
 }
 
 export async function createPersonaProposal(personaId: string, data: {
@@ -527,21 +607,29 @@ export async function createPersonaProposal(personaId: string, data: {
   message_id?: string
   reflection_id?: string
 }): Promise<APIResponse<PersonaProposal>> {
-  return post<PersonaProposal>(`/api/personas/${encodeURIComponent(personaId)}/proposals`, data)
+  const response = await post<PersonaProposal>(`/api/personas/${encodeURIComponent(personaId)}/proposals`, data)
+  if (response.status === 'ok') invalidateGetCache('/api/personas/proposals')
+  return response
 }
 
 export async function approvePersonaProposal(id: string, reviewer: string, note = ''): Promise<APIResponse<unknown>> {
-  return post(`/api/personas/proposals/${encodeURIComponent(id)}/approve`, { reviewer, note, admin_approved: true })
+  const response = await post(`/api/personas/proposals/${encodeURIComponent(id)}/approve`, { reviewer, note, admin_approved: true })
+  if (response.status === 'ok') invalidateGetCache('/api/personas')
+  return response
 }
 
 export async function rejectPersonaProposal(id: string, reviewer: string, note = ''): Promise<APIResponse<PersonaProposal>> {
-  return post<PersonaProposal>(`/api/personas/proposals/${encodeURIComponent(id)}/reject`, { reviewer, note })
+  const response = await post<PersonaProposal>(`/api/personas/proposals/${encodeURIComponent(id)}/reject`, { reviewer, note })
+  if (response.status === 'ok') invalidateGetCache('/api/personas/proposals')
+  return response
 }
 
 export async function listPersonaVersions(personaId: string): Promise<APIResponse<PersonaVersion[]>> {
-  return get<PersonaVersion[]>(`/api/personas/${encodeURIComponent(personaId)}/versions`)
+  return getCached<PersonaVersion[]>(`/api/personas/${encodeURIComponent(personaId)}/versions`, 10_000)
 }
 
 export async function rollbackPersona(personaId: string, version: number, reviewer: string): Promise<APIResponse<Persona>> {
-  return post<Persona>(`/api/personas/${encodeURIComponent(personaId)}/rollback`, { version, reviewer, admin_approved: true })
+  const response = await post<Persona>(`/api/personas/${encodeURIComponent(personaId)}/rollback`, { version, reviewer, admin_approved: true })
+  if (response.status === 'ok') invalidateGetCache('/api/personas')
+  return response
 }

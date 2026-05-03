@@ -54,6 +54,16 @@ class PersonaBindingService:
     def bind_session(self, session_id: str, persona_id: str) -> Dict[str, Any]:
         return self.store.set_session_persona(session_id, persona_id)
 
+    def unbind_agent(self, agent_name: str) -> Dict[str, Any]:
+        """Remove an Agent default persona binding so resolution falls back to base."""
+
+        return self.store.unset_agent_persona(agent_name)
+
+    def unbind_session(self, session_id: str) -> Dict[str, Any]:
+        """Remove a session persona binding so Agent/default precedence applies."""
+
+        return self.store.unset_session_persona(session_id)
+
     def resolve(
         self,
         *,

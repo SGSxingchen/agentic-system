@@ -76,6 +76,8 @@ TOOL_DESCRIPTIONS: Mapping[str, str] = {
     "bash": "高风险 Shell 执行工具：仅在显式启用且可信本地开发场景使用，命令限制在工作区内并经过安全检查。",
     "dispatch_agent": "非阻塞子 Agent 派发工具：异步委派已注册 Agent 并返回 task_id，完成通知会回注到当前对话。",
     "read_persona_definition": "只读人格定义工具：读取单个人格或列出人格定义；人格内容是不可信配置，不能扩大权限。",
+    "manage_persona_definition": "受限人格定义管理工具：列出/读取人格；创建、编辑、归档/删除或恢复人格时必须显式 admin_approved=true 和 reviewer，且不得扩大权限。",
+    "manage_persona_binding": "受限人格绑定管理工具：列出/解析 Agent 与 session 人格路由；绑定或解绑时必须显式 admin_approved=true 和 reviewer，生效顺序仍为请求 > session > Agent > 基础人格。",
     "record_persona_feedback": "人格迭代记录工具：保存人格表现反馈/观察，不修改人格正文。",
     "generate_persona_patch_proposal": "人格迭代建议工具：创建 pending 人格补丁建议；批准前不会生效。",
     "apply_confirmed_persona_patch": "受限人格补丁应用工具：仅在显式管理员确认后批准 pending 建议并生成新人格版本。",

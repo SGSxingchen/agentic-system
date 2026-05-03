@@ -148,6 +148,12 @@ def test_persona_api_routes_create_bind_and_review() -> None:
             "base_persona",
         ]
 
+        unbound = await agent_routes.unbind_agent_default_persona("assistant")
+        assert unbound.status == "ok"
+        assert unbound.data["removed"] is True
+        bindings = await agent_routes.get_agent_persona_bindings()
+        assert "assistant" not in bindings.data["agents"]
+
         proposal_res = await routes.create_proposal(persona_id, routes.ProposalCreateRequest(
             source="feedback",
             feedback="回答后附带验证建议",

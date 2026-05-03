@@ -29,6 +29,10 @@ from capabilities.tools.persona_evolution import (
     ReadPersonaDefinitionCapability,
     RecordPersonaFeedbackCapability,
 )
+from capabilities.tools.persona_management import (
+    ManagePersonaBindingCapability,
+    ManagePersonaDefinitionCapability,
+)
 from capabilities.tools.text_processor import TextProcessorCapability
 from capabilities.tools.web_fetch import WebFetchCapability
 from capabilities.tools._web_safety import validate_public_http_url
@@ -312,6 +316,50 @@ class TestPersonaEvolutionCapabilities:
             admin_token="secret-token",
         )
         assert allowed["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_persona_management_tools_crud_and_bindings_are_guarded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONA_STORE_FILE", str(tmp_path / "personas.json"))
+
+        definition_tool = ManagePersonaDefinitionCapability()
+        listed = await definition_tool.execute(operation="list")
+        assert listed["base_persona_id"] == "base-assistant"
+
+        denied = await definition_tool.execute(
+            operation="create",
+            payload={"name": "猫娘", "persona_prompt": "轻微猫娘语气"},
+        )
+        assert denied["permission_denied"] is True
+
+        created = await definition_tool.execute(
+            operation="create",
+            payload={"name": "猫娘", "persona_prompt": "轻微猫娘语气"},
+            reviewer="admin",
+            admin_approved=True,
+        )
+        assert created["success"] is True
+        persona_id = created["persona"]["id"]
+
+        binding_tool = ManagePersonaBindingCapability()
+        bound = await binding_tool.execute(
+            operation="bind_agent",
+            agent_name="assistant",
+            persona_id=persona_id,
+            reviewer="admin",
+            admin_approved=True,
+        )
+        assert bound["binding"]["persona_id"] == persona_id
+
+        resolved = await binding_tool.execute(operation="resolve", agent_name="assistant")
+        assert resolved["persona"]["id"] == persona_id
+
+        unbound = await binding_tool.execute(
+            operation="unbind_agent",
+            agent_name="assistant",
+            reviewer="admin",
+            admin_approved=True,
+        )
+        assert unbound["binding"]["removed"] is True
 
 
 class TestWebFetchCapability:

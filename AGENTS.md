@@ -476,8 +476,22 @@ _CAPABILITY_CLASS_MAP = {
 | GET | `/api/agents/{name}` | 获取 Agent 详情 |
 | GET | `/api/agents/persona-bindings` | 获取 Agent/Session 人格绑定与生效优先级 |
 | PUT | `/api/agents/persona-bindings/agents/{agent_name}` | 设置 Agent 默认人格 |
+| DELETE | `/api/agents/persona-bindings/agents/{agent_name}` | 解绑 Agent 默认人格，回退到基础人格 |
 | PUT | `/api/agents/persona-bindings/sessions/{session_id}` | 设置会话人格绑定 |
+| DELETE | `/api/agents/persona-bindings/sessions/{session_id}` | 解绑会话人格 |
 | POST | `/api/agents/{name}/invoke` | 直接调用 Agent |
+| GET | `/api/personas` | 列出人格定义 |
+| POST | `/api/personas` | 创建人格定义 (受管理员 token 边界保护) |
+| GET | `/api/personas/{persona_id}` | 获取人格详情 |
+| PUT | `/api/personas/{persona_id}` | 编辑人格定义并生成新版本 |
+| DELETE | `/api/personas/{persona_id}` | 安全归档人格；不会物理删除，且会清理指向该人格的绑定 |
+| POST | `/api/personas/{persona_id}/restore` | 恢复已归档人格 |
+| GET | `/api/personas/{persona_id}/versions` | 获取人格版本历史 |
+| POST | `/api/personas/{persona_id}/rollback` | 管理员确认后回滚人格版本 |
+| GET | `/api/personas/proposals` | 列出人格迭代建议 |
+| POST | `/api/personas/{persona_id}/proposals` | 生成 pending 人格迭代建议 |
+| POST | `/api/personas/proposals/{proposal_id}/approve` | 管理员批准 pending 建议并生成新版本 |
+| POST | `/api/personas/proposals/{proposal_id}/reject` | 拒绝 pending 建议 |
 | POST | `/api/tasks` | 提交新任务 |
 | GET | `/api/tasks` | 列出所有任务 |
 | GET | `/api/tasks/{task_id}` | 获取任务详情 |
@@ -724,11 +738,16 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 对话反馈、管理员指令或反思摘要可调用 `/api/personas/{id}/proposals` 生成人格迭代建议。建议记录包含 `persona_id`、`source/session/message/reflection`、`proposal_text`、`diff`、`summary`、`status`、`reviewer`、`review_time`。建议只能进入 `pending`，禁止自动覆盖人格正文。管理员通过 `/api/personas/proposals/{proposal_id}/approve` 且显式 `admin_approved=true` 后，系统才合并补丁并生成新版本；也可拒绝或回滚旧版本。
 
-新增 `persona_evolution` 智能体，专责读取人格、记录反馈/观察、生成 pending 补丁建议、查看补丁历史，并且只在显式管理员确认后调用应用工具。它只暴露以下人格迭代工具：`read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。`apply_confirmed_persona_patch` 必须收到 `admin_approved=true` 和 `reviewer`，若配置 `PERSONA_ADMIN_TOKEN` 还必须提供匹配 token。普通 Agent 不直接挂载这些写入工具。
+新增 `persona_evolution` 智能体，专责读取/管理人格、记录反馈/观察、生成 pending 补丁建议、查看补丁历史，并且只在显式管理员确认后调用写入工具。它暴露两类工具：
+
+- 受控管理工具：`manage_persona_definition` 支持 list/get/create/update/archive/delete/restore（delete 等价于安全归档）；`manage_persona_binding` 支持 list/resolve/bind_agent/unbind_agent/bind_session/unbind_session。
+- 审核式迭代工具：`read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。
+
+所有 Persona 写入/绑定工具必须收到 `admin_approved=true` 和 `reviewer`，若配置 `PERSONA_ADMIN_TOKEN` 还必须提供匹配 token。普通 Agent 不直接挂载这些写入工具；Assistant 遇到人格创建、编辑、归档或绑定需求时应委派 `persona_evolution`，不要误用 `agent_creator` 创建 Agent。
 
 ### 11.5 绑定职责与前端入口
 
-“人格”面板只负责人格定义管理、预览/测试、迭代建议生成与审核、版本历史与回滚。Agent 角色到人格的绑定属于“智能体/Agent”页面，调用 `/api/agents/persona-bindings*` 端点，并在 UI 中明确展示生效顺序：请求指定人格 > 会话绑定 > Agent 绑定 > 基础人格。旧 `/api/personas/bindings*` 端点保留为兼容别名，不再作为新 UI 的首选入口。
+“人格”面板只负责人格定义管理、预览/测试、迭代建议生成与审核、版本历史与回滚。Agent 角色到人格的绑定属于“智能体/Agent”页面，调用 `/api/agents/persona-bindings*` 端点，并在 UI 中明确展示生效顺序：请求指定人格 > 会话绑定 > Agent 绑定 > 基础人格。绑定页面缓存人格与绑定数据，普通进入页面不重复强制加载；手动刷新或写操作后才失效重取。旧 `/api/personas/bindings*` 端点保留为兼容别名，不再作为新 UI 的首选入口。
 
 ---
 

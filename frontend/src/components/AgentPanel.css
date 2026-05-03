@@ -996,7 +996,7 @@
 
 .agent-persona-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(140px, 0.75fr);
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.85fr);
   gap: 10px;
   align-items: center;
   padding: 12px;
@@ -1026,6 +1026,29 @@
   font-size: 11px;
 }
 
+.agent-persona-row__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.agent-persona-row__controls button,
+.agent-session-row button {
+  padding: 9px 11px;
+  border: 1px solid rgba(148, 108, 82, 0.24);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agent-persona-row__controls button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .agent-persona-row select,
 .agent-session-binding input,
 .agent-session-binding select {
@@ -1048,6 +1071,50 @@
   border-top: 1px dashed var(--color-border);
 }
 
+.agent-session-list {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.agent-session-list h4 {
+  margin-bottom: 10px;
+}
+
+.agent-session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 108, 82, 0.16);
+  border-radius: 14px;
+  background: rgba(250, 249, 246, 0.66);
+}
+
+.agent-session-row + .agent-session-row {
+  margin-top: 8px;
+}
+
+.agent-session-row strong,
+.agent-session-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-session-row strong {
+  color: var(--color-text-primary);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+}
+
+.agent-session-row small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
 @media (max-width: 980px) {
   .persona-priority-strip,
   .agent-session-binding {
@@ -1056,5 +1123,9 @@
 
   .agent-persona-card__header {
     flex-direction: column;
+  }
+
+  .agent-persona-row {
+    grid-template-columns: 1fr;
   }
 }

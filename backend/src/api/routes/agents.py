@@ -106,6 +106,16 @@ async def bind_agent_default_persona(agent_name: str, req: AgentPersonaBindReque
     return APIResponse(status="ok", data=binding)
 
 
+@router.delete("/persona-bindings/agents/{agent_name}", response_model=APIResponse)
+async def unbind_agent_default_persona(agent_name: str):
+    """Remove an Agent default persona binding; resolution falls back to base persona."""
+
+    if agent_name not in _known_agent_roles():
+        return APIResponse(status="error", message=f"Agent role '{agent_name}' is not configured")
+    binding = PersonaBindingService().unbind_agent(agent_name)
+    return APIResponse(status="ok", data=binding)
+
+
 @router.put("/persona-bindings/sessions/{session_id}", response_model=APIResponse)
 async def bind_session_persona_from_agent_page(session_id: str, req: AgentPersonaBindRequest):
     """Bind a persona to a session from the Agent page workflow."""
@@ -114,6 +124,14 @@ async def bind_session_persona_from_agent_page(session_id: str, req: AgentPerson
         binding = PersonaBindingService().bind_session(session_id, req.persona_id)
     except ValueError as exc:
         return APIResponse(status="error", message=str(exc))
+    return APIResponse(status="ok", data=binding)
+
+
+@router.delete("/persona-bindings/sessions/{session_id}", response_model=APIResponse)
+async def unbind_session_persona_from_agent_page(session_id: str):
+    """Remove a session persona binding."""
+
+    binding = PersonaBindingService().unbind_session(session_id)
     return APIResponse(status="ok", data=binding)
 
 

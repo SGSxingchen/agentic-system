@@ -139,17 +139,33 @@ class PersonaStore:
         current = data["personas"].get(persona_id)
         if not current:
             return None
+        requested_status = patch.get("status")
+        if (
+            persona_id == BASE_PERSONA_ID
+            and requested_status is not None
+            and str(requested_status) != "active"
+        ):
+            raise ValueError("base persona must remain active")
         protected = {"id", "version", "created_at", "updated_at"}
         merged = {**current, **{k: v for k, v in patch.items() if k not in protected}}
         merged["updated_at"] = _utc_now()
-        data["personas"][persona_id] = self._normalize_persona(merged)
+        normalized = self._normalize_persona(merged)
+        if normalized != current:
+            normalized["version"] = int(current.get("version", 1)) + 1
+        data["personas"][persona_id] = normalized
+        data["versions"].setdefault(persona_id, []).append(
+            self._version_record(normalized, "updated")
+        )
         self._write(data)
         return deepcopy(data["personas"][persona_id])
 
     def archive_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
         if persona_id == BASE_PERSONA_ID:
             raise ValueError("base persona cannot be archived")
-        return self.update_persona(persona_id, {"status": "archived"})
+        persona = self.update_persona(persona_id, {"status": "archived"})
+        if persona:
+            self.clear_persona_bindings(persona_id)
+        return persona
 
     def restore_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
         return self.update_persona(persona_id, {"status": "active"})
@@ -169,6 +185,43 @@ class PersonaStore:
         data["bindings"].setdefault("sessions", {})[session_id] = persona["id"]
         self._write(data)
         return {"session_id": session_id, "persona_id": persona["id"]}
+
+    def unset_agent_persona(self, agent_name: str) -> Dict[str, Any]:
+        data = self._read()
+        removed = data["bindings"].setdefault("agents", {}).pop(agent_name, None)
+        self._write(data)
+        return {"agent": agent_name, "persona_id": removed, "removed": removed is not None}
+
+    def unset_session_persona(self, session_id: str) -> Dict[str, Any]:
+        data = self._read()
+        removed = data["bindings"].setdefault("sessions", {}).pop(session_id, None)
+        self._write(data)
+        return {"session_id": session_id, "persona_id": removed, "removed": removed is not None}
+
+    def clear_persona_bindings(self, persona_id: str) -> Dict[str, Any]:
+        """Remove Agent/session bindings that point at an inactive persona."""
+
+        data = self._read()
+        removed_agents = [
+            name
+            for name, bound in list(data["bindings"].setdefault("agents", {}).items())
+            if bound == persona_id
+        ]
+        removed_sessions = [
+            session_id
+            for session_id, bound in list(data["bindings"].setdefault("sessions", {}).items())
+            if bound == persona_id
+        ]
+        for name in removed_agents:
+            data["bindings"]["agents"].pop(name, None)
+        for session_id in removed_sessions:
+            data["bindings"]["sessions"].pop(session_id, None)
+        self._write(data)
+        return {
+            "persona_id": persona_id,
+            "removed_agents": removed_agents,
+            "removed_sessions": removed_sessions,
+        }
 
     def get_bindings(self) -> Dict[str, Any]:
         return deepcopy(self._read()["bindings"])

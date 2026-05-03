@@ -13,6 +13,8 @@ import type {
   HealthStatus,
   WSEvent,
   PanelType,
+  Persona,
+  PersonaBindings,
 } from '../types'
 
 // ===== State =====
@@ -27,6 +29,13 @@ export interface AppState {
   activePanel: PanelType
   wsEvents: WSEvent[]
   sending: boolean
+  personaCache: {
+    personas: Persona[]
+    includeArchived: boolean
+    personasFetchedAt: number
+    bindings: PersonaBindings | null
+    bindingsFetchedAt: number
+  }
 }
 
 const initialState: AppState = {
@@ -39,6 +48,13 @@ const initialState: AppState = {
   activePanel: 'chat',
   wsEvents: [],
   sending: false,
+  personaCache: {
+    personas: [],
+    includeArchived: false,
+    personasFetchedAt: 0,
+    bindings: null,
+    bindingsFetchedAt: 0,
+  },
 }
 
 // ===== Actions =====
@@ -56,6 +72,9 @@ export type AppAction =
   | { type: 'CLEAR_WS_EVENTS' }
   | { type: 'SET_SENDING'; payload: boolean }
   | { type: 'UPDATE_AGENT_STATUS'; payload: { name: string; status: AgentInfo['status'] } }
+  | { type: 'SET_PERSONAS_CACHE'; payload: { personas: Persona[]; includeArchived: boolean; fetchedAt?: number } }
+  | { type: 'SET_PERSONA_BINDINGS_CACHE'; payload: { bindings: PersonaBindings; fetchedAt?: number } }
+  | { type: 'INVALIDATE_PERSONA_CACHE' }
 
 // ===== Reducer =====
 
@@ -94,6 +113,34 @@ function appReducer(state: AppState, action: AppAction): AppState {
             ? { ...a, status: action.payload.status }
             : a
         ),
+      }
+    case 'SET_PERSONAS_CACHE':
+      return {
+        ...state,
+        personaCache: {
+          ...state.personaCache,
+          personas: action.payload.personas,
+          includeArchived: action.payload.includeArchived,
+          personasFetchedAt: action.payload.fetchedAt ?? Date.now(),
+        },
+      }
+    case 'SET_PERSONA_BINDINGS_CACHE':
+      return {
+        ...state,
+        personaCache: {
+          ...state.personaCache,
+          bindings: action.payload.bindings,
+          bindingsFetchedAt: action.payload.fetchedAt ?? Date.now(),
+        },
+      }
+    case 'INVALIDATE_PERSONA_CACHE':
+      return {
+        ...state,
+        personaCache: {
+          ...state.personaCache,
+          personasFetchedAt: 0,
+          bindingsFetchedAt: 0,
+        },
       }
     default:
       return state
