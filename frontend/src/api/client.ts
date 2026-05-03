@@ -484,16 +484,21 @@ export async function restorePersona(id: string): Promise<APIResponse<Persona>> 
   return post<Persona>(`/api/personas/${encodeURIComponent(id)}/restore`)
 }
 
+export async function getAgentPersonaBindings(): Promise<APIResponse<PersonaBindings>> {
+  return get<PersonaBindings>('/api/agents/persona-bindings')
+}
+
+// Compatibility reader for older deployments. New UI should prefer getAgentPersonaBindings().
 export async function getPersonaBindings(): Promise<APIResponse<PersonaBindings>> {
   return get<PersonaBindings>('/api/personas/bindings')
 }
 
 export async function bindAgentPersona(agentName: string, personaId: string): Promise<APIResponse<unknown>> {
-  return put(`/api/personas/bindings/agents/${encodeURIComponent(agentName)}`, { persona_id: personaId })
+  return put(`/api/agents/persona-bindings/agents/${encodeURIComponent(agentName)}`, { persona_id: personaId })
 }
 
 export async function bindSessionPersona(sessionId: string, personaId: string): Promise<APIResponse<unknown>> {
-  return put(`/api/personas/bindings/sessions/${encodeURIComponent(sessionId)}`, { persona_id: personaId })
+  return put(`/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`, { persona_id: personaId })
 }
 
 export async function listPersonaProposals(status?: string): Promise<APIResponse<PersonaProposal[]>> {

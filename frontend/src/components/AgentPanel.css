@@ -926,3 +926,135 @@
     grid-template-columns: 1fr;
   }
 }
+
+.agent-persona-card {
+  margin-bottom: 18px;
+  padding: 20px;
+  border: 1px solid rgba(196, 112, 75, 0.18);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 92% 14%, rgba(37, 99, 235, 0.08), transparent 24%),
+    rgba(255, 255, 255, 0.84);
+  box-shadow: 0 18px 45px rgba(45, 43, 40, 0.06);
+}
+
+.agent-persona-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.agent-persona-card h3,
+.agent-persona-card h4 {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.agent-persona-card p {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-persona-notice {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 13px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.persona-priority-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.persona-priority-strip span {
+  padding: 9px 10px;
+  border: 1px solid rgba(196, 112, 75, 0.16);
+  border-radius: 999px;
+  background: rgba(196, 112, 75, 0.07);
+  color: var(--color-primary-dark);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.agent-persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 10px;
+}
+
+.agent-persona-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 0.75fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.agent-persona-row strong,
+.agent-persona-row small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-persona-row strong {
+  color: var(--color-text-primary);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+}
+
+.agent-persona-row small {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.agent-persona-row select,
+.agent-session-binding input,
+.agent-session-binding select {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.agent-session-binding {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.45fr) minmax(190px, 0.45fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border);
+}
+
+@media (max-width: 980px) {
+  .persona-priority-strip,
+  .agent-session-binding {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-persona-card__header {
+    flex-direction: column;
+  }
+}

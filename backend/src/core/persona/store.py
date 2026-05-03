@@ -173,6 +173,49 @@ class PersonaStore:
     def get_bindings(self) -> Dict[str, Any]:
         return deepcopy(self._read()["bindings"])
 
+    def record_feedback(
+        self,
+        *,
+        persona_id: str,
+        feedback: str,
+        source: str = "feedback",
+        session_id: Optional[str] = None,
+        observer: str = "persona_evolution",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Append a persona feedback/observation record without mutating the persona."""
+
+        data = self._read()
+        self._require_active(data, persona_id)
+        feedback_text = str(feedback or "").strip()
+        if not feedback_text:
+            raise ValueError("feedback is required")
+        record_id = _new_id("persona_feedback")
+        now = _utc_now()
+        record = {
+            "id": record_id,
+            "persona_id": persona_id,
+            "source": str(source or "feedback"),
+            "session_id": session_id,
+            "observer": str(observer or "persona_evolution"),
+            "feedback": feedback_text,
+            "metadata": metadata if isinstance(metadata, dict) else {},
+            "created_at": now,
+        }
+        data.setdefault("feedback", {})[record_id] = record
+        self._write(data)
+        return deepcopy(record)
+
+    def list_feedback(self, persona_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        data = self._read()
+        records = list((data.get("feedback") or {}).values())
+        if persona_id:
+            records = [item for item in records if item.get("persona_id") == persona_id]
+        records.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        if limit and limit > 0:
+            records = records[:limit]
+        return deepcopy(records)
+
     def resolve_persona(
         self,
         *,
@@ -341,6 +384,7 @@ class PersonaStore:
             "personas": {BASE_PERSONA_ID: persona},
             "versions": {BASE_PERSONA_ID: [self._version_record(persona, "bootstrap")]},
             "proposals": {},
+            "feedback": {},
             "bindings": {"agents": {}, "sessions": {}},
         }
 
@@ -373,6 +417,12 @@ class PersonaStore:
             data["proposals"] = {str(k): v for k, v in proposals.items() if isinstance(v, dict)}
         elif isinstance(proposals, list):
             data["proposals"] = {str(v.get("id")): v for v in proposals if isinstance(v, dict) and v.get("id")}
+
+        feedback = raw.get("feedback")
+        if isinstance(feedback, dict):
+            data["feedback"] = {str(k): v for k, v in feedback.items() if isinstance(v, dict)}
+        elif isinstance(feedback, list):
+            data["feedback"] = {str(v.get("id")): v for v in feedback if isinstance(v, dict) and v.get("id")}
 
         bindings = raw.get("bindings")
         if isinstance(bindings, dict):

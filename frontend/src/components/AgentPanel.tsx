@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAppStore } from '../store/appStore'
 import * as api from '../api/client'
+import type { Persona, PersonaBindings } from '../types'
 import './AgentPanel.css'
 
 const STATUS_CONFIG: Record<
@@ -68,6 +69,11 @@ export function AgentPanel() {
   const [toolPanelAgent, setToolPanelAgent] = useState<string | null>(null)
   const [toolSaving, setToolSaving] = useState(false)
   const [capabilityFilter, setCapabilityFilter] = useState('')
+  const [personas, setPersonas] = useState<Persona[]>([])
+  const [personaBindings, setPersonaBindings] = useState<PersonaBindings>({ agents: {}, sessions: {} })
+  const [personaNotice, setPersonaNotice] = useState('')
+  const [sessionBindId, setSessionBindId] = useState('')
+  const [sessionPersonaId, setSessionPersonaId] = useState('base-assistant')
 
   const fetchAgents = useCallback(async () => {
     setLoading(true)
@@ -90,12 +96,29 @@ export function AgentPanel() {
     }
   }, [])
 
+  const fetchPersonaContext = useCallback(async () => {
+    const [personaRes, bindingRes] = await Promise.all([
+      api.listPersonas(false),
+      api.getAgentPersonaBindings(),
+    ])
+    if (personaRes.status === 'ok' && personaRes.data) {
+      setPersonas(personaRes.data)
+      if (!personaRes.data.some((p) => p.id === sessionPersonaId)) {
+        setSessionPersonaId(personaRes.data[0]?.id || 'base-assistant')
+      }
+    }
+    if (bindingRes.status === 'ok' && bindingRes.data) {
+      setPersonaBindings(bindingRes.data)
+    }
+  }, [sessionPersonaId])
+
   useEffect(() => {
     fetchAgents()
     fetchCapabilities()
+    fetchPersonaContext()
     const timer = setInterval(fetchAgents, 10000)
     return () => clearInterval(timer)
-  }, [fetchAgents, fetchCapabilities])
+  }, [fetchAgents, fetchCapabilities, fetchPersonaContext])
 
   // 开始创建
   const startCreate = () => {
@@ -242,6 +265,95 @@ export function AgentPanel() {
     } else {
       setError(res.message || '删除失败')
     }
+  }
+
+
+  const bindAgentPersona = async (agentName: string, personaId: string) => {
+    const res = await api.bindAgentPersona(agentName, personaId)
+    setPersonaNotice(res.status === 'ok' ? `${agentName} 默认人格已更新` : res.message || 'Agent 人格绑定失败')
+    await fetchPersonaContext()
+  }
+
+  const bindSessionPersona = async () => {
+    if (!sessionBindId.trim()) {
+      setPersonaNotice('请输入 session_id')
+      return
+    }
+    const res = await api.bindSessionPersona(sessionBindId.trim(), sessionPersonaId)
+    setPersonaNotice(res.status === 'ok' ? `会话 ${sessionBindId.trim()} 已绑定人格` : res.message || '会话人格绑定失败')
+    await fetchPersonaContext()
+  }
+
+  const personaName = (personaId?: string) => personas.find((p) => p.id === personaId)?.name || personaId || '基础人格'
+
+  const renderPersonaBindingPanel = () => {
+    const baseId = personaBindings.base_persona_id || 'base-assistant'
+    const activePersonas = personas.filter((persona) => persona.status === 'active')
+    const roles = Array.from(new Set([
+      ...(personaBindings.roles || []),
+      'assistant',
+      'tool_creator',
+      'agent_creator',
+      'planner',
+      'coder',
+      'reviewer',
+      ...state.agents.map((agent) => agent.name),
+    ])).filter(Boolean)
+
+    return (
+      <section className="agent-persona-card">
+        <div className="agent-persona-card__header">
+          <div>
+            <span className="agent-form__kicker">Persona Routing</span>
+            <h3>Agent 人格绑定</h3>
+            <p>绑定属于 Agent 页面：请求指定人格 &gt; 会话绑定 &gt; Agent 默认人格 &gt; 基础人格。</p>
+          </div>
+          <button className="refresh-btn" onClick={fetchPersonaContext}>刷新人格</button>
+        </div>
+
+        {personaNotice && <div className="agent-persona-notice">{personaNotice}</div>}
+
+        <div className="persona-priority-strip">
+          <span>1 请求 persona_id</span>
+          <span>2 session_id 绑定</span>
+          <span>3 Agent 绑定</span>
+          <span>4 {personaName(baseId)}</span>
+        </div>
+
+        <div className="agent-persona-grid">
+          {roles.map((role) => (
+            <label key={role} className="agent-persona-row">
+              <span>
+                <strong>{role}</strong>
+                <small>默认：{personaName(personaBindings.agents?.[role] || baseId)}</small>
+              </span>
+              <select
+                value={personaBindings.agents?.[role] || baseId}
+                onChange={(event) => bindAgentPersona(role, event.target.value)}
+              >
+                {activePersonas.map((persona) => (
+                  <option key={persona.id} value={persona.id}>{persona.name} · v{persona.version}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+
+        <div className="agent-session-binding">
+          <div>
+            <h4>会话级绑定</h4>
+            <p>用于指定 session_id 的临时/长期会话人格；仍低于请求中显式 persona_id。</p>
+          </div>
+          <input value={sessionBindId} onChange={(event) => setSessionBindId(event.target.value)} placeholder="session_id" />
+          <select value={sessionPersonaId} onChange={(event) => setSessionPersonaId(event.target.value)}>
+            {activePersonas.map((persona) => (
+              <option key={persona.id} value={persona.id}>{persona.name} · v{persona.version}</option>
+            ))}
+          </select>
+          <button className="btn-primary-sm" onClick={bindSessionPersona}>绑定会话</button>
+        </div>
+      </section>
+    )
   }
 
   // 渲染编辑表单
@@ -606,6 +718,8 @@ export function AgentPanel() {
       )}
 
       {error && !editingAgent && <div className="agent-error">{error}</div>}
+
+      {renderPersonaBindingPanel()}
 
       {editingAgent === '__new__' && renderEditForm()}
       {editingAgent && editingAgent !== '__new__' && renderEditForm()}

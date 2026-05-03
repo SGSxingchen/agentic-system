@@ -10,7 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from core.persona import BASE_PERSONA_ID, PersonaStore
+from core.persona import BASE_PERSONA_ID, PersonaBindingService, PersonaStore
 from ..dependencies import get_llm_client
 from ..schemas import APIResponse
 
@@ -174,13 +174,17 @@ async def create_persona(
 
 @router.get("/bindings", response_model=APIResponse)
 async def get_bindings() -> APIResponse:
-    return APIResponse(status="ok", data=_store().get_bindings())
+    """Compatibility alias. Prefer /api/agents/persona-bindings for Agent/session bindings."""
+
+    return APIResponse(status="ok", data=PersonaBindingService().get_bindings())
 
 
 @router.put("/bindings/agents/{agent_name}", response_model=APIResponse)
 async def bind_agent_persona(agent_name: str, req: PersonaBindRequest) -> APIResponse:
+    """Compatibility alias. Prefer PUT /api/agents/persona-bindings/agents/{agent_name}."""
+
     try:
-        binding = _store().set_agent_persona(agent_name, req.persona_id)
+        binding = PersonaBindingService().bind_agent(agent_name, req.persona_id)
     except ValueError as exc:
         return APIResponse(status="error", message=str(exc))
     return APIResponse(status="ok", data=binding)
@@ -188,8 +192,10 @@ async def bind_agent_persona(agent_name: str, req: PersonaBindRequest) -> APIRes
 
 @router.put("/bindings/sessions/{session_id}", response_model=APIResponse)
 async def bind_session_persona(session_id: str, req: PersonaBindRequest) -> APIResponse:
+    """Compatibility alias. Prefer PUT /api/agents/persona-bindings/sessions/{session_id}."""
+
     try:
-        binding = _store().set_session_persona(session_id, req.persona_id)
+        binding = PersonaBindingService().bind_session(session_id, req.persona_id)
     except ValueError as exc:
         return APIResponse(status="error", message=str(exc))
     return APIResponse(status="ok", data=binding)

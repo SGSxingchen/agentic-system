@@ -463,7 +463,7 @@ _CAPABILITY_CLASS_MAP = {
 
 ## 5. API 端点
 
-### 5.1 REST API (22 个端点)
+### 5.1 REST API (新增 Agent 人格绑定端点)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -472,6 +472,9 @@ _CAPABILITY_CLASS_MAP = {
 | POST | `/api/config` | 更新配置 + 热重载 |
 | GET | `/api/agents` | 列出所有 Agent |
 | GET | `/api/agents/{name}` | 获取 Agent 详情 |
+| GET | `/api/agents/persona-bindings` | 获取 Agent/Session 人格绑定与生效优先级 |
+| PUT | `/api/agents/persona-bindings/agents/{agent_name}` | 设置 Agent 默认人格 |
+| PUT | `/api/agents/persona-bindings/sessions/{session_id}` | 设置会话人格绑定 |
 | POST | `/api/agents/{name}/invoke` | 直接调用 Agent |
 | POST | `/api/tasks` | 提交新任务 |
 | GET | `/api/tasks` | 列出所有任务 |
@@ -719,9 +722,11 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 对话反馈、管理员指令或反思摘要可调用 `/api/personas/{id}/proposals` 生成人格迭代建议。建议记录包含 `persona_id`、`source/session/message/reflection`、`proposal_text`、`diff`、`summary`、`status`、`reviewer`、`review_time`。建议只能进入 `pending`，禁止自动覆盖人格正文。管理员通过 `/api/personas/proposals/{proposal_id}/approve` 且显式 `admin_approved=true` 后，系统才合并补丁并生成新版本；也可拒绝或回滚旧版本。
 
-### 11.5 前端入口
+新增 `persona_evolution` 智能体，专责读取人格、记录反馈/观察、生成 pending 补丁建议、查看补丁历史，并且只在显式管理员确认后调用应用工具。它只暴露以下人格迭代工具：`read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。`apply_confirmed_persona_patch` 必须收到 `admin_approved=true` 和 `reviewer`，若配置 `PERSONA_ADMIN_TOKEN` 还必须提供匹配 token。普通 Agent 不直接挂载这些写入工具。
 
-前端新增“人格”面板：人格列表、详情编辑、Agent/Session 绑定、迭代建议生成与审核、版本历史与回滚。ChatPanel 顶部提供会话人格选择器，选择后写入 session binding。
+### 11.5 绑定职责与前端入口
+
+“人格”面板只负责人格定义管理、预览/测试、迭代建议生成与审核、版本历史与回滚。Agent 角色到人格的绑定属于“智能体/Agent”页面，调用 `/api/agents/persona-bindings*` 端点，并在 UI 中明确展示生效顺序：请求指定人格 > 会话绑定 > Agent 绑定 > 基础人格。旧 `/api/personas/bindings*` 端点保留为兼容别名，不再作为新 UI 的首选入口。
 
 ---
 

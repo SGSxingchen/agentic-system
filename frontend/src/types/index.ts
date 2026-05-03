@@ -424,4 +424,7 @@ export interface PersonaVersion {
 export interface PersonaBindings {
   agents: Record<string, string>
   sessions: Record<string, string>
+  precedence?: string[]
+  base_persona_id?: string
+  roles?: string[]
 }

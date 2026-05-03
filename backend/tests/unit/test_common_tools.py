@@ -22,6 +22,13 @@ from capabilities.tools.evolution_config import (
 )
 from capabilities.tools.file_search import FileSearchCapability
 from capabilities.tools.json_tool import JsonToolCapability
+from capabilities.tools.persona_evolution import (
+    ApplyConfirmedPersonaPatchCapability,
+    GeneratePersonaPatchProposalCapability,
+    ListPersonaPatchHistoryCapability,
+    ReadPersonaDefinitionCapability,
+    RecordPersonaFeedbackCapability,
+)
 from capabilities.tools.text_processor import TextProcessorCapability
 from capabilities.tools.web_fetch import WebFetchCapability
 from capabilities.tools._web_safety import validate_public_http_url
@@ -227,6 +234,84 @@ class TestEvolutionConfigCapabilities:
         assistant = next(item for item in agents["agents"] if item["name"] == "assistant")
         assert "researcher" in names
         assert "researcher" in assistant["tools"]
+
+
+class TestPersonaEvolutionCapabilities:
+    @pytest.mark.asyncio
+    async def test_persona_evolution_tools_create_pending_and_require_approval(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONA_STORE_FILE", str(tmp_path / "personas.json"))
+
+        read_tool = ReadPersonaDefinitionCapability()
+        listed = await read_tool.execute()
+        assert listed["base_persona_id"] == "base-assistant"
+        persona_id = listed["personas"][0]["id"]
+
+        feedback_tool = RecordPersonaFeedbackCapability()
+        feedback = await feedback_tool.execute(
+            persona_id=persona_id,
+            feedback="回答过于啰嗦，需要更短。",
+            source="feedback",
+            session_id="s-tool",
+        )
+        assert feedback["success"] is True
+
+        proposal_tool = GeneratePersonaPatchProposalCapability()
+        proposal = await proposal_tool.execute(
+            persona_id=persona_id,
+            proposal_text="缩短回答",
+            proposed_patch={"style_rules": ["回答更短"]},
+            summary="增加简洁规则",
+        )
+        assert proposal["success"] is True
+        assert proposal["proposal"]["status"] == "pending"
+
+        apply_tool = ApplyConfirmedPersonaPatchCapability()
+        denied = await apply_tool.execute(
+            proposal_id=proposal["proposal"]["id"],
+            reviewer="admin",
+            admin_approved=False,
+        )
+        assert denied["permission_denied"] is True
+
+        approved = await apply_tool.execute(
+            proposal_id=proposal["proposal"]["id"],
+            reviewer="admin",
+            admin_approved=True,
+        )
+        assert approved["success"] is True
+        assert approved["persona"]["version"] == 2
+
+        history = await ListPersonaPatchHistoryCapability().execute(persona_id=persona_id)
+        assert history["proposals"][0]["status"] == "approved"
+        assert history["feedback"][0]["session_id"] == "s-tool"
+
+    @pytest.mark.asyncio
+    async def test_apply_persona_patch_requires_admin_token_when_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONA_STORE_FILE", str(tmp_path / "personas.json"))
+        monkeypatch.setenv("PERSONA_ADMIN_TOKEN", "secret-token")
+        persona_id = (await ReadPersonaDefinitionCapability().execute())["personas"][0]["id"]
+        proposal = await GeneratePersonaPatchProposalCapability().execute(
+            persona_id=persona_id,
+            proposal_text="token protected",
+            proposed_patch={"behavior_rules": ["需要 token 才能应用"]},
+        )
+
+        tool = ApplyConfirmedPersonaPatchCapability()
+        denied = await tool.execute(
+            proposal_id=proposal["proposal"]["id"],
+            reviewer="admin",
+            admin_approved=True,
+            admin_token="wrong",
+        )
+        assert denied["permission_denied"] is True
+
+        allowed = await tool.execute(
+            proposal_id=proposal["proposal"]["id"],
+            reviewer="admin",
+            admin_approved=True,
+            admin_token="secret-token",
+        )
+        assert allowed["success"] is True
 
 
 class TestWebFetchCapability:
