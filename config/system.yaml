@@ -42,7 +42,7 @@ llm:
     use_legacy_max_tokens: false # 兼容旧式 OpenAI 代理时可开启
     presence_penalty: null
     frequency_penalty: null
-    reasoning_effort: ""         # minimal | low | medium | high
+    reasoning_effort: ""         # minimal | low | medium | high | xhigh
     seed: null
   anthropic:
     top_k: null
