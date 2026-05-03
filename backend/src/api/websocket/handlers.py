@@ -186,6 +186,10 @@ async def _handle_user_message(
     memory_context, memories_used = await build_memory_context(user_message)
     session_id = payload.get("session_id") or payload.get("chat_session_id")
     assistant_payload = {"message": user_message}
+    if session_id:
+        assistant_payload["session_id"] = str(session_id)
+    if payload.get("persona_id"):
+        assistant_payload["persona_id"] = str(payload.get("persona_id"))
     if memory_context:
         assistant_payload["memory_context"] = memory_context
 

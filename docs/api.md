@@ -588,3 +588,44 @@ ws://localhost:8001/ws
 | `assistant_response` | 服务端→客户端 | AI 回复 |
 | `agent_status_update` | 服务端→客户端 | Agent 状态变化 |
 | `user_message` | 客户端→服务端 | 用户消息 |
+
+## 人格系统 API（v2.2）
+
+人格数据持久化在项目本地 `data/personas.json`（可用 `PERSONA_STORE_FILE` 覆盖），默认自动提供 `base-assistant`，未选择人格时向后兼容。
+
+### 人格 CRUD
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/personas?include_archived=false` | 列出人格 |
+| POST | `/api/personas` | 创建人格 |
+| GET | `/api/personas/{persona_id}` | 查看人格详情 |
+| PUT | `/api/personas/{persona_id}` | 编辑人格正文/规则/边界 |
+| DELETE | `/api/personas/{persona_id}` | 归档人格（基础人格不可归档） |
+| POST | `/api/personas/{persona_id}/restore` | 恢复归档人格 |
+
+人格字段：`id`、`name`、`description`、`persona_prompt`、`style_rules`、`behavior_rules`、`permission_boundary`、`version`、`status`、`created_at`、`updated_at`。
+
+### 绑定与注入
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/personas/bindings` | 查看 Agent/Session 绑定 |
+| PUT | `/api/personas/bindings/agents/{agent_name}` | 绑定 Agent 默认人格，body: `{ "persona_id": "..." }` |
+| PUT | `/api/personas/bindings/sessions/{session_id}` | 绑定会话人格 |
+
+解析优先级：请求体 `persona_id` > `session_id` 绑定 > Agent 绑定 > `base-assistant`。`/api/chat`、`/api/chat/stream`、WebSocket `user_message` 和 `/api/agents/{name}/invoke` 都可通过输入数据携带 `persona_id`/`session_id` 生效。
+
+### 自我迭代建议与审核
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/personas/proposals?status=pending` | 列出人格迭代建议 |
+| POST | `/api/personas/{persona_id}/proposals` | 基于反馈/管理员指令/反思生成待审核建议 |
+| GET | `/api/personas/proposals/{proposal_id}` | 查看建议、diff、summary |
+| POST | `/api/personas/proposals/{proposal_id}/approve` | 管理员批准，必须 `admin_approved=true`，生成新版本 |
+| POST | `/api/personas/proposals/{proposal_id}/reject` | 管理员拒绝 |
+| GET | `/api/personas/{persona_id}/versions` | 查看版本历史 |
+| POST | `/api/personas/{persona_id}/rollback` | 回滚到旧版本，必须 `admin_approved=true`，生成新版本 |
+
+安全边界：建议永远以 `pending` 保存，批准前不会修改人格正文；若配置 `PERSONA_ADMIN_TOKEN`，变更/审核接口需要 `X-Admin-Token`。人格提示词注入时被标记为“受控配置”，不得扩大工具、Shell、写入、管理员或系统级权限。

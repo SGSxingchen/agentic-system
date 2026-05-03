@@ -11,6 +11,10 @@ import type {
   Message,
   EvolutionGraph,
   ToolPromptInfo,
+  Persona,
+  PersonaBindings,
+  PersonaProposal,
+  PersonaVersion,
 } from '../types'
 
 const API_BASE = ''
@@ -413,4 +417,72 @@ export async function getPipelineExecution(
 
 export async function getPipelineExecutions(): Promise<APIResponse<PipelineExecution[]>> {
   return get<PipelineExecution[]>('/api/pipelines/executions')
+}
+
+// ===== 人格系统 API =====
+
+
+export async function listPersonas(includeArchived = false): Promise<APIResponse<Persona[]>> {
+  return get<Persona[]>(`/api/personas?include_archived=${includeArchived ? 'true' : 'false'}`)
+}
+
+export async function createPersona(data: Partial<Persona> & { name: string }): Promise<APIResponse<Persona>> {
+  return post<Persona>('/api/personas', data)
+}
+
+export async function updatePersona(id: string, data: Partial<Persona>): Promise<APIResponse<Persona>> {
+  return put<Persona>(`/api/personas/${encodeURIComponent(id)}`, data)
+}
+
+export async function archivePersona(id: string): Promise<APIResponse<Persona>> {
+  return del<Persona>(`/api/personas/${encodeURIComponent(id)}`)
+}
+
+export async function restorePersona(id: string): Promise<APIResponse<Persona>> {
+  return post<Persona>(`/api/personas/${encodeURIComponent(id)}/restore`)
+}
+
+export async function getPersonaBindings(): Promise<APIResponse<PersonaBindings>> {
+  return get<PersonaBindings>('/api/personas/bindings')
+}
+
+export async function bindAgentPersona(agentName: string, personaId: string): Promise<APIResponse<unknown>> {
+  return put(`/api/personas/bindings/agents/${encodeURIComponent(agentName)}`, { persona_id: personaId })
+}
+
+export async function bindSessionPersona(sessionId: string, personaId: string): Promise<APIResponse<unknown>> {
+  return put(`/api/personas/bindings/sessions/${encodeURIComponent(sessionId)}`, { persona_id: personaId })
+}
+
+export async function listPersonaProposals(status?: string): Promise<APIResponse<PersonaProposal[]>> {
+  const suffix = status ? `?status=${encodeURIComponent(status)}` : ''
+  return get<PersonaProposal[]>(`/api/personas/proposals${suffix}`)
+}
+
+export async function createPersonaProposal(personaId: string, data: {
+  source: string
+  feedback?: string
+  proposal_text?: string
+  proposed_patch?: Record<string, unknown>
+  session_id?: string
+  message_id?: string
+  reflection_id?: string
+}): Promise<APIResponse<PersonaProposal>> {
+  return post<PersonaProposal>(`/api/personas/${encodeURIComponent(personaId)}/proposals`, data)
+}
+
+export async function approvePersonaProposal(id: string, reviewer: string, note = ''): Promise<APIResponse<unknown>> {
+  return post(`/api/personas/proposals/${encodeURIComponent(id)}/approve`, { reviewer, note, admin_approved: true })
+}
+
+export async function rejectPersonaProposal(id: string, reviewer: string, note = ''): Promise<APIResponse<PersonaProposal>> {
+  return post<PersonaProposal>(`/api/personas/proposals/${encodeURIComponent(id)}/reject`, { reviewer, note })
+}
+
+export async function listPersonaVersions(personaId: string): Promise<APIResponse<PersonaVersion[]>> {
+  return get<PersonaVersion[]>(`/api/personas/${encodeURIComponent(personaId)}/versions`)
+}
+
+export async function rollbackPersona(personaId: string, version: number, reviewer: string): Promise<APIResponse<Persona>> {
+  return post<Persona>(`/api/personas/${encodeURIComponent(personaId)}/rollback`, { version, reviewer, admin_approved: true })
 }
