@@ -13,9 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.workspace import resolve_project_path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "data" / "artifacts"
+
+DEFAULT_ARTIFACT_ROOT = "./workspace/artifacts"
 TEXT_MIME_PREFIXES = ("text/",)
 TEXT_MIME_TYPES = {
     "application/json",
@@ -48,7 +49,7 @@ class ArtifactStore:
 
     def __init__(self, root: Optional[str | Path] = None) -> None:
         configured = root or os.getenv("ARTIFACT_STORE_DIR") or DEFAULT_ARTIFACT_ROOT
-        self.root = Path(configured)
+        self.root = resolve_project_path(configured)
         self.files_dir = self.root / "files"
         self.manifest_path = self.root / "artifacts.json"
 

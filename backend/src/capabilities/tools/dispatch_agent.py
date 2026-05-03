@@ -32,11 +32,13 @@ from core.task import (
     set_workspace_root_override,
 )
 
+from core.workspace import project_root
+
 from ._safety import get_workspace_root
 
 logger = logging.getLogger(__name__)
 
-_WORKTREES_DIRNAME = "data/worktrees"
+_WORKTREES_DIRNAME = "worktrees"
 _MAX_DEPTH = 1
 
 
@@ -307,12 +309,12 @@ def _get_task_registry():
 
 
 async def _create_worktree(task_id: str) -> Path:
-    """在工作区根创建一个 git worktree (detached HEAD)。
+    """在默认 workspace 下创建一个 git worktree (detached HEAD)。
 
     成功返回 worktree 绝对路径；任何错误抛 RuntimeError。
     """
-    project_root = get_workspace_root()
-    worktrees_root = project_root / _WORKTREES_DIRNAME
+    repo_root = project_root()
+    worktrees_root = get_workspace_root() / _WORKTREES_DIRNAME
     worktrees_root.mkdir(parents=True, exist_ok=True)
     target = worktrees_root / task_id
 
@@ -323,7 +325,7 @@ async def _create_worktree(task_id: str) -> Path:
         "--detach",
         str(target),
         "HEAD",
-        cwd=str(project_root),
+        cwd=str(repo_root),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

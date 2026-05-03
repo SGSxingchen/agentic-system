@@ -441,6 +441,8 @@ memory:
 
 - `tools.web_search.provider` 在无用户显式配置和无 `WEB_SEARCH_PROVIDER` 环境变量时必须默认为 `duckduckgo`。
 - 只有运行时配置、组件配置或环境变量明确写入 `brave` 时，Web Search 才允许使用 Brave Search API。
+- `tools.file.workspace_root` 是文件工具、bash 默认 cwd、Agent 运行产物的统一工作区根，默认值为 `./workspace`（相对项目根目录解析）。`AGENTIC_WORKSPACE_ROOT` 或显式配置可覆盖；未显式配置时不得回退到进程 cwd 或 repo root。
+- Artifact 默认落在 `./workspace/artifacts`，任务 transcript 默认落在 `./workspace/tasks`，dispatch_agent 临时 worktree 默认落在 `./workspace/worktrees`。这些目录按需自动创建且不入库。
 
 ### 4.4 动态加载 (main.py)
 
@@ -738,7 +740,7 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 ### 12.2 后端数据流
 
-- 存储层：`backend/src/core/artifacts.py` 使用项目本地 `data/artifacts/` 保存 `artifacts.json` manifest 和文件内容；环境变量 `ARTIFACT_STORE_DIR` 可覆盖。
+- 存储层：`backend/src/core/artifacts.py` 默认使用项目根目录下 `workspace/artifacts/` 保存 `artifacts.json` manifest 和文件内容；环境变量 `ARTIFACT_STORE_DIR` 可覆盖。
 - REST API：`backend/src/api/routes/artifacts.py`
   - `GET /api/artifacts?session_id=&limit=` 列出 Artifact。
   - `POST /api/artifacts` 创建文本或 base64 文件 Artifact。

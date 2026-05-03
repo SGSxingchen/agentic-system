@@ -167,7 +167,7 @@ class WebFetchToolConfigRequest(BaseModel):
 class FileToolConfigRequest(BaseModel):
     """Workspace file tool config update request."""
 
-    workspace_root: str = ""
+    workspace_root: str = "./workspace"
 
 
 class ShellToolConfigRequest(BaseModel):

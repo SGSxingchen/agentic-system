@@ -198,7 +198,7 @@ def _tools_response(config: Dict[str, Any]) -> Dict[str, Any]:
             "max_chars": int(web_fetch.get("max_chars", 4000) or 4000),
         },
         "file": {
-            "workspace_root": file_tools.get("workspace_root", ""),
+            "workspace_root": file_tools.get("workspace_root") or "./workspace",
         },
         "shell": {
             "enabled": bool(shell.get("enabled", False)),

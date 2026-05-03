@@ -178,7 +178,7 @@ v2:   Agent 自带工具循环 + 资源闸门  ⇄  派生子 Agent  ⇄  通过
 
 ### 3.5 待决问题
 
-- transcript 落盘位置：`./data/tasks/{task_id}.jsonl`？需要和现有 `data/` 目录约定。
+- transcript 落盘位置：`./workspace/tasks/{task_id}.jsonl`？需要和现有 `data/` 目录约定。
 - `paused` 状态需要前端的"批准/拒绝"交互，UI 怎么呈现？等待 UI 设计另议。
 
 ---
@@ -488,7 +488,7 @@ LLM 输出 N 个 tool_use 块
 - ✅ 新建 `core/task/` 模块：`TaskState`、`TaskStatus`、`TaskType`、`AgentProgress`、`TaskRegistry`、`TranscriptWriter` / `read_transcript`
 - ✅ `Pipeline.execute()` 增 `on_step_event` 回调，每步骤 started/completed/failed/skipped 时触发；不破坏现有 bus 通知路径
 - ✅ 重写 `routes/tasks.py`：用 TaskRegistry 替代旧 `_tasks` 字典；DELETE 真正 cancel asyncio.Task；新增 `GET /api/tasks/{id}/transcript`
-- ✅ Transcript 落盘：`data/tasks/{task_id}.jsonl`，含 created/started/step_*/done/killed/error 事件
+- ✅ Transcript 落盘：`workspace/tasks/{task_id}.jsonl`，含 created/started/step_*/done/killed/error 事件
 - ✅ 前端 `TaskPanel` 增强：显示 `progress`（tool_count / total_tokens / current_step / activity）+ 取消按钮；轮询保留 5s
 - ✅ Workflow → Pipeline 重命名（破坏性）：路由 `/api/workflows/*` → `/api/pipelines/*`、配置 `config/workflows.yaml` → `config/pipelines.yaml`（顶层 key `workflows:` → `pipelines:`）、前端 `WorkflowPanel.{tsx,css}` → `PipelinePanel.*`、`Sidebar` "工作流" → "管线"、Schemas `Workflow*` → `Pipeline*`、`SystemConfig.workflow` → `SystemConfig.pipeline`
 - ✅ 死代码清理：删除 `backend/src/core/workflow/`、`backend/src/core/event/`、`backend/config/`（5 个过期 yaml）、`config/triggers.yaml`；解除 `core/event/engine.py` 的所有依赖
@@ -516,7 +516,7 @@ LLM 输出 N 个 tool_use 块
 - ✅ `capabilities/tools/dispatch_agent.py` 新增 `DispatchAgentCapability`：
   - 解析 `subagent_type` → `CapabilityRegistry`，找不到返 error
   - `check_permissions` + execute 双重校验 `dispatch_depth >= 1`（MVP 禁止嵌套派生）
-  - 可选 `worktree=true`：用 `git worktree add --detach` 在 `data/worktrees/{task_id}/` 建临时 worktree
+  - 可选 `worktree=true`：用 `git worktree add --detach` 在 `workspace/worktrees/{task_id}/` 建临时 worktree
   - 创建 `TaskType.SUB_AGENT` 子 task；asyncio.create_task 派生 `_run_subagent` 后台跑；attach 句柄到 registry
   - 完成 / 失败 / cancel 时回写 TaskRegistry + 父 notification_box + transcript
   - 立即返回 `{task_id, status="dispatched", summary, worktree}`，不阻塞父 Agent

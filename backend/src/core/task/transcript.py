@@ -1,6 +1,6 @@
 """TranscriptWriter — 任务事件落盘（v2 Phase B 支柱 5 的副产物）
 
-每个 Task 写一份 JSONL 文件到 data/tasks/{task_id}.jsonl。
+每个 Task 写一份 JSONL 文件到 workspace/tasks/{task_id}.jsonl。
 事件结构: {ts, type, payload}
 - ts: ISO 时间戳
 - type: start | step_started | step_completed | step_failed | done | killed | error
@@ -17,18 +17,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.workspace import resolve_project_path, workspace_path
+
 logger = logging.getLogger(__name__)
 
 
-def _project_root() -> Path:
-    """返回项目根目录（与 capabilities/tools/_safety 的 fallback 一致）。"""
-    return Path(__file__).resolve().parents[3]
-
-
 def _tasks_dir() -> Path:
-    """data/tasks/ 目录，按需创建。"""
+    """workspace/tasks/ 目录，按需创建。"""
     env_root = os.getenv("AGENTIC_TASK_DATA_DIR", "").strip()
-    base = Path(env_root).expanduser().resolve() if env_root else _project_root() / "data" / "tasks"
+    base = resolve_project_path(env_root) if env_root else workspace_path("tasks")
     base.mkdir(parents=True, exist_ok=True)
     return base
 

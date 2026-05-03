@@ -14,7 +14,7 @@ from core.task.transcript import TranscriptWriter, read_transcript
 
 @pytest.fixture(autouse=True)
 def _isolate_data_dir(tmp_path, monkeypatch):
-    """每个测试都使用独立 data/tasks 目录，避免 cross-test 污染。"""
+    """每个测试都使用独立 workspace/tasks 目录，避免 cross-test 污染。"""
     monkeypatch.setenv("AGENTIC_TASK_DATA_DIR", str(tmp_path / "tasks"))
 
 

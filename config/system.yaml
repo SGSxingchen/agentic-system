@@ -89,7 +89,7 @@ tools:
     timeout: 10
     max_chars: 4000
   file:
-    workspace_root: ""           # 留空使用项目根目录
+    workspace_root: "./workspace"  # 默认项目根目录下 ./workspace；可用 AGENTIC_WORKSPACE_ROOT 覆盖
   shell:
     enabled: false               # 默认关闭，避免任意命令执行
     timeout: 30
