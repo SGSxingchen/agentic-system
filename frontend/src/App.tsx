@@ -64,7 +64,10 @@ function AppContent() {
     dispatch({ type: 'SET_CONNECTED', payload: false })
   }, [dispatch])
 
-  const wsUrl = useMemo(() => `ws://${window.location.host}/ws`, [])
+  const wsUrl = useMemo(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${protocol}//${window.location.host}/ws`
+  }, [])
 
   useWebSocket({
     url: wsUrl,

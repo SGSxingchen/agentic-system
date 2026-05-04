@@ -141,12 +141,6 @@ export function MemoryPanel({ onClose, initialTab = 'overview' }: MemoryPanelPro
     setActiveTab(initialTab)
   }, [initialTab])
 
-  const selectedMemory =
-    memories.find((item) => item.id === selectedId) ||
-    recallResults.find((item) => item.id === selectedId) ||
-    memories[0] ||
-    null
-
   const showNotice = (message: string) => {
     setNotice(message)
     window.setTimeout(() => setNotice(null), 2800)
@@ -204,6 +198,11 @@ export function MemoryPanel({ onClose, initialTab = 'overview' }: MemoryPanelPro
     const text = `${memory.content} ${JSON.stringify(memory.metadata || {})}`.toLowerCase()
     return !keyword.trim() || text.includes(keyword.trim().toLowerCase())
   })
+  const detailMemories = activeTab === 'recall' ? recallResults : filteredMemories
+  const selectedMemory =
+    detailMemories.find((item) => item.id === selectedId) ||
+    detailMemories[0] ||
+    null
 
   const total = stats?.total_memories ?? stats?.total ?? 0
   const byType = stats?.by_type || { episodic: 0, semantic: 0, procedural: 0 }
@@ -381,7 +380,9 @@ export function MemoryPanel({ onClose, initialTab = 'overview' }: MemoryPanelPro
     }
     setSaving(true)
     setError(null)
-    const res = await api.updateMemorySettings(settingsForm)
+    const persistableSettings: Partial<MemorySettings> = { ...settingsForm }
+    delete persistableSettings.status
+    const res = await api.updateMemorySettings(persistableSettings)
     if (res.status === 'ok' && res.data) {
       setSettings(res.data)
       setSettingsForm(res.data)

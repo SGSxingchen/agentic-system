@@ -271,7 +271,7 @@ export async function createAgent(data: {
   mcp_servers?: Array<Record<string, unknown>>
 }): Promise<APIResponse<unknown>> {
   const response = await post('/api/agents', data)
-  if (response.status === 'ok') invalidateGetCache('/api/agents')
+  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
   return response
 }
 
@@ -288,13 +288,13 @@ export async function updateAgent(
   }
 ): Promise<APIResponse<unknown>> {
   const response = await put(`/api/agents/${name}`, data)
-  if (response.status === 'ok') invalidateGetCache('/api/agents')
+  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
   return response
 }
 
 export async function deleteAgent(name: string): Promise<APIResponse<void>> {
   const response = await del<void>(`/api/agents/${name}`)
-  if (response.status === 'ok') invalidateGetCache('/api/agents')
+  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
   return response
 }
 
@@ -329,11 +329,15 @@ export async function createDynamicTool(data: {
   attach_to_agents?: string[]
   overwrite?: boolean
 }): Promise<APIResponse<unknown>> {
-  return post('/api/evolution/dynamic-tools', data)
+  const response = await post('/api/evolution/dynamic-tools', data)
+  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
+  return response
 }
 
 export async function reloadEvolutionExtensions(): Promise<APIResponse<unknown>> {
-  return post('/api/evolution/reload')
+  const response = await post('/api/evolution/reload')
+  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
+  return response
 }
 
 export async function getToolPrompts(): Promise<APIResponse<ToolPromptInfo[]>> {
@@ -489,7 +493,12 @@ export async function invokeAgent(
   name: string,
   input: string
 ): Promise<APIResponse<any>> {
-  return post<any>(`/api/agents/${name}/invoke`, { input })
+  return post<any>(`/api/agents/${name}/invoke`, {
+    data: {
+      message: input,
+      input,
+    },
+  })
 }
 
 // ===== 管线（Pipeline）API =====
@@ -548,7 +557,9 @@ export async function createPipeline(data: {
   mode?: string
   steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number; timeout?: number }[]
 }): Promise<APIResponse<unknown>> {
-  return post('/api/pipelines', data)
+  const response = await post('/api/pipelines', data)
+  if (response.status === 'ok') invalidateGetCache('/api/pipelines/templates')
+  return response
 }
 
 export async function updatePipeline(
@@ -559,11 +570,15 @@ export async function updatePipeline(
     steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number; timeout?: number }[]
   }
 ): Promise<APIResponse<unknown>> {
-  return put(`/api/pipelines/${name}`, data)
+  const response = await put(`/api/pipelines/${name}`, data)
+  if (response.status === 'ok') invalidateGetCache('/api/pipelines/templates')
+  return response
 }
 
 export async function deletePipeline(name: string): Promise<APIResponse<void>> {
-  return del<void>(`/api/pipelines/${name}`)
+  const response = await del<void>(`/api/pipelines/${name}`)
+  if (response.status === 'ok') invalidateGetCache('/api/pipelines/templates')
+  return response
 }
 
 export async function getPipelineExecution(

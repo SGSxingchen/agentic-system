@@ -34,10 +34,16 @@
 {
   "status": "ok",
   "data": {
+    "status": "ok",
     "bus_running": true,
     "agent_loaded": true,
     "memory_initialized": true,
-    "agents_registered": 4
+    "agents_registered": 4,
+    "version": "0.3.0",
+    "uptime": 123,
+    "agents": {
+      "assistant": "idle"
+    }
   }
 }
 ```
@@ -269,6 +275,9 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
   }
 }
 ```
+
+兼容说明：旧前端曾直接提交 `{"input": "你好"}` 这类扁平 payload；
+后端会自动包装为 `data`，避免校验通过但实际空输入调用 Agent。
 
 **响应:**
 ```json

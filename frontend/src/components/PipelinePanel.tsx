@@ -25,6 +25,14 @@ interface PipelineExecution {
   status: 'running' | 'completed' | 'failed'
   current_step?: number
   results?: Record<string, unknown>
+  step_results?: Array<{
+    step_name: string
+    status: string
+    output?: unknown
+    error?: string | null
+    duration_ms?: number | null
+  }>
+  duration_ms?: number
   started_at: string
   finished_at?: string
 }
@@ -290,7 +298,21 @@ export function PipelinePanel() {
     try {
       const res = await api.executePipeline(selectedPipeline, { user_requirement: inputText.trim() })
       if (res.status === 'ok' && res.data) {
-        setExecutions((prev) => [res.data as unknown as PipelineExecution, ...prev])
+        const raw = res.data as unknown as Record<string, unknown>
+        const now = new Date().toISOString()
+        const execution: PipelineExecution = {
+          id: String(raw.id || `${selectedPipeline}-${Date.now()}`),
+          pipeline_id: String(raw.pipeline_id || raw.template_id || selectedPipeline),
+          status: raw.status === 'failed' ? 'failed' : raw.status === 'running' ? 'running' : 'completed',
+          results: (raw.results || raw.context || raw.output || raw) as Record<string, unknown>,
+          step_results: Array.isArray(raw.step_results)
+            ? raw.step_results as PipelineExecution['step_results']
+            : undefined,
+          duration_ms: typeof raw.duration_ms === 'number' ? raw.duration_ms : undefined,
+          started_at: String(raw.started_at || now),
+          finished_at: String(raw.finished_at || raw.completed_at || now),
+        }
+        setExecutions((prev) => [execution, ...prev])
         setInputText('')
       } else {
         setError(res.message || '执行失败')
@@ -599,6 +621,18 @@ export function PipelinePanel() {
                     <pre className="execution-results">
                       {JSON.stringify(exec.results, null, 2)}
                     </pre>
+                  )}
+                  {exec.step_results && exec.step_results.length > 0 && (
+                    <div className="execution-steps">
+                      {exec.step_results.map((step) => (
+                        <div key={step.step_name} className={`execution-step status-${step.status}`}>
+                          <span>{step.step_name}</span>
+                          <strong>{step.status}</strong>
+                          {step.duration_ms != null && <em>{Math.round(step.duration_ms)}ms</em>}
+                          {step.error && <small>{step.error}</small>}
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               ))}
