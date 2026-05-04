@@ -3,7 +3,7 @@
 定义所有 API 端点使用的请求和响应 Schema，
 确保类型安全和自动文档生成。
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Any, Literal, Optional
 from enum import Enum
 
@@ -129,6 +129,20 @@ class AgentInvokeRequest(BaseModel):
     """直接调用 Agent 请求"""
 
     data: dict[str, Any] = Field(default_factory=dict, description="传给 Agent 的数据")
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_flat_payload(cls, value: Any) -> Any:
+        """Accept old frontend payloads like {"input": "..."}.
+
+        The documented shape is {"data": {...}}, but earlier UI code posted a
+        flat object. Without this compatibility layer the request validated
+        successfully while silently invoking the Agent with an empty dict.
+        """
+
+        if not isinstance(value, dict) or "data" in value:
+            return value
+        return {"data": dict(value)}
 
 
 # ========================

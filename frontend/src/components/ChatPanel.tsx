@@ -946,6 +946,7 @@ export function ChatPanel() {
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId
+    setSelectedArtifact(null)
   }, [activeSessionId])
 
   useEffect(() => {
@@ -1164,9 +1165,18 @@ export function ChatPanel() {
             onChange={async (e) => {
               const next = e.target.value
               setSelectedPersonaId(next)
-              if (activeSessionIdRef.current) await bindSessionPersona(activeSessionIdRef.current, next)
+              setSessionError('')
+              if (activeSessionIdRef.current) {
+                const res = await bindSessionPersona(activeSessionIdRef.current, next)
+                if (res.status !== 'ok') {
+                  setSessionError(res.message || '人格绑定失败')
+                }
+              }
             }}
           >
+            {!personas.some((persona) => persona.id === selectedPersonaId) && (
+              <option value={selectedPersonaId}>{selectedPersonaId || 'base-assistant'}</option>
+            )}
             {personas.map((persona) => (
               <option key={persona.id} value={persona.id}>{persona.name} · v{persona.version}</option>
             ))}

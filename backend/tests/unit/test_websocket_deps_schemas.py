@@ -330,6 +330,10 @@ class TestAgentInvokeRequest:
         r = AgentInvokeRequest(data={"code": "print(1)"})
         assert r.data["code"] == "print(1)"
 
+    def test_legacy_flat_payload_is_preserved_as_data(self):
+        r = AgentInvokeRequest(input="hello", session_id="s1")
+        assert r.data == {"input": "hello", "session_id": "s1"}
+
 
 class TestPipelineExecuteRequest:
     def test_defaults(self):

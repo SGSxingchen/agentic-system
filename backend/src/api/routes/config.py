@@ -6,6 +6,7 @@
 - GET  /api/health   — 健康检查
 """
 from pathlib import Path
+import time
 from typing import Any, Dict
 from urllib.parse import urlsplit, urlunsplit
 
@@ -22,6 +23,7 @@ from ..dependencies import (
 )
 
 router = APIRouter(tags=["config"])
+STARTED_AT = time.time()
 
 SENSITIVE_CONFIG_KEYS = {
     "api_key",
@@ -398,17 +400,28 @@ async def list_provider_models(request: ModelListRequest):
 @router.get("/api/health", response_model=APIResponse)
 async def health():
     """健康检查"""
+    from core.config import load_config
+
     bus = get_bus()
     cap_registry = get_capability_registry()
     memory_store = get_memory_store()
     registry = get_agent_registry()
+    config = load_config()
+    system_config = config.get("system", {}) if isinstance(config.get("system"), dict) else {}
 
     return APIResponse(
         status="ok",
         data={
+            "status": "ok",
             "bus_running": bus._running if bus else False,
             "agent_loaded": cap_registry is not None and "assistant" in cap_registry,
             "memory_initialized": memory_store is not None,
             "agents_registered": len(registry) if registry else 0,
+            "version": system_config.get("version", "0.3.0"),
+            "uptime": int(time.time() - STARTED_AT),
+            "agents": {
+                item.name: item.status.value
+                for item in registry.list_all()
+            } if registry else {},
         },
     )
