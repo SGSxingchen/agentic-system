@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = resolve(new URL('..', import.meta.url).pathname)
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = mkdtempSync(join(tmpdir(), 'message-timeline-'))
+const localTsc = join(root, 'node_modules', 'typescript', 'bin', 'tsc')
 
 try {
-  execFileSync('tsc', [
+  const tscCommand = existsSync(localTsc) ? process.execPath : 'tsc'
+  const tscArgs = existsSync(localTsc) ? [localTsc] : []
+  execFileSync(tscCommand, [
+    ...tscArgs,
     '--target', 'ES2020',
     '--module', 'ES2020',
     '--moduleResolution', 'node',

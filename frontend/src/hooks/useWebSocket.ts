@@ -25,6 +25,7 @@ export function useWebSocket({
   const wsRef = useRef<WebSocket | null>(null)
   const connectedRef = useRef(false)
   const reconnectAttemptsRef = useRef(0)
+  const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
 
@@ -43,6 +44,13 @@ export function useWebSocket({
     }
   }, [])
 
+  const clearConnectTimer = useCallback(() => {
+    if (connectTimerRef.current) {
+      clearTimeout(connectTimerRef.current)
+      connectTimerRef.current = null
+    }
+  }, [])
+
   const connect = useCallback(() => {
     if (!mountedRef.current) return
 
@@ -51,7 +59,7 @@ export function useWebSocket({
       wsRef.current = ws
 
       ws.onopen = () => {
-        if (!mountedRef.current) {
+        if (!mountedRef.current || wsRef.current !== ws) {
           ws.close()
           return
         }
@@ -61,6 +69,7 @@ export function useWebSocket({
       }
 
       ws.onclose = () => {
+        if (wsRef.current !== ws) return
         connectedRef.current = false
         wsRef.current = null
         onDisconnectRef.current?.()
@@ -89,11 +98,13 @@ export function useWebSocket({
       }
 
       ws.onerror = () => {
+        if (!mountedRef.current || wsRef.current !== ws) return
         // onerror always fires before onclose, just log
         console.warn('[WS] 连接错误')
       }
 
       ws.onmessage = (event: MessageEvent) => {
+        if (!mountedRef.current || wsRef.current !== ws) return
         try {
           const data = JSON.parse(event.data as string)
           onMessageRef.current?.(data)
@@ -108,10 +119,14 @@ export function useWebSocket({
 
   useEffect(() => {
     mountedRef.current = true
-    connect()
+    connectTimerRef.current = setTimeout(() => {
+      connectTimerRef.current = null
+      connect()
+    }, 0)
 
     return () => {
       mountedRef.current = false
+      clearConnectTimer()
       clearReconnectTimer()
       if (wsRef.current) {
         wsRef.current.onclose = null // prevent reconnect on unmount
@@ -119,7 +134,7 @@ export function useWebSocket({
         wsRef.current = null
       }
     }
-  }, [connect, clearReconnectTimer])
+  }, [connect, clearConnectTimer, clearReconnectTimer])
 
   const send = useCallback((data: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
