@@ -8,6 +8,7 @@
     2. 等待 "🚀 系统全部初始化完成!" 输出
     3. 运行此脚本:
        python3 tests/api_live_test.py
+       python3 tests/api_live_test.py --suite infra
        python3 tests/api_live_test.py --suite smoke
 
 依赖:  pip install httpx websockets
@@ -24,6 +25,17 @@ import httpx
 
 BASE_URL = "http://localhost:8001"
 TIMEOUT = 120
+
+
+def configure_output_encoding() -> None:
+    """Prefer UTF-8 console output on Windows shells with legacy encodings."""
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+configure_output_encoding()
 
 
 # ─── 测试基础设施 ─────────────────────────────────────────
@@ -173,6 +185,50 @@ class TestRunner:
 
 def run_smoke_tests(t: TestRunner):
     """执行关键核心链路测试。"""
+    run_infra_tests(t)
+
+    t.request(
+        "调用 Agent (assistant)",
+        "POST", "/api/agents/assistant/invoke",
+        json_body={"data": {"message": "Reply with exactly: HELLO_OK"}},
+        expect_status=200,
+        request_timeout=180,
+        retries=1,
+    )
+
+    t.request(
+        "执行管线 (task_decompose_and_execute)",
+        "POST", "/api/pipelines/execute",
+        json_body={
+            "template_name": "task_decompose_and_execute",
+            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
+            "options": {},
+        },
+        expect_status=200,
+        expect_json_field="status",
+        expect_json_value="ok",
+        request_timeout=300,
+        retries=1,
+    )
+
+    t.request(
+        "执行管线 (code_generation_and_review)",
+        "POST", "/api/pipelines/execute",
+        json_body={
+            "template_name": "code_generation_and_review",
+            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
+            "options": {},
+        },
+        expect_status=200,
+        expect_json_field="status",
+        expect_json_value="ok",
+        request_timeout=360,
+        retries=1,
+    )
+
+
+def run_infra_tests(t: TestRunner):
+    """执行不依赖真实 LLM 调用的基础设施测试。"""
     t.request(
         "健康检查",
         "GET", "/api/health",
@@ -190,50 +246,32 @@ def run_smoke_tests(t: TestRunner):
     )
 
     t.request(
-        "调用 Agent (assistant)",
-        "POST", "/api/agents/assistant/invoke",
-        json_body={"data": {"message": "Reply with exactly: HELLO_OK"}},
-        expect_status=200,
-        request_timeout=180,
-        retries=1,
-    )
-
-    t.request(
-        "获取工作流模板",
-        "GET", "/api/workflows/templates",
+        "列出所有 Agent",
+        "GET", "/api/agents",
         expect_status=200,
         expect_json_field="status",
         expect_json_value="ok",
     )
 
     t.request(
-        "执行工作流 (task_decompose_and_execute)",
-        "POST", "/api/workflows/execute",
+        "获取管线模板",
+        "GET", "/api/pipelines/templates",
+        expect_status=200,
+        expect_json_field="status",
+        expect_json_value="ok",
+    )
+
+    t.request(
+        "执行管线 (无效类型)",
+        "POST", "/api/pipelines/execute",
         json_body={
-            "template_name": "task_decompose_and_execute",
-            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
+            "pipeline_type": "nonexistent_pipeline",
+            "requirement": "test",
             "options": {},
         },
         expect_status=200,
         expect_json_field="status",
-        expect_json_value="ok",
-        request_timeout=300,
-        retries=1,
-    )
-
-    t.request(
-        "执行工作流 (code_generation_and_review)",
-        "POST", "/api/workflows/execute",
-        json_body={
-            "template_name": "code_generation_and_review",
-            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
-            "options": {},
-        },
-        expect_status=200,
-        expect_json_field="status",
-        expect_json_value="ok",
-        request_timeout=360,
-        retries=1,
+        expect_json_value="error",
     )
 
 
@@ -312,7 +350,7 @@ def run_all_tests(t: TestRunner):
     t.request(
         "创建任务",
         "POST", "/api/tasks",
-        json_body={"requirement": "Write a hello world program", "workflow": "auto"},
+        json_body={"requirement": "Write a hello world program", "pipeline": "auto"},
         expect_status=200,
         store_field="data.task_id",
         store_key="task_id",
@@ -355,7 +393,7 @@ def run_all_tests(t: TestRunner):
     t.request(
         "创建任务 (空 requirement, 422)",
         "POST", "/api/tasks",
-        json_body={"requirement": "", "workflow": "auto"},
+        json_body={"requirement": "", "pipeline": "auto"},
         expect_status=422,
     )
 
@@ -457,14 +495,14 @@ def run_all_tests(t: TestRunner):
     )
 
     # ═══════════════════════════════════════════════════════
-    # 4. 工作流错误路径
+    # 4. 管线错误路径
     # ═══════════════════════════════════════════════════════
 
     t.request(
-        "执行工作流 (无效类型)",
-        "POST", "/api/workflows/execute",
+        "执行管线 (无效类型)",
+        "POST", "/api/pipelines/execute",
         json_body={
-            "workflow_type": "nonexistent_workflow",
+            "pipeline_type": "nonexistent_pipeline",
             "requirement": "test",
             "options": {},
         },
@@ -474,10 +512,10 @@ def run_all_tests(t: TestRunner):
     )
 
     t.request(
-        "执行工作流 (空 requirement)",
-        "POST", "/api/workflows/execute",
+        "执行管线 (空 requirement)",
+        "POST", "/api/pipelines/execute",
         json_body={
-            "workflow_type": "plan_code_review",
+            "pipeline_type": "code_generation_and_review",
             "requirement": "",
         },
         expect_status=200,
@@ -544,9 +582,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run live API checks against the local backend.")
     parser.add_argument(
         "--suite",
-        choices=("full", "smoke"),
+        choices=("full", "smoke", "infra"),
         default="full",
-        help="Choose a smaller smoke suite or the full live suite.",
+        help="Choose deterministic infra checks, a smaller smoke suite, or the full live suite.",
     )
     args = parser.parse_args()
 
@@ -571,15 +609,18 @@ def main():
     # 执行 HTTP 测试
     t = TestRunner()
     try:
-        if args.suite == "smoke":
+        if args.suite == "infra":
+            run_infra_tests(t)
+        elif args.suite == "smoke":
             run_smoke_tests(t)
         else:
             run_all_tests(t)
     finally:
         t.close()
 
-    # 执行 WebSocket 测试
-    asyncio.run(test_websocket(t.results))
+    # 执行 WebSocket 测试；infra 套件保持快速且不依赖 LLM 响应。
+    if args.suite != "infra":
+        asyncio.run(test_websocket(t.results))
 
     # 输出汇总
     all_passed = t.summary()

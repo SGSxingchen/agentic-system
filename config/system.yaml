@@ -95,7 +95,7 @@ tools:
     timeout: 30
   custom: {}                     # 未来工具的 URL/Key/extra 参数，Key 不会通过 API 明文返回
 
-# 工作流配置
-workflow:
+# Pipeline 配置
+pipeline:
   max_iterations: 10             # 全局最大迭代次数
   default_timeout: 300.0         # 默认超时（秒）

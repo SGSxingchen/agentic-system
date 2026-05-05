@@ -72,14 +72,14 @@ npm run dev
 1. **对话** — 在 ChatPanel 输入消息，AssistantAgent 自动回复（带记忆检索）
 2. **提交任务** — 在 TaskPanel 描述需求，触发 规划→编码→审查 流水线
 3. **查看智能体** — 在 AgentPanel 查看各 Agent 的状态和能力
-4. **工作流** — 在 WorkflowPanel 选择预设模板执行代码生成任务
+4. **管线** — 在 PipelinePanel 选择预设模板执行代码生成任务
 5. **记忆管理** — 在 MemoryPanel 查看/搜索/创建/删除记忆
 6. **系统监控** — 在 MonitorPanel 查看实时系统状态
 
 ## 6. 运行测试
 
 ```bash
-# 全部测试 (~331 个用例)
+# 全部测试 (当前约 605 个用例)
 python3 -m pytest backend/tests/ -q
 
 # 单元测试
@@ -87,6 +87,9 @@ python3 -m pytest backend/tests/unit/ -v
 
 # 集成测试
 python3 -m pytest backend/tests/integration/ -v
+
+# 基础设施验收（不依赖真实 LLM，需先启动后端）
+python3 tests/api_live_test.py --suite infra
 
 # 真实 LLM 冒烟验证（需先启动后端）
 python3 tests/api_live_test.py --suite smoke
@@ -118,15 +121,14 @@ $env:PYTHONIOENCODING='utf-8'
 
 - ✅ 4 个专业智能体 (Assistant / Planner / Coder / Reviewer)
 - ✅ 统一消息总线 (发布订阅 / 请求响应 / 广播 / 优先级队列)
-- ✅ 事件引擎 + 扳机系统 (ECA 规则引擎)
-- ✅ 工作流编排 (顺序 / 并行 / 条件 / 重试 / YAML 模板)
+- ✅ Pipeline 编排 (顺序 / 并行 / 条件 / 超时 / YAML 模板)
 - ✅ 长期记忆系统 (情景/语义/程序记忆 + 多信号加权检索)
 - ✅ 能力插件 (代码解析 / 静态分析 / 测试运行)
 - ✅ 上下文管理 (全局/会话/智能体三层作用域)
-- ✅ 19 个 REST API + WebSocket 实时通信
-- ✅ React 前端 (8 个面板)
-- ✅ ~331 个测试用例 (单元 + 集成)
-- ✅ YAML 配置体系 (5 个配置文件 + 动态加载 + fallback)
+- ✅ 31 个 REST API + WebSocket 实时通信
+- ✅ React 前端 (9 个面板)
+- ✅ ~605 个测试用例 (单元 + 集成)
+- ✅ YAML 配置体系 (4 个主配置文件 + 动态加载 + fallback)
 - ✅ 结构化日志 + 链路追踪
 
 ## 更多文档
