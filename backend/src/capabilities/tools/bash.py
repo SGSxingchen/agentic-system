@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
@@ -121,10 +122,11 @@ class BashCapability(CapabilityBase):
             if pattern in lowered:
                 return {"error": f"Command blocked for safety: contains '{pattern}'"}
 
+        command_to_run = "cd" if os.name == "nt" and command.casefold() == "pwd" else command
         process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_shell(
-                command,
+                command_to_run,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(resolved_cwd),
