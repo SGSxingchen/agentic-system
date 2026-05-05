@@ -65,7 +65,7 @@ agentic-system/
 ├── config/                             # ★ YAML 配置目录 (被 config.py 动态加载)
 │   ├── agents.yaml                     #   智能体定义
 │   ├── triggers.yaml                   #   扳机规则
-│   ├── workflows.yaml                  #   工作流模板
+│   ├── pipelines.yaml                  #   Pipeline 模板
 │   ├── capabilities.yaml               #   能力插件
 │   └── system.yaml                     #   全局系统配置 (LLM/Bus/Memory 等)
 │
@@ -93,7 +93,7 @@ agentic-system/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── agents.py           #     GET/POST /api/agents/*
 │   │   │   │   ├── tasks.py            #     GET/POST/DELETE /api/tasks/*
-│   │   │   │   ├── workflows.py        #     GET/POST /api/workflows/*
+│   │   │   │   ├── pipelines.py        #     GET/POST/PUT/DELETE /api/pipelines/*
 │   │   │   │   ├── memory.py           #     GET/POST/DELETE /api/memory/*
 │   │   │   │   └── config.py           #     GET/POST /api/config + /api/health
 │   │   │   └── websocket/
@@ -112,10 +112,6 @@ agentic-system/
 │   │   │   │   ├── unified_bus.py      #     ★ UnifiedBus (当前使用)
 │   │   │   │   ├── channels.py         #     Event/Request/Broadcast Channel
 │   │   │   │   └── router.py           #     MessageRouter
-│   │   │   ├── event/                  #   事件引擎
-│   │   │   │   ├── engine.py           #     EventEngine
-│   │   │   │   ├── trigger.py          #     Trigger 数据类
-│   │   │   │   └── registry.py         #     TriggerRegistry
 │   │   │   ├── memory/                 #   记忆系统
 │   │   │   │   ├── types.py            #     Memory/MemoryType
 │   │   │   │   ├── store.py            #     InMemoryStore + ChromaStore
@@ -129,9 +125,9 @@ agentic-system/
 │   │   │   │   ├── prompt_override.py  #     ★ Tool 提示词覆盖
 │   │   │   │   └── registry.py         #     CapabilityRegistry
 │   │   │   ├── context/store.py        #   上下文管理 (三层作用域)
-│   │   │   ├── workflow/               #   工作流编排
-│   │   │   │   ├── orchestrator.py     #     WorkflowOrchestrator
-│   │   │   │   └── types.py            #     Task/TaskResult/WorkflowResult
+│   │   │   ├── pipeline/               #   Pipeline 编排
+│   │   │   │   ├── pipeline.py         #     Pipeline 执行器
+│   │   │   │   └── types.py            #     Step/Pipeline 结果类型
 │   │   │   └── llm/                    #   LLM 客户端
 │   │   │       ├── base.py / factory.py
 │   │   │       ├── openai_client.py
@@ -205,12 +201,9 @@ LLM 客户端层 (OpenAI / Anthropic)
 2. bus.start()                  → 启动 UnifiedBus (优先级队列处理循环)
 3. ContextStore()               → 初始化上下文存储
 4. CapabilityRegistry           → 从 config/capabilities.yaml 加载能力
-5. TriggerRegistry              → 从 config/triggers.yaml 加载扳机
-6. EventEngine                  → 初始化事件引擎
-7. WorkflowOrchestrator         → 从 config/workflows.yaml 加载模板
-8. init_memory_system()         → 初始化记忆存储/检索/巩固
-9. reload_agent()               → 从 config/agents.yaml 创建并注册 Agent
-10. lifecycle_manager.start()   → 启动健康监控
+5. init_memory_system()         → 初始化记忆存储/检索/巩固
+6. reload_agent()               → 从 config/agents.yaml 创建并注册 Agent
+7. Pipeline                     → 从 config/pipelines.yaml 加载模板
 ```
 
 **关键设计: 所有子系统都有 fallback 机制。** 如果 `config/*.yaml` 缺失或为空，回退到硬编码默认值。
@@ -239,22 +232,9 @@ LLM 客户端层 (OpenAI / Anthropic)
 
 **向后兼容:** 通过 `_subscribers` 字典兼容旧版 SimpleBus 接口。
 
-### 3.4 事件引擎与扳机系统
+### 3.4 Pipeline 监控事件
 
-**EventEngine** (`core/event/engine.py`):
-1. 接收总线事件
-2. 在 TriggerRegistry 中查找匹配的扳机 (按优先级排序)
-3. 安全评估条件表达式 (`eval` with restricted `__builtins__`)
-4. 调度 Agent: 同步扳机串行执行，异步扳机并发执行
-
-**Trigger 字段:**
-- `id` — 唯一标识
-- `event_type` — 监听的事件类型
-- `agent_name` — 响应的 Agent
-- `condition` — Python 条件表达式 (可选)
-- `priority` — 优先级 (0 最高)
-- `async_mode` — 异步执行 (默认 True)
-- `enabled` — 是否启用
+当前生产路径已从静态 EventEngine/TriggerRegistry 迁移到 Pipeline + Agent 工具循环。Pipeline 执行步骤时通过 UnifiedBus 广播 `step_started`、`step_completed`、`step_failed` 等事件，WebSocket 事件桥接会将这些监控事件推送到前端 MonitorPanel。
 
 ### 3.5 Agent 系统
 
@@ -405,7 +385,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 | `agents.yaml` | `agents` (列表) | 4 个 Agent 定义 |
 | `triggers.yaml` | `triggers` (列表) | 5 个事件扳机规则 |
 | `capabilities.yaml` | `capabilities` (列表) | 2 个原生能力 (MCP/OpenAPI 预留) |
-| `workflows.yaml` | `workflows` (字典) | 3 个工作流模板 |
+| `pipelines.yaml` | `pipelines` (字典) | 3 个 Pipeline 模板 |
 
 ### 4.3 加载机制
 
@@ -455,8 +435,11 @@ _CAPABILITY_CLASS_MAP = {
 | GET | `/api/tasks` | 列出所有任务 |
 | GET | `/api/tasks/{task_id}` | 获取任务详情 |
 | DELETE | `/api/tasks/{task_id}` | 取消任务 |
-| GET | `/api/workflows/templates` | 获取工作流模板 |
-| POST | `/api/workflows/execute` | 执行工作流 |
+| GET | `/api/pipelines/templates` | 获取 Pipeline 模板 |
+| POST | `/api/pipelines/execute` | 执行 Pipeline |
+| POST | `/api/pipelines` | 创建 Pipeline 模板 |
+| PUT | `/api/pipelines/{name}` | 更新 Pipeline 模板 |
+| DELETE | `/api/pipelines/{name}` | 删除 Pipeline 模板 |
 | GET | `/api/memory/stats` | 记忆统计 |
 | GET | `/api/memory/list` | 列出记忆 |
 | POST | `/api/memory/search` | 搜索记忆 |
@@ -485,7 +468,7 @@ _CAPABILITY_CLASS_MAP = {
 | `ChatPanel` | 聊天对话 (用户/AI 消息气泡，记忆使用指示) |
 | `AgentPanel` | Agent 状态查看、直接调用 |
 | `TaskPanel` | 任务提交、列表、状态跟踪 |
-| `WorkflowPanel` | 工作流模板选择、执行 |
+| `PipelinePanel` | Pipeline 模板选择、执行 |
 | `MemoryPanel` | 记忆统计/列表/搜索/创建/删除 |
 | `EvolutionPanel` | 进化中心 (Agent-Tool 能力网络、动态 Tool、子 Agent 创建) |
 | `MonitorPanel` | 系统监控 (连接状态、事件流) |
@@ -536,7 +519,7 @@ _CAPABILITY_CLASS_MAP = {
 - [x] 工作流编排 (顺序/并行/条件/重试)
 - [x] UnifiedBus 替换 SimpleBus
 - [x] YAML 配置体系 (5 个配置文件)
-- [x] 前端 TaskPanel + WorkflowPanel
+- [x] 前端 TaskPanel + PipelinePanel
 - [ ] MCP 客户端集成 (预留接口)
 - [ ] 消息持久化 (预留接口)
 

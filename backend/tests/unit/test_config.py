@@ -140,13 +140,13 @@ class TestLoadYamlConfigs:
         (tmp_path / "agents.yaml").write_text(yaml.dump({
             "agents": [{"name": "coder"}],
         }))
-        (tmp_path / "workflows.yaml").write_text(yaml.dump({
-            "workflows": {"default": {"mode": "sequential"}},
+        (tmp_path / "pipelines.yaml").write_text(yaml.dump({
+            "pipelines": {"default": {"mode": "sequential"}},
         }))
         result = load_yaml_configs(config_dir=tmp_path)
         assert "llm" in result
         assert "agents" in result
-        assert "workflows" in result
+        assert "pipelines" in result
 
     def test_empty_directory(self, tmp_path):
         """空目录返回空 dict"""

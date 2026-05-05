@@ -1,6 +1,6 @@
 # API 文档
 
-> 最后更新: 2026-04-23 | 基于 backend/src/api/routes/ 实际代码
+> 最后更新: 2026-05-05 | 基于 backend/src/api/routes/ 实际代码
 
 ## 基础信息
 
@@ -297,13 +297,13 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 ### POST /api/tasks
 
-提交新任务，自动发送到 PlannerAgent 开始处理。
+提交新任务，按指定 Pipeline 模板异步执行。
 
 **请求体:**
 ```json
 {
   "requirement": "实现一个用户登录功能",
-  "workflow": "plan_code_review"
+  "pipeline": "code_generation_and_review"
 }
 ```
 
@@ -351,11 +351,11 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 ---
 
-## 工作流
+## Pipeline
 
-### GET /api/workflows/templates
+### GET /api/pipelines/templates
 
-获取预定义工作流模板。
+获取预定义 Pipeline 模板。
 
 **响应:**
 ```json
@@ -363,48 +363,48 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
   "status": "ok",
   "data": [
     {
-      "name": "plan_code_review",
-      "description": "标准开发流程: 规划 → 编码 → 审查",
-      "steps": ["planner", "coder", "reviewer"]
-    },
-    {
-      "name": "code_only",
-      "description": "仅编码: 直接生成代码",
-      "steps": ["coder"]
-    },
-    {
-      "name": "code_review",
-      "description": "编码+审查: 编码 → 审查",
-      "steps": ["coder", "reviewer"]
+      "name": "code_generation_and_review",
+      "description": "代码生成与审查流水线",
+      "mode": "sequential",
+      "steps": [
+        {
+          "name": "plan",
+          "agent": "planner",
+          "capability": "planner",
+          "output_key": "plan"
+        }
+      ]
     },
     {
       "name": "full_pipeline",
-      "description": "完整流水线: 规划 → 编码 → 审查 → 测试",
-      "steps": ["planner", "coder", "reviewer", "tester"]
+      "description": "完整开发流水线：规划 → 编码 → 审查 → 修复",
+      "mode": "sequential",
+      "steps": []
     }
   ]
 }
 ```
 
-### POST /api/workflows/execute
+### POST /api/pipelines/execute
 
-执行工作流。
+执行 Pipeline。
 
 **请求体:**
 ```json
 {
   "requirement": "实现排序算法",
-  "workflow_type": "plan_code_review",
+  "template_name": "code_generation_and_review",
   "options": {}
 }
 ```
 
 说明:
-- `template_name` 优先级高于 `workflow_type`
+- `template_name` 优先级高于 `pipeline_type`
+- `input` 是 `requirement` 的别名
 - 执行器会把 `requirement` 同时注入为 `user_requirement` / `requirement` / `message`
 - 若模板步骤声明 `timeout`，超时会在对应 `step_results` 中返回失败信息
 
-工作流 CRUD 中单个步骤现在支持以下字段:
+Pipeline CRUD 中单个步骤支持以下字段:
 - `name`
 - `agent`
 - `input`
@@ -417,7 +417,7 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 ```json
 {
   "status": "ok",
-  "message": "工作流 'full_pipeline' 执行完成",
+  "message": "管线 'code_generation_and_review' 执行完成",
   "data": {
     "status": "completed",
     "context": {
@@ -436,6 +436,38 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
   }
 }
 ```
+
+### POST /api/pipelines
+
+创建新的 Pipeline 模板，写入 `config/pipelines.yaml`。
+
+**请求体:**
+```json
+{
+  "name": "quick_plan",
+  "description": "只做需求规划",
+  "mode": "sequential",
+  "steps": [
+    {
+      "name": "plan",
+      "agent": "planner",
+      "input": {
+        "requirement": "${user_requirement}"
+      },
+      "output_key": "plan",
+      "max_iterations": 1
+    }
+  ]
+}
+```
+
+### PUT /api/pipelines/{name}
+
+更新已有 Pipeline 模板。请求体字段均可选：`description`、`mode`、`steps`。
+
+### DELETE /api/pipelines/{name}
+
+删除已有 Pipeline 模板。
 
 ---
 
