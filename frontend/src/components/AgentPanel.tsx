@@ -5,6 +5,15 @@ import type { Persona, PersonaBindings } from '../types'
 import './AgentPanel.css'
 
 const PERSONA_CACHE_TTL_MS = 30_000
+const PROTECTED_AGENT_NAMES = new Set([
+  'assistant',
+  'tool_creator',
+  'agent_creator',
+  'planner',
+  'coder',
+  'reviewer',
+  'persona_evolution',
+])
 
 const STATUS_CONFIG: Record<
   string,
@@ -94,7 +103,7 @@ export function AgentPanel() {
   const fetchCapabilities = useCallback(async () => {
     const res = await api.listCapabilities()
     if (res.status === 'ok' && res.data) {
-      setCapabilities(res.data as CapabilityOption[])
+      setCapabilities(Array.isArray(res.data) ? (res.data as CapabilityOption[]) : [])
     }
   }, [])
 
@@ -431,6 +440,7 @@ export function AgentPanel() {
     const isNew = editingAgent === '__new__'
     const normalizedFilter = capabilityFilter.trim().toLowerCase()
     const filteredCapabilities = capabilities.filter((cap) => {
+      if (cap.name === form.name) return false
       if (!normalizedFilter) return true
       return (
         cap.name.toLowerCase().includes(normalizedFilter) ||
@@ -641,6 +651,7 @@ export function AgentPanel() {
   const renderAgentCard = (agent: AgentCardData) => {
     const statusCfg = STATUS_CONFIG[agent.status] || STATUS_CONFIG.stopped
     const isConfirming = confirmDelete === agent.name
+    const isProtectedAgent = PROTECTED_AGENT_NAMES.has(agent.name)
     const toolCount = agent.capabilities?.length || 0
     const delegatedAgentCount = (agent.capabilities || []).filter((cap) =>
       state.agents.some((item) => item.name === cap)
@@ -665,7 +676,18 @@ export function AgentPanel() {
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
               </svg>
             </button>
-            <button className="btn-icon btn-icon--danger" onClick={() => setConfirmDelete(agent.name)} title="删除">
+            <button
+              className="btn-icon btn-icon--danger"
+              onClick={() => {
+                if (isProtectedAgent) {
+                  setError(`内置关键 Agent “${agent.name}” 不能从管理页删除`)
+                  return
+                }
+                setConfirmDelete(agent.name)
+              }}
+              title={isProtectedAgent ? '内置关键 Agent 不能删除' : '删除'}
+              disabled={isProtectedAgent}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
               </svg>

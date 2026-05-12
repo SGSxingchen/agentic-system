@@ -1129,3 +1129,18 @@
     grid-template-columns: 1fr;
   }
 }
+
+.btn-icon:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  transform: none;
+  background: rgba(243, 244, 246, 0.72);
+  color: var(--color-text-muted);
+}
+
+.btn-icon:disabled:hover {
+  transform: none;
+  border-color: var(--color-border);
+  background: rgba(243, 244, 246, 0.72);
+  color: var(--color-text-muted);
+}
