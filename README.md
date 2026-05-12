@@ -201,6 +201,20 @@ npm run dev
 
 ---
 
+## 答辩 Demo
+
+前端 **运行 / Agent Run 答辩演示台** 提供一键 Demo 入口，适合毕业设计现场快速展示：
+
+- 预设任务包括小型 Flask API、Python 工具函数、CSV 数据处理脚本。
+- 点击“一键演示”后会创建 Agent Run，并展示 run_id、agent、workspace、status 和耗时。
+- 展开 Run 可查看 transcript 时间线：created、started、流式生成片段、tool_call/tool_result、done/error 等事件。
+- Run 完成后可展开最终输出，用于讲解生成代码、运行命令和验收方式。
+- 答辩材料、Mermaid 架构图和讲稿见 `docs/demo/DEFENSE_MATERIALS.md`；现场验收步骤见 `docs/demo/DEMO_ACCEPTANCE_2026-05-11.md`。
+
+该 Demo 主要用于说明多智能体协作、工具能力、长期记忆上下文和运行过程可观测性，不依赖额外前端插件。
+
+---
+
 ## 测试与验证
 
 ```bash

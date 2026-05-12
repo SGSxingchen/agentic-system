@@ -2,6 +2,8 @@
 
 目标：让答辩现场能在 1 分钟内启动一个清晰、可观测、老师易理解的 Agent Run，展示“多智能体协作 + 工具调用 + 记忆上下文 + transcript 可观测性”。
 
+配套材料图与讲稿见：[`DEFENSE_MATERIALS.md`](./DEFENSE_MATERIALS.md)。
+
 ## 推荐演示入口
 
 前端进入 **运行 / Agent Run 答辩演示台**，使用页面顶部「一键预设任务」。
@@ -45,6 +47,13 @@
 - 展开 Run 后能看懂时间线，不再只有大段 JSON。
 - completed 后可以展开最终输出用于答辩讲解。
 - 空状态文案明确强调多智能体、记忆、工具和可观测性，而不是普通聊天网页。
+
+## 答辩兜底建议
+
+- **LLM/API 正常**：直接点击一键 Demo，现场展示新 Run 的实时 timeline 与最终输出。
+- **LLM 较慢或偶发失败**：切换到已完成的历史 Run，展开 transcript 和最终输出进行讲解。
+- **LLM 不通或网络不可用**：展示已录制 Run 视频、Run 页面截图、示例 transcript JSONL。
+- **完全离线**：使用 `DEFENSE_MATERIALS.md` 中的 Mermaid 图讲解系统架构、运行流程、记忆流程和工具扩展流程。
 
 ## 验证命令
 
