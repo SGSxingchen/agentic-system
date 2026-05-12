@@ -119,8 +119,8 @@ class AgentInfo(BaseModel):
     capabilities: list[str]
     description: str = ""
     system_prompt: Optional[str] = None
-    output_format: Optional[str] = None
-    max_iterations: Optional[int] = None
+    output_format: Optional[Literal["text", "json"]] = None
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
 
@@ -277,11 +277,11 @@ class ConfigResponse(BaseModel):
 class AgentCreateRequest(BaseModel):
     """创建智能体请求（全配置化）"""
 
-    name: str = Field(..., min_length=1, description="智能体名称")
+    name: str = Field(..., min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$", description="智能体名称，只能使用字母、数字和下划线，且不能以数字开头")
     description: str = Field(default="", description="智能体描述")
     system_prompt: str = Field(default="", description="系统提示词")
     tools: list[str] = Field(default_factory=list, description="可用工具名称列表")
-    output_format: str = Field(default="text", description="输出格式: text | json")
+    output_format: Literal["text", "json"] = Field(default="text", description="输出格式: text | json")
     max_iterations: int = Field(default=10, ge=1, le=50, description="tool_use 最大循环次数")
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: list[MCPServerConfigRequest] = Field(default_factory=list)
@@ -293,8 +293,8 @@ class AgentUpdateRequest(BaseModel):
     description: Optional[str] = None
     system_prompt: Optional[str] = None
     tools: Optional[list[str]] = None
-    output_format: Optional[str] = None
-    max_iterations: Optional[int] = None
+    output_format: Optional[Literal["text", "json"]] = None
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
 

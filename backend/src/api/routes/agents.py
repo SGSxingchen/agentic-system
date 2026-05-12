@@ -7,8 +7,10 @@
 - PUT  /api/agents/{name}       — 更新 Agent 配置
 - DELETE /api/agents/{name}     — 删除 Agent
 - POST /api/agents/{name}/invoke — 直接调用某个 Agent
-- GET  /api/capabilities        — 列出所有可用能力（供 Agent 选择 tools）
+- GET  /api/agents/capabilities/list — 列出所有可用能力（供 Agent 选择 tools）
 """
+from copy import deepcopy
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -25,6 +27,11 @@ from core.persona import BASE_PERSONA_ID, DEFAULT_BINDABLE_AGENT_ROLES, PersonaB
 from core.mcp import validate_mcp_server_payload
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+PROTECTED_AGENT_NAMES = {
+    *DEFAULT_BINDABLE_AGENT_ROLES,
+    "persona_evolution",
+}
 
 
 class AgentPersonaBindRequest(BaseModel):
@@ -76,6 +83,23 @@ async def _reload_agents():
     fn = reload_agent_fn()
     if fn:
         await fn()
+
+
+async def _save_config_and_reload(data: dict, previous_data: dict) -> None:
+    """Persist agents.yaml and reload runtime; rollback the file if reload fails."""
+
+    save_yaml_config("agents.yaml", data)
+    _clear_cache()
+    try:
+        await _reload_agents()
+    except Exception as exc:
+        save_yaml_config("agents.yaml", previous_data)
+        _clear_cache()
+        try:
+            await _reload_agents()
+        except Exception as rollback_exc:  # pragma: no cover - defensive logging path
+            print(f"[ERROR] failed to rollback agents.yaml after reload error: {rollback_exc}")
+        raise RuntimeError(f"Agent 配置已回滚，热重载失败: {exc}") from exc
 
 
 # ─── 读取端点 ─────────────────────────────────────────────
@@ -164,6 +188,24 @@ async def list_agents():
     return APIResponse(status="ok", data=agents)
 
 
+@router.get("/capabilities/list", response_model=APIResponse)
+async def list_capabilities():
+    """列出所有已发现的能力（工具 + Agent），供前端 Agent 编辑时选择 tools"""
+    cap_registry = get_capability_registry()
+    if not cap_registry:
+        return APIResponse(status="ok", data=[])
+
+    capabilities = []
+    for schema in cap_registry.list_all():
+        capabilities.append({
+            "name": schema.name,
+            "description": schema.description,
+            "parameters": schema.parameters,
+        })
+
+    return APIResponse(status="ok", data=capabilities)
+
+
 @router.get("/{name}", response_model=APIResponse)
 async def get_agent(name: str):
     """获取特定 Agent 详情"""
@@ -195,7 +237,10 @@ async def create_agent(req: AgentCreateRequest):
     """创建新 Agent，写入 YAML 并热重载"""
     # 读取当前 YAML
     data = load_single_yaml("agents.yaml")
+    previous_data = deepcopy(data)
     agents_list = data.get("agents", [])
+    if not isinstance(agents_list, list):
+        return APIResponse(status="error", message="config/agents.yaml 中 agents 必须是列表")
 
     # 检查名称唯一性
     for a in agents_list:
@@ -225,9 +270,10 @@ async def create_agent(req: AgentCreateRequest):
     data["agents"] = agents_list
 
     # 写回 YAML 并重载
-    save_yaml_config("agents.yaml", data)
-    _clear_cache()
-    await _reload_agents()
+    try:
+        await _save_config_and_reload(data, previous_data)
+    except RuntimeError as exc:
+        return APIResponse(status="error", message=str(exc))
 
     return APIResponse(status="ok", message=f"Agent '{req.name}' 已创建", data=new_agent)
 
@@ -236,7 +282,10 @@ async def create_agent(req: AgentCreateRequest):
 async def update_agent(name: str, req: AgentUpdateRequest):
     """更新 Agent 配置，写入 YAML 并热重载"""
     data = load_single_yaml("agents.yaml")
+    previous_data = deepcopy(data)
     agents_list = data.get("agents", [])
+    if not isinstance(agents_list, list):
+        return APIResponse(status="error", message="config/agents.yaml 中 agents 必须是列表")
 
     target = None
     for a in agents_list:
@@ -257,8 +306,11 @@ async def update_agent(name: str, req: AgentUpdateRequest):
         target["output_format"] = req.output_format
     if req.max_iterations is not None:
         target["max_iterations"] = req.max_iterations
-    if req.skills is not None:
-        target["skills"] = req.skills.model_dump()
+    if "skills" in req.model_fields_set:
+        if req.skills is None:
+            target.pop("skills", None)
+        else:
+            target["skills"] = req.skills.model_dump()
     if req.mcp_servers is not None:
         mcp_servers = [server.model_dump() for server in req.mcp_servers]
         for server in mcp_servers:
@@ -269,9 +321,10 @@ async def update_agent(name: str, req: AgentUpdateRequest):
 
     data["agents"] = agents_list
 
-    save_yaml_config("agents.yaml", data)
-    _clear_cache()
-    await _reload_agents()
+    try:
+        await _save_config_and_reload(data, previous_data)
+    except RuntimeError as exc:
+        return APIResponse(status="error", message=str(exc))
 
     return APIResponse(status="ok", message=f"Agent '{name}' 已更新", data=target)
 
@@ -279,8 +332,14 @@ async def update_agent(name: str, req: AgentUpdateRequest):
 @router.delete("/{name}", response_model=APIResponse)
 async def delete_agent(name: str):
     """删除 Agent，写入 YAML 并热重载"""
+    if name in PROTECTED_AGENT_NAMES:
+        return APIResponse(status="error", message=f"Agent '{name}' 是内置关键 Agent，不能从管理页删除")
+
     data = load_single_yaml("agents.yaml")
+    previous_data = deepcopy(data)
     agents_list = data.get("agents", [])
+    if not isinstance(agents_list, list):
+        return APIResponse(status="error", message="config/agents.yaml 中 agents 必须是列表")
 
     original_len = len(agents_list)
     agents_list = [a for a in agents_list if a.get("name") != name]
@@ -290,9 +349,10 @@ async def delete_agent(name: str):
 
     data["agents"] = agents_list
 
-    save_yaml_config("agents.yaml", data)
-    _clear_cache()
-    await _reload_agents()
+    try:
+        await _save_config_and_reload(data, previous_data)
+    except RuntimeError as exc:
+        return APIResponse(status="error", message=str(exc))
 
     return APIResponse(status="ok", message=f"Agent '{name}' 已删除")
 
@@ -312,24 +372,3 @@ async def invoke_agent(name: str, req: AgentInvokeRequest):
         return APIResponse(status="ok", data=result)
     except Exception as e:
         return APIResponse(status="error", message=f"Agent 调用失败: {str(e)}")
-
-
-# ─── 能力列表端点 ─────────────────────────────────────────
-
-
-@router.get("/capabilities/list", response_model=APIResponse)
-async def list_capabilities():
-    """列出所有已发现的能力（工具 + Agent），供前端 Agent 编辑时选择 tools"""
-    cap_registry = get_capability_registry()
-    if not cap_registry:
-        return APIResponse(status="ok", data=[])
-
-    capabilities = []
-    for schema in cap_registry.list_all():
-        capabilities.append({
-            "name": schema.name,
-            "description": schema.description,
-            "parameters": schema.parameters,
-        })
-
-    return APIResponse(status="ok", data=capabilities)

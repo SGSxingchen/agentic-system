@@ -201,7 +201,7 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 获取特定智能体详情。
 
-**路径参数:** `name` — 智能体名称 (assistant / planner / coder / reviewer)
+**路径参数:** `name` — 智能体名称。当前内置关键 Agent 为 `assistant`、`tool_creator`、`agent_creator`、`planner`、`coder`、`reviewer`、`persona_evolution`。
 
 **响应:**
 ```json
@@ -210,11 +210,63 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
   "data": {
     "name": "assistant",
     "status": "idle",
-    "capabilities": ["chat", "conversation"],
-    "description": "对话助手智能体"
+    "capabilities": ["memory_search", "planner"],
+    "description": "对话协调智能体",
+    "system_prompt": "...",
+    "output_format": "text",
+    "max_iterations": 10,
+    "skills": null,
+    "mcp_servers": []
   }
 }
 ```
+
+### GET /api/agents/capabilities/list
+
+列出 Agent 管理页可选择的能力（普通 Tool + 已注册 Agent 能力）。注意该路径必须优先于 `/api/agents/{name}` 匹配。
+
+**响应:**
+```json
+{
+  "status": "ok",
+  "data": [
+    { "name": "web_search", "description": "...", "parameters": { "type": "object" } },
+    { "name": "planner", "description": "任务规划智能体", "parameters": { "type": "object" } }
+  ]
+}
+```
+
+### POST /api/agents
+
+创建配置化 Agent，写入 `config/agents.yaml` 并热重载。`name` 只能使用字母、数字、下划线且不能以数字开头；`output_format` 仅支持 `text` / `json`。如果热重载失败，后端会回滚本次 YAML 写入并返回明确错误。
+
+**请求体:**
+```json
+{
+  "name": "demo_agent",
+  "description": "答辩演示 Agent",
+  "system_prompt": "你是...",
+  "tools": ["read_file"],
+  "output_format": "text",
+  "max_iterations": 10,
+  "skills": {
+    "enabled": true,
+    "directories": [],
+    "items": [],
+    "disabled": [],
+    "strategy": "metadata_and_instructions"
+  },
+  "mcp_servers": []
+}
+```
+
+### PUT /api/agents/{name}
+
+部分更新配置化 Agent，写入 `config/agents.yaml` 并热重载。支持字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`skills`、`mcp_servers`。传入 `"skills": null` 表示清除该 Agent 的 skills 配置。
+
+### DELETE /api/agents/{name}
+
+删除配置化 Agent 并热重载。为避免误删答辩演示核心角色，内置关键 Agent（`assistant`、`tool_creator`、`agent_creator`、`planner`、`coder`、`reviewer`、`persona_evolution`）会返回 `status: "error"`，不能从管理页删除。
 
 
 ### GET /api/agents/persona-bindings

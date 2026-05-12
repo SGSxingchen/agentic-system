@@ -243,6 +243,22 @@ class TestAgentsAPI:
         resp = await client.get("/api/agents/nonexistent")
         assert resp.status_code == 404
 
+    async def test_capabilities_list_route_is_not_shadowed(self, client):
+        resp = await client.get("/api/agents/capabilities/list")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        names = {item["name"] for item in body["data"]}
+        assert "assistant" in names
+        assert "requirement_checklist" in names
+
+    async def test_delete_protected_agent_returns_clear_error(self, client):
+        resp = await client.delete("/api/agents/assistant")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "error"
+        assert "内置关键 Agent" in body["message"]
+
 
 # ========================
 # 记忆系统
