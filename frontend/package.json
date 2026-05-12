@@ -6,7 +6,7 @@
     "dev": "npx vite",
     "build": "tsc && npx vite build",
     "preview": "npx vite preview",
-    "test": "node tests/messageTimeline.test.mjs"
+    "test": "node tests/messageTimeline.test.mjs && node tests/agentFormLogic.test.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",
