@@ -70,11 +70,16 @@ npm run dev
 ## 5. 使用
 
 1. **对话** — 在 ChatPanel 输入消息，AssistantAgent 自动回复（带记忆检索）
-2. **提交任务** — 在 TaskPanel 描述需求，触发 规划→编码→审查 流水线
-3. **查看智能体** — 在 AgentPanel 查看各 Agent 的状态和能力
-4. **管线** — 在 PipelinePanel 选择预设模板执行代码生成任务
-5. **记忆管理** — 在 MemoryPanel 查看/搜索/创建/删除记忆
-6. **系统监控** — 在 MonitorPanel 查看实时系统状态
+2. **答辩 Demo** — 在“运行 / Agent Run 答辩演示台”点击一键 Demo，快速创建小型 Flask API、Python 工具函数或 CSV 数据处理脚本任务
+3. **Run 时间线** — 展开 Agent Run，查看 run_id、agent、workspace、status、耗时、流式生成片段和 transcript 事件
+4. **最终输出** — Run 完成后展开最终输出，查看生成代码、运行命令、测试/验收说明
+5. **提交任务** — 也可以在 TaskPanel 手动描述需求，创建自定义 Agent Run
+6. **查看智能体** — 在 AgentPanel 查看各 Agent 的状态和能力
+7. **管线** — 在 PipelinePanel 选择预设模板执行代码生成任务（兼容旧流程）
+8. **记忆管理** — 在 MemoryPanel 查看/搜索/创建/删除记忆
+9. **系统监控** — 在 MonitorPanel 查看实时系统状态
+
+答辩材料图、讲稿和兜底方案见 `docs/demo/DEFENSE_MATERIALS.md`；Demo 验收步骤见 `docs/demo/DEMO_ACCEPTANCE_2026-05-11.md`.
 
 ## 6. 运行测试
 
