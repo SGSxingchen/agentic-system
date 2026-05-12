@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react'
 import { useAppStore } from '../store/appStore'
 import * as api from '../api/client'
 import type { Persona, PersonaBindings } from '../types'
+import { submitAgentForm, type AgentFormData } from './agentFormLogic'
 import './AgentPanel.css'
 
 const PERSONA_CACHE_TTL_MS = 30_000
@@ -23,17 +24,6 @@ const STATUS_CONFIG: Record<
   busy: { bg: '#FEF3C7', color: '#92400E', dotColor: '#D97706', label: '忙碌' },
   error: { bg: '#FEE2E2', color: '#991B1B', dotColor: '#DC2626', label: '错误' },
   stopped: { bg: '#F3F4F6', color: '#4B5563', dotColor: '#9CA3AF', label: '已停止' },
-}
-
-interface AgentFormData {
-  name: string
-  description: string
-  system_prompt: string
-  tools: string[]
-  output_format: string
-  max_iterations: number
-  skills_json: string
-  mcp_servers_json: string
 }
 
 const EMPTY_FORM: AgentFormData = {
@@ -68,7 +58,9 @@ export function AgentPanel() {
   const { state, dispatch } = useAppStore()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
   const [apiAvailable, setApiAvailable] = useState(true)
+  const formErrorRef = useRef<HTMLDivElement | null>(null)
 
   // CRUD 状态
   const [editingAgent, setEditingAgent] = useState<string | null>(null)
@@ -168,7 +160,9 @@ export function AgentPanel() {
   // 开始创建
   const startCreate = () => {
     setEditingAgent('__new__')
-    setForm({ ...EMPTY_FORM })
+    setForm({ ...EMPTY_FORM, tools: [] })
+    setFormError(null)
+    setError(null)
     setConfirmDelete(null)
     setCapabilityFilter('')
     fetchCapabilities()
@@ -177,6 +171,8 @@ export function AgentPanel() {
   // 开始编辑
   const startEdit = async (agent: AgentCardData) => {
     setEditingAgent(agent.name)
+    setFormError(null)
+    setError(null)
     setForm({
       name: agent.name,
       description: agent.description || '',
@@ -208,7 +204,8 @@ export function AgentPanel() {
 
   const cancelEdit = () => {
     setEditingAgent(null)
-    setForm(EMPTY_FORM)
+    setForm({ ...EMPTY_FORM, tools: [] })
+    setFormError(null)
     setError(null)
   }
 
@@ -221,69 +218,36 @@ export function AgentPanel() {
     })
   }
 
-  const parseAgentRuntimeConfig = () => {
-    const rawSkills = form.skills_json.trim()
-    const rawMcp = form.mcp_servers_json.trim()
-    const skills = rawSkills ? JSON.parse(rawSkills) : null
-    if (skills !== null && (typeof skills !== 'object' || Array.isArray(skills))) {
-      throw new Error('Skills 配置必须是 JSON 对象')
-    }
-    const mcpServers = rawMcp ? JSON.parse(rawMcp) : []
-    if (!Array.isArray(mcpServers)) {
-      throw new Error('MCP servers 配置必须是 JSON 数组')
-    }
-    return { skills, mcpServers }
-  }
-
   const handleSave = async () => {
+    if (saving) return
     setSaving(true)
+    setFormError(null)
     setError(null)
 
-    let runtimeConfig
     try {
-      runtimeConfig = parseAgentRuntimeConfig()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Agent scoped 配置 JSON 解析失败')
-      setSaving(false)
-      return
-    }
-
-    let res
-    if (editingAgent === '__new__') {
-      if (!form.name.trim()) {
-        setError('名称不能为空')
-        setSaving(false)
-        return
+      const res = await submitAgentForm({ editingAgent, form, api })
+      if (res.status === 'ok') {
+        cancelEdit()
+        await fetchAgents()
+      } else {
+        const message = res.message || '保存失败'
+        setFormError(message)
+        setError(message)
+        requestAnimationFrame(() => formErrorRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
       }
-      res = await api.createAgent({
-        name: form.name.trim(),
-        description: form.description,
-        system_prompt: form.system_prompt,
-        tools: form.tools,
-        output_format: form.output_format,
-        max_iterations: form.max_iterations,
-        skills: runtimeConfig.skills,
-        mcp_servers: runtimeConfig.mcpServers,
-      })
-    } else {
-      res = await api.updateAgent(editingAgent!, {
-        description: form.description,
-        system_prompt: form.system_prompt || undefined,
-        tools: form.tools,
-        output_format: form.output_format,
-        max_iterations: form.max_iterations,
-        skills: runtimeConfig.skills,
-        mcp_servers: runtimeConfig.mcpServers,
-      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存失败'
+      setFormError(message)
+      setError(message)
+      requestAnimationFrame(() => formErrorRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+    } finally {
+      setSaving(false)
     }
+  }
 
-    if (res.status === 'ok') {
-      cancelEdit()
-      await fetchAgents()
-    } else {
-      setError(res.message || '保存失败')
-    }
-    setSaving(false)
+  const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    void handleSave()
   }
 
   // 内联切换 Agent 的工具（即时保存）
@@ -454,7 +418,13 @@ export function AgentPanel() {
 
     return (
       <div className="agent-card agent-card--editing">
-        <div className="agent-form">
+        <form className="agent-form" onSubmit={handleFormSubmit} noValidate>
+          {formError && (
+            <div ref={formErrorRef} className="agent-error agent-error--sticky" role="alert">
+              {formError}
+            </div>
+          )}
+
           <div className="agent-form__hero">
             <div>
               <span className="agent-form__kicker">Agent Config</span>
@@ -635,15 +605,15 @@ export function AgentPanel() {
             </div>
           </div>
 
-          {error && <div className="agent-error">{error}</div>}
+          {formError && <div className="agent-error" role="alert">{formError}</div>}
 
           <div className="button-group agent-form__actions">
-            <button className="btn-primary" onClick={handleSave} disabled={saving}>
+            <button type="submit" className="btn-primary" disabled={saving}>
               {saving ? '保存中...' : '保存'}
             </button>
-            <button className="btn-secondary" onClick={cancelEdit}>取消</button>
+            <button type="button" className="btn-secondary" onClick={cancelEdit}>取消</button>
           </div>
-        </div>
+        </form>
       </div>
     )
   }

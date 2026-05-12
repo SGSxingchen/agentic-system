@@ -1144,3 +1144,13 @@
   background: rgba(243, 244, 246, 0.72);
   color: var(--color-text-muted);
 }
+
+.agent-error--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: 0;
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(255, 245, 245, 0.96);
+  box-shadow: 0 14px 34px rgba(127, 29, 29, 0.12);
+}
