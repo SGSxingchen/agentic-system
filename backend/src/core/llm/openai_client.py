@@ -3,8 +3,32 @@ import json
 import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from .base import BaseLLMClient, LLMResponse, LLMStreamEvent, ToolCall
+
+
+def normalize_openai_base_url(base_url: Optional[str]) -> Optional[str]:
+    """Normalize an OpenAI-compatible base URL to the API root."""
+    if not isinstance(base_url, str):
+        return None
+
+    stripped = base_url.strip().rstrip("/")
+    if not stripped:
+        return None
+
+    if "://" not in stripped:
+        return stripped if stripped.endswith("/v1") else f"{stripped}/v1"
+
+    parts = urlsplit(stripped)
+    path_parts = [part for part in parts.path.split("/") if part]
+    if "v1" in path_parts:
+        v1_index = path_parts.index("v1")
+        normalized_path = "/" + "/".join(path_parts[: v1_index + 1])
+    else:
+        normalized_path = (parts.path.rstrip("/") + "/v1") if parts.path else "/v1"
+
+    return urlunsplit((parts.scheme, parts.netloc, normalized_path, "", ""))
 
 
 class OpenAIClient(BaseLLMClient):
@@ -19,14 +43,14 @@ class OpenAIClient(BaseLLMClient):
     ):
         self.api_key = api_key
         self.model = model
-        self.base_url = base_url
+        self.base_url = normalize_openai_base_url(base_url)
         self.generation_config = generation_config or {}
         try:
             from openai import AsyncOpenAI
 
             kwargs: Dict[str, Any] = {"api_key": api_key}
-            if base_url:
-                kwargs["base_url"] = base_url
+            if self.base_url:
+                kwargs["base_url"] = self.base_url
             self.client = AsyncOpenAI(**kwargs)
         except ImportError:
             raise ImportError("请安装 openai: pip install openai")
