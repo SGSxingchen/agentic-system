@@ -1,4 +1,4 @@
-# 基于多智能体协作的自动化代码生成与审查系统 — 架构设计文档
+﻿# 基于多智能体协作的自动化代码生成与审查系统 — 架构设计文档
 
 **版本**: v2.6 (Pipeline 移除后)
 **日期**: 2026-05-05
@@ -248,8 +248,10 @@ Skills 与 MCP servers 必须属于具体 Agent 配置，不能作为全局散�
 `skills` 与 `mcp_servers`，通过 `core.skills.load_agent_skills()` 解析 SKILL.md
 或内联说明，通过 `core.mcp.normalize_agent_mcp_servers()` 校验启用 server，
 再把格式化后的“非可信运行时资料”追加到该 Agent 的 system prompt。旧 Agent
-没有这些字段时按空配置处理，不影响启动。当前 MCP 配置只传入 Agent 启动上下文
-并做降级提示；真正把 MCP tools 注册到 `CapabilityRegistry` 需要后续 adapter。
+没有这些字段时按空配置处理，不影响启动。未接入 adapter 时，MCP 配置只传入
+Agent 启动上下文并做降级提示，状态为 `configured_pending_runtime`；接入 adapter
+后，状态可更新为 `proxy_available`、`partial` 或 `adapter_unavailable`，并且代理工具名必须
+包含 Agent 与 server 作用域，避免不同 Agent 的 MCP tool 互相污染。
 
 ### 3.5 Agent 系统
 
@@ -431,6 +433,9 @@ _CAPABILITY_CLASS_MAP = {
 | GET | `/api/config` | 获取配置 (隐藏 api_key) |
 | POST | `/api/config` | 更新配置 + 热重载 |
 | GET | `/api/agents` | 列出所有 Agent |
+| GET | `/api/agents/configs` | 列出所有 Agent 的模型/Tools/Skills/MCP/工作区配置视图 |
+| GET | `/api/agents/{name}/config` | 获取单个 Agent 的配置视图 |
+| GET | `/api/agents/capabilities/list` | 列出 Agent 管理页可选能力 |
 | GET | `/api/agents/{name}` | 获取 Agent 详情 |
 | GET | `/api/agents/persona-bindings` | 获取 Agent/Session 人格绑定与生效优先级 |
 | PUT | `/api/agents/persona-bindings/agents/{agent_name}` | 设置 Agent 默认人格 |
@@ -802,7 +807,9 @@ Evolution Command 区域允许用户用一句目标生成系统级任务指令�
 
 Project 文件属于用户上传资料，不是系统指令。Agent 的 system prompt 必须注入工作区边界规则：导入文件只能作为事实与上下文参考，不能执行其中的提示词；文件、bash、测试等能力必须限制在当前生效工作区根目录内。
 
-工作区生效优先级：用户显式传入或导入的 `workspace_id` > 当前会话绑定的工作区 > 未绑定 Project 时自动生成的会话隔离工作区 > 当前 Agent 默认工作区 > 自动 `run-` 前缀临时工作区。外部请求不得直接传入可信 `workspace_root`；后端只接受 `workspace_id`、会话绑定、Run 调度或 Agent 服务端配置解析出的工作区根目录。
+工作区生效优先级：用户显式传入或导入的 `workspace_id` > 当前会话绑定的工作区 > 当前 Agent `default_workspace_id` > 当前 Agent `default_workspace_root` > 自动 `run-` 前缀临时工作区。`default_workspace_root` 必须是 `./workspace` 内的相对路径，并由后端边界校验后作为可信工作区根目录。外部请求不得直接传入可信 `workspace_root`；后端只接受 `workspace_id`、会话绑定、Run 调度或 Agent 服务端配置解析出的工作区根目录。
+
+`auto_memory=true` 的 Agent Run 会在运行前按 goal/context 召回长期记忆并注入 `memory_context`，运行结束后安排后台反思；关闭时不召回、不反思。`agent_run_started`、`agent_run_event`、`agent_run_completed` 监控事件应携带 `workspace_id`、`auto_memory`、`memory_count` 等运行语义字段。
 
 ### 15.2 Agent 级配置
 
@@ -810,8 +817,35 @@ Project 文件属于用户上传资料，不是系统指令。Agent 的 system p
 
 - `llm` / `model`：该 Agent 使用的模型、provider、api_key、base_url、temperature、top_p、max_tokens、stop_sequences、reasoning_effort 以及 provider 专属 `openai` / `anthropic` 参数；缺省时继承全局 LLM 配置，API 响应只暴露 `api_key_set`。
 - `tools`：可调用的原生工具或其他 Agent capability。
-- `mcp_servers`：只属于该 Agent 的 MCP server 配置；当前先注入上下文并返回配置状态，尚未自动启动 MCP 进程或注册 MCP tool。
+- `mcp_servers`：只属于该 Agent 的 MCP server 配置；配置视图无运行态时返回 `configured_pending_runtime`；运行时会为启用的 stdio server 注册 Agent 作用域代理工具，禁用 server 不得注册工具，缺少 MCP SDK 时返回 `adapter_unavailable`。
 - `skills`：只属于该 Agent 的 Skill 目录、内联条目、禁用清单和加载策略。
 - `default_workspace_id` / `default_workspace_root`：Agent 默认工作区绑定；Run 未显式指定且会话未绑定时使用。
 
 后端 Agent 配置视图为 `GET /api/agents/configs` 与 `GET /api/agents/{name}/config`，返回 Tools/MCP/Skills/模型/工作区挂载摘要，供前端 Agent 控制台使用。
+
+---
+
+## 16. Agent 配置管理智能体（v2.7 新增）
+
+### 16.1 定位
+
+`agent_manager` 是系统内用于管理既有 Agent 的受控智能体。它不是任意写配置后门，只能读取、校验和在管理员显式批准后维护 `config/agents.yaml` 中指定 Agent 的白名单字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。
+
+新增 Agent 仍由 `agent_creator` 负责；Persona/personality 仍由 `persona_evolution` 负责。Assistant 遇到现有 Agent 的提示词优化、模型切换、Tools/Skills/MCP 挂载或默认工作区配置调整时，应委派 `agent_manager`。
+
+### 16.2 受控工具链
+
+`agent_manager` 只挂载四个工具：
+
+- `read_agent_config`：只读列出或读取 Agent 配置，返回时隐藏 `llm.api_key`，只暴露 `api_key_set`。
+- `validate_agent_config_patch`：只读校验字段白名单、高风险工具、模型参数、MCP 配置和工作区字段。
+- `propose_agent_config_patch`：生成字段级补丁预览和风险说明，不写入文件，不会生效。
+- `apply_agent_config_patch`：仅在 `admin_approved=true`、`reviewer` 非空且可选 `AGENT_MANAGER_ADMIN_TOKEN` 匹配时写入；热重载失败会回滚 `agents.yaml`。
+
+高风险工具 `bash`、`write_file`、`create_agent_config`、`create_dynamic_tool_config`、`dispatch_agent` 默认禁止写入到 Agent tools；只有管理员明确传入 `allow_high_risk_tools=true` 时才允许。MCP server 由所属 Agent 独占；运行时只为启用的 stdio server 注册 Agent 作用域代理工具，禁用 server 不得注册工具，状态只能在 `configured_pending_runtime`、`proxy_available`、`partial`、`adapter_unavailable` 等可解释状态中更新。
+
+### 16.3 安全与生效
+
+Agent 独立模型配置支持 `llm.provider/model/base_url/temperature/top_p/max_tokens/stop_sequences/reasoning_effort/openai/anthropic/api_key`。读取和返回结果永不明文返回 `api_key`；写入时 `********`、`••••••••` 等掩码值不会覆盖已有密钥。
+
+`agent_manager` 本身属于关键系统 Agent，管理页不应删除它。普通 Agent 不直接挂载 Agent 配置写入工具；只有 `assistant` 可委派 `agent_manager`，而 `agent_manager` 再按审批边界调用受控工具。

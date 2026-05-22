@@ -95,7 +95,16 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
     agents = data["agents"]
     by_name = {item["name"]: item for item in agents}
 
-    assert {"assistant", "planner", "coder", "reviewer", "tool_creator", "agent_creator", "persona_evolution"} <= set(by_name)
+    assert {
+        "assistant",
+        "planner",
+        "coder",
+        "reviewer",
+        "tool_creator",
+        "agent_creator",
+        "agent_manager",
+        "persona_evolution",
+    } <= set(by_name)
 
     for item in agents:
         prompt = item["system_prompt"]
@@ -111,7 +120,24 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
     assert by_name["planner"]["input_schema"]["properties"]["requirement"]["type"] == "string"
     assert by_name["coder"]["input_schema"]["properties"]["task"]["type"] == "string"
     assert by_name["reviewer"]["input_schema"]["properties"]["code"]["type"] == "string"
+    assert by_name["agent_manager"]["input_schema"]["properties"]["request"]["type"] == "string"
     assert by_name["persona_evolution"]["input_schema"]["properties"]["request"]["type"] == "string"
+
+    assert "agent_manager" in by_name["assistant"]["tools"]
+    assert "agent_manager" not in by_name["agent_creator"]["tools"]
+    assert "persona_evolution" not in by_name["agent_creator"]["tools"]
+
+    agent_manager_tools = {
+        "read_agent_config",
+        "validate_agent_config_patch",
+        "propose_agent_config_patch",
+        "apply_agent_config_patch",
+    }
+    assert set(by_name["agent_manager"]["tools"]) == agent_manager_tools
+    for name, item in by_name.items():
+        if name in {"agent_manager", "assistant"}:
+            continue
+        assert agent_manager_tools.isdisjoint(set(item.get("tools") or []))
 
     persona_tools = {
         "read_persona_definition",

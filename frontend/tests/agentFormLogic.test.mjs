@@ -66,6 +66,18 @@ try {
     },
   })
   assert.equal(agentScopedDraft.llm_model, 'gpt-agent')
+  assert.deepEqual(
+    buildAgentUpdatePayload({
+      ...agentScopedDraft,
+      llm_provider: '',
+      llm_model: '',
+      llm_base_url: '',
+      llm_api_key: '',
+      llm_temperature: '',
+      llm_max_tokens: '',
+    }).llm,
+    null
+  )
 
   const payload = buildAgentUpdatePayload({
     ...agentScopedDraft,

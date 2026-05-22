@@ -50,6 +50,7 @@ class AgentProgress:
     activity: str = ""
     last_tool: Optional[str] = None
     current_step: Optional[str] = None
+    memory_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -72,6 +73,7 @@ class TaskState:
     agent_name: Optional[str] = None
     session_id: Optional[str] = None
     workspace_id: Optional[str] = None
+    workspace_root: Optional[str] = None
     mode: str = "autonomous"
     strategy: str = "agent_decides"
     max_iterations: int = 50
@@ -114,6 +116,7 @@ class TaskState:
             "agent_name": self.agent_name,
             "session_id": self.session_id,
             "workspace_id": self.workspace_id,
+            "workspace_root": self.workspace_root,
             "mode": self.mode,
             "strategy": self.strategy,
             "max_iterations": self.max_iterations,

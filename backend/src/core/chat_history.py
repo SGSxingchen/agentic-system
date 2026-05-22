@@ -136,6 +136,10 @@ class ChatHistoryStore:
             normalized["toolCalls"] = [
                 item for item in message["toolCalls"] if isinstance(item, dict)
             ]
+        if isinstance(message.get("agent_name"), str) and message["agent_name"].strip():
+            normalized["agent_name"] = message["agent_name"].strip()
+        if isinstance(message.get("error"), str) and message["error"].strip():
+            normalized["error"] = message["error"].strip()
         if isinstance(message.get("timeline"), list):
             normalized["timeline"] = [
                 item for item in message["timeline"] if isinstance(item, dict)

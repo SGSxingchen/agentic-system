@@ -14,6 +14,29 @@ from core.prompts import get_tool_description
 
 NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SUPPORTED_DYNAMIC_MODES = {"template", "checklist", "regex_extract"}
+PROTECTED_AGENT_NAMES = {
+    "assistant",
+    "planner",
+    "coder",
+    "reviewer",
+    "tool_creator",
+    "agent_creator",
+    "agent_manager",
+    "persona_evolution",
+}
+HIGH_RISK_TOOLS = {
+    "bash",
+    "write_file",
+    "create_agent_config",
+    "create_dynamic_tool_config",
+    "dispatch_agent",
+}
+AGENT_MANAGEMENT_TOOLS = {
+    "read_agent_config",
+    "validate_agent_config_patch",
+    "propose_agent_config_patch",
+    "apply_agent_config_patch",
+}
 
 
 def _config_dir() -> Optional[Path]:
@@ -251,7 +274,7 @@ class CreateAgentConfigCapability(CapabilityBase):
                     },
                     "overwrite": {
                         "type": "boolean",
-                        "description": "是否覆盖同名 Agent",
+                        "description": "保留兼容字段；旧创建工具不再允许覆盖已有 Agent",
                         "default": False,
                     },
                 },
@@ -290,14 +313,44 @@ class CreateAgentConfigCapability(CapabilityBase):
             return {"error": "input_schema must be an object when provided"}
         if max_iterations < 1 or max_iterations > 50:
             return {"error": "max_iterations must be between 1 and 50"}
+        if name in PROTECTED_AGENT_NAMES:
+            return {
+                "error": (
+                    f"agent '{name}' is protected; use agent_manager with explicit "
+                    "approval to review changes"
+                )
+            }
+        management_tools = sorted(set(tools) & AGENT_MANAGEMENT_TOOLS)
+        if management_tools:
+            return {
+                "error": (
+                    "Agent management tools can only be mounted on agent_manager: "
+                    + ", ".join(management_tools)
+                )
+            }
+        high_risk_tools = sorted(set(tools) & HIGH_RISK_TOOLS)
+        if high_risk_tools:
+            return {
+                "error": (
+                    "create_agent_config cannot grant high-risk tools; use the "
+                    "controlled agent_manager review path: "
+                    + ", ".join(high_risk_tools)
+                )
+            }
 
         data = _load_yaml_list("agents.yaml", "agents")
         agents: List[Dict[str, Any]] = data["agents"]
         existing = [
             item for item in agents if isinstance(item, dict) and item.get("name") == name
         ]
-        if existing and not overwrite:
-            return {"error": f"agent '{name}' already exists; set overwrite=true to replace"}
+        if existing:
+            return {
+                "error": (
+                    f"agent '{name}' already exists; create_agent_config cannot "
+                    "overwrite existing agents; use agent_manager with explicit approval"
+                ),
+                "overwrite_requested": overwrite,
+            }
 
         entry: Dict[str, Any] = {
             "name": name,

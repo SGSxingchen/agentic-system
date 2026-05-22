@@ -21,6 +21,7 @@ structlog>=23.0.0
 
 # Vector Database (default persistent memory backend)
 chromadb>=0.4.0
+mcp>=1.0.0
 
 # Testing
 pytest>=8.0.0

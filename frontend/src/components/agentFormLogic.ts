@@ -7,6 +7,7 @@ export interface AgentDraft {
   max_iterations: number
   tools: string[]
   default_workspace_id: string
+  had_agent_llm: boolean
   llm_provider: string
   llm_model: string
   llm_base_url: string
@@ -29,6 +30,7 @@ export function agentToDraft(agent: AgentInfo): AgentDraft {
     max_iterations: agent.max_iterations || 10,
     tools: [...(agent.capabilities || [])],
     default_workspace_id: agent.default_workspace_id || '',
+    had_agent_llm: hasAgentLlm,
     llm_provider: hasAgentLlm ? agent.llm?.provider || '' : '',
     llm_model: hasAgentLlm ? agent.llm?.model || agent.model || '' : '',
     llm_base_url: hasAgentLlm ? agent.llm?.base_url || '' : '',
@@ -75,6 +77,8 @@ export function buildAgentUpdatePayload(draft: AgentDraft): Record<string, unkno
 
   if (Object.keys(llm).length > 0) {
     payload.llm = llm
+  } else if (draft.had_agent_llm) {
+    payload.llm = null
   }
 
   return payload

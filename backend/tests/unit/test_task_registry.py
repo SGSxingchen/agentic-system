@@ -198,7 +198,9 @@ def test_create_agent_run_state_has_continuous_goal_fields() -> None:
         max_iterations=80,
         completion_criteria="前端构建通过，目标工作台可用",
         auto_memory=True,
+        workspace_root="C:/workspace/agent-a",
     )
+    registry.set_progress(state.id, memory_count=3)
 
     payload = state.to_dict()
 
@@ -208,6 +210,8 @@ def test_create_agent_run_state_has_continuous_goal_fields() -> None:
     assert payload["iteration"] == 0
     assert payload["completion_criteria"] == "前端构建通过，目标工作台可用"
     assert payload["auto_memory"] is True
+    assert payload["workspace_root"] == "C:/workspace/agent-a"
+    assert payload["progress"]["memory_count"] == 3
 
 
 def test_pause_and_resume_agent_run() -> None:
