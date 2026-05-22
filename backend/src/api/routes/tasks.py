@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -24,6 +25,8 @@ from fastapi import APIRouter, HTTPException, Query
 from ..schemas import APIResponse, AgentRunCreateRequest, RunControlRequest, TaskSubmitRequest
 from ..dependencies import get_capability_registry
 from ..websocket.handlers import broadcast_monitor_event
+from core.chat_history import ChatHistoryStore
+from core.config import load_single_yaml
 from core.task import (
     TaskRegistry,
     TaskStatus,
@@ -36,7 +39,13 @@ from core.task import (
     set_workspace_root_override,
     transcript_path,
 )
-from core.workspace import workspace_path
+from core.workspace import (
+    WorkspaceNotFoundError,
+    WorkspaceStore,
+    session_workspace_id,
+    session_workspace_root,
+    workspace_path,
+)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 runs_router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -63,9 +72,46 @@ def _safe_instance_id(value: Optional[str], *, fallback: str) -> str:
 
 
 def _run_workspace(workspace_id: str):
-    """Resolve an isolated mutable workspace path for a run instance."""
+    """Resolve the effective workspace root for a run instance.
+
+    A managed Project workspace selected by the user wins over the automatic
+    run workspace. Unknown ids keep the historical isolated run directory.
+    """
+
     safe_id = _safe_instance_id(workspace_id, fallback="default")
+    if safe_id.startswith("session-"):
+        return session_workspace_root(safe_id.removeprefix("session-"))
+    try:
+        managed = WorkspaceStore().get(safe_id)
+        if managed.kind == "project":
+            return Path(managed.root_path).resolve()
+    except WorkspaceNotFoundError:
+        pass
+
     return workspace_path("runs", safe_id, create=True)
+
+
+def _session_workspace_id(session_id: Optional[str]) -> Optional[str]:
+    if not session_id:
+        return None
+    session = ChatHistoryStore().get_session(session_id)
+    if not session:
+        return None
+    value = str(session.get("workspace_id") or "").strip()
+    return value or None
+
+
+def _agent_default_workspace_id(agent_name: str) -> Optional[str]:
+    data = load_single_yaml("agents.yaml")
+    agents = data.get("agents", [])
+    if not isinstance(agents, list):
+        return None
+    for agent in agents:
+        if not isinstance(agent, dict) or agent.get("name") != agent_name:
+            continue
+        value = str(agent.get("default_workspace_id") or agent.get("workspace_id") or "").strip()
+        return value or None
+    return None
 
 
 async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = False) -> APIResponse:
@@ -117,7 +163,16 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
         strategy=req.strategy or "agent_decides",
         parent_id=req.parent_id,
     )
-    workspace_id = _safe_instance_id(req.workspace_id, fallback=f"run-{provisional.id[:8]}")
+    requested_workspace_id = (
+        req.workspace_id
+        or _session_workspace_id(req.session_id)
+        or (session_workspace_id(req.session_id) if req.session_id else None)
+        or _agent_default_workspace_id(agent_name)
+    )
+    fallback_workspace_id = (
+        f"run-{provisional.id[:8]}"
+    )
+    workspace_id = _safe_instance_id(requested_workspace_id, fallback=fallback_workspace_id)
     _registry.update(provisional.id, workspace_id=workspace_id)
     provisional.output_file = str(transcript_path(provisional.id))
 
@@ -221,6 +276,7 @@ async def _run_agent_task(
             "session_id": session_id,
             "workspace_id": workspace_id,
             "workspace_root": str(workspace_root),
+            "_trusted_workspace_root": str(workspace_root),
         }
     )
 

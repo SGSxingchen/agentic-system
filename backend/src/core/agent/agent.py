@@ -10,6 +10,7 @@ import asyncio
 import inspect
 import json
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -19,9 +20,16 @@ from ..capability.base import CapabilityBase
 from ..task.context import (
     set_notification_box,
     reset_notification_box,
+    set_workspace_root_override,
+    reset_workspace_root_override,
 )
 from ..task.notifications import make_user_message
-from ..prompts import build_token_budget_nudge, format_untrusted_memory_context
+from ..workspace import WorkspaceNotFoundError, WorkspaceStore
+from ..prompts import (
+    build_token_budget_nudge,
+    format_untrusted_memory_context,
+    format_workspace_system_context,
+)
 from ..persona import build_persona_prompt_block, get_effective_persona
 
 logger = logging.getLogger(__name__)
@@ -44,6 +52,7 @@ class AgentMetadata:
     description: str = ""
     capabilities: List[str] = field(default_factory=list)
     status: AgentStatus = AgentStatus.STOPPED
+    runtime_config: Dict[str, Any] = field(default_factory=dict)
 
 
 class Agent:
@@ -100,6 +109,7 @@ class Agent:
         self._status = AgentStatus.BUSY
         notification_box: List[Dict[str, Any]] = []
         box_token = set_notification_box(notification_box)
+        workspace_token = self._maybe_set_workspace_root(input_data)
         try:
             messages = self._build_messages(input_data)
             tool_schemas = [t.get_schema() for t in self._tools]
@@ -177,6 +187,8 @@ class Agent:
             logger.error("Agent '%s' failed: %s", self.name, exc)
             raise
         finally:
+            if workspace_token is not None:
+                reset_workspace_root_override(workspace_token)
             reset_notification_box(box_token)
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,6 +210,7 @@ class Agent:
         self._status = AgentStatus.BUSY
         notification_box: List[Dict[str, Any]] = []
         box_token = set_notification_box(notification_box)
+        workspace_token = self._maybe_set_workspace_root(input_data)
         try:
             messages = self._build_messages(input_data)
             tool_schemas = [t.get_schema() for t in self._tools]
@@ -300,14 +313,35 @@ class Agent:
             self._status = AgentStatus.ERROR
             yield {"type": "done", "content": {"error": str(exc)}}
         finally:
+            if workspace_token is not None:
+                reset_workspace_root_override(workspace_token)
             reset_notification_box(box_token)
+
+    @staticmethod
+    def _maybe_set_workspace_root(input_data: Dict[str, Any]):
+        raw_root = str(input_data.get("_trusted_workspace_root") or "").strip()
+        if not raw_root:
+            workspace_id = str(input_data.get("workspace_id") or "").strip()
+            if not workspace_id:
+                return None
+            try:
+                raw_root = WorkspaceStore().get(workspace_id).root_path
+            except WorkspaceNotFoundError:
+                return None
+        return set_workspace_root_override(Path(raw_root))
 
     # ─── 消息构建 ───────────────────────────────────────────
 
     def _build_messages(self, input_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Build LLM messages, preserving chat history when provided."""
 
-        system_prompt = self.system_prompt
+        system_prompt = format_workspace_system_context(
+            self.system_prompt,
+            agent_name=self.name,
+            workspace_id=str(input_data.get("workspace_id") or "").strip() or None,
+            workspace_root=str(input_data.get("_trusted_workspace_root") or "").strip() or None,
+            session_id=str(input_data.get("session_id") or "").strip() or None,
+        )
 
         persona_id = str(input_data.get("persona_id") or "").strip() or None
         session_id = str(input_data.get("session_id") or "").strip() or None
@@ -376,7 +410,7 @@ class Agent:
         input_data = {
             key: value
             for key, value in input_data.items()
-            if key not in {"messages", "history", "memory_context"}
+            if key not in {"messages", "history", "memory_context", "workspace_root", "_trusted_workspace_root"}
         }
         if not input_data:
             return ""
@@ -690,4 +724,5 @@ class Agent:
             description=self._description,
             capabilities=self.get_capabilities(),
             status=self._status,
+            runtime_config=dict(self._runtime_config or {}),
         )

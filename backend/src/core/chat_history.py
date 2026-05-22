@@ -46,13 +46,18 @@ class ChatHistoryStore:
         summaries.sort(key=lambda item: item["updated_at"], reverse=True)
         return summaries
 
-    def create_session(self, title: Optional[str] = None) -> Dict[str, Any]:
+    def create_session(
+        self,
+        title: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Create an empty session page."""
 
         now = _utc_now()
         session = {
             "id": uuid.uuid4().hex,
             "title": title.strip() if title and title.strip() else "新的聊天",
+            "workspace_id": str(workspace_id).strip() if workspace_id else None,
             "created_at": now,
             "updated_at": now,
             "messages": [],
@@ -73,6 +78,8 @@ class ChatHistoryStore:
         session_id: str,
         *,
         title: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        update_workspace: bool = False,
     ) -> Optional[Dict[str, Any]]:
         data = self._read()
         session = self._find_session(data, session_id)
@@ -83,6 +90,9 @@ class ChatHistoryStore:
             cleaned = title.strip()
             if cleaned:
                 session["title"] = cleaned
+        if update_workspace:
+            cleaned_workspace = str(workspace_id or "").strip()
+            session["workspace_id"] = cleaned_workspace or None
         session["updated_at"] = _utc_now()
 
         self._write(data)
@@ -205,6 +215,7 @@ class ChatHistoryStore:
         return {
             "id": str(raw["id"]),
             "title": str(raw.get("title") or "新的聊天"),
+            "workspace_id": str(raw.get("workspace_id") or "").strip() or None,
             "created_at": str(raw.get("created_at") or now),
             "updated_at": str(raw.get("updated_at") or raw.get("created_at") or now),
             "messages": [
@@ -218,6 +229,7 @@ class ChatHistoryStore:
         return {
             "id": session["id"],
             "title": session.get("title") or "新的聊天",
+            "workspace_id": session.get("workspace_id"),
             "created_at": session["created_at"],
             "updated_at": session["updated_at"],
             "message_count": len(messages),

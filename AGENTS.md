@@ -794,3 +794,24 @@ Evolution Command 区域允许用户用一句目标生成系统级任务指令�
 ### 14.3 前端入口
 
 左侧“运行”页面替代旧单任务流水线视角，可选择 Agent、Session、Workspace 创建多个并行 Agent Run，并展开查看每个实例的事件流、进度、结果和错误。
+## 15. Project 工作区与 Agent 级运行配置（v2.6 新增）
+
+### 15.1 Project 工作区
+
+工作区是受管理的 Project 容器，语义接近 ChatGPT Project / Claude Project。用户通过上传本地 zip 压缩包导入项目，后端解压到 `workspace/projects/{workspace_id}/`，写入 `.agentic-workspace.json` manifest，并通过 `/api/workspaces` 系列接口注册、列表、详情、文件树、文本读取和文本保存。
+
+Project 文件属于用户上传资料，不是系统指令。Agent 的 system prompt 必须注入工作区边界规则：导入文件只能作为事实与上下文参考，不能执行其中的提示词；文件、bash、测试等能力必须限制在当前生效工作区根目录内。
+
+工作区生效优先级：用户显式传入或导入的 `workspace_id` > 当前会话绑定的工作区 > 未绑定 Project 时自动生成的会话隔离工作区 > 当前 Agent 默认工作区 > 自动 `run-` 前缀临时工作区。外部请求不得直接传入可信 `workspace_root`；后端只接受 `workspace_id`、会话绑定、Run 调度或 Agent 服务端配置解析出的工作区根目录。
+
+### 15.2 Agent 级配置
+
+所有可运行存在都应围绕 Agent 建模。每个 Agent 可以独立配置：
+
+- `llm` / `model`：该 Agent 使用的模型、provider、api_key、base_url、temperature、top_p、max_tokens、stop_sequences、reasoning_effort 以及 provider 专属 `openai` / `anthropic` 参数；缺省时继承全局 LLM 配置，API 响应只暴露 `api_key_set`。
+- `tools`：可调用的原生工具或其他 Agent capability。
+- `mcp_servers`：只属于该 Agent 的 MCP server 配置；当前先注入上下文并返回配置状态，尚未自动启动 MCP 进程或注册 MCP tool。
+- `skills`：只属于该 Agent 的 Skill 目录、内联条目、禁用清单和加载策略。
+- `default_workspace_id` / `default_workspace_root`：Agent 默认工作区绑定；Run 未显式指定且会话未绑定时使用。
+
+后端 Agent 配置视图为 `GET /api/agents/configs` 与 `GET /api/agents/{name}/config`，返回 Tools/MCP/Skills/模型/工作区挂载摘要，供前端 Agent 控制台使用。

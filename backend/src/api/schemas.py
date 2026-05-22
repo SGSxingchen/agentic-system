@@ -108,6 +108,67 @@ class MCPServerConfigRequest(BaseModel):
     transport: str = "stdio"
 
 
+class AgentToolMount(BaseModel):
+    """Resolved Tool/Agent mount shown on Agent configuration APIs."""
+
+    name: str
+    type: Literal["agent", "tool", "unknown"] | str = "unknown"
+    configured: bool = True
+    available: bool = False
+    description: str = ""
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentSkillMount(BaseModel):
+    """Normalized Agent-scoped Skill mount summary."""
+
+    configured: bool = False
+    enabled: bool = True
+    directories: list[str] = Field(default_factory=list)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    disabled: list[str] = Field(default_factory=list)
+    strategy: str = "metadata_and_instructions"
+    item_count: int = 0
+
+
+class AgentMCPMount(BaseModel):
+    """Normalized Agent-scoped MCP mount summary."""
+
+    name: str
+    enabled: bool = True
+    transport: str = "stdio"
+    command: str = ""
+    description: str = ""
+    status: Literal["configured_not_connected", "disabled", "config_error"] | str = "configured_not_connected"
+    errors: list[str] = Field(default_factory=list)
+
+
+class AgentWorkspaceBinding(BaseModel):
+    """Default workspace binding configured for an Agent."""
+
+    workspace_id: Optional[str] = None
+    workspace_root: Optional[str] = None
+    source: Literal["agent_config", "not_configured"] | str = "not_configured"
+
+
+class AgentLLMConfig(BaseModel):
+    """Agent-scoped model selection and generation options."""
+
+    provider: Optional[str] = Field(default=None, description="openai | anthropic；为空则继承全局配置")
+    api_key: Optional[str] = Field(default=None, description="可选：该 Agent 独立使用的模型服务密钥；响应不会明文返回")
+    api_key_set: Optional[bool] = Field(default=None, description="响应字段：是否已配置独立密钥")
+    model: Optional[str] = Field(default=None, description="该 Agent 使用的模型；为空则继承全局模型")
+    base_url: Optional[str] = Field(default=None, description="可选：该 Agent 的模型服务地址")
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    top_p: Optional[float] = Field(default=None, ge=0, le=1)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=200000)
+    stop_sequences: Optional[list[str]] = None
+    openai: dict[str, Any] = Field(default_factory=dict)
+    anthropic: dict[str, Any] = Field(default_factory=dict)
+    reasoning_effort: Optional[str] = None
+    source: Literal["agent_config", "global_default"] | str = "global_default"
+
+
 
 class AgentInfo(BaseModel):
     """Agent 信息"""
@@ -116,12 +177,23 @@ class AgentInfo(BaseModel):
     status: str
     capabilities: list[str]
     description: str = ""
+    registered: bool = True
     system_prompt: Optional[str] = None
+    model: Optional[str] = None
+    llm: Optional[AgentLLMConfig] = None
+    tools: list[str] = Field(default_factory=list)
+    runtime_tools: list[str] = Field(default_factory=list)
+    tool_mounts: list[AgentToolMount] = Field(default_factory=list)
     output_format: Optional[Literal["text", "json"]] = None
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
+    skill_mount: AgentSkillMount = Field(default_factory=AgentSkillMount)
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
+    mcp_mounts: list[AgentMCPMount] = Field(default_factory=list)
     mcp_capability_status: Optional[dict[str, Any]] = None
+    default_workspace_id: Optional[str] = None
+    default_workspace_root: Optional[str] = None
+    workspace_binding: AgentWorkspaceBinding = Field(default_factory=AgentWorkspaceBinding)
 
 
 class AgentInvokeRequest(BaseModel):
@@ -185,6 +257,43 @@ class FileToolConfigRequest(BaseModel):
     """Workspace file tool config update request."""
 
     workspace_root: str = "./workspace"
+
+
+class WorkspaceFileEntry(BaseModel):
+    """Brief file entry returned by managed workspace detail APIs."""
+
+    path: str
+    kind: Literal["file", "directory"]
+    size: Optional[int] = None
+    modified_at: str
+
+
+class WorkspaceSummary(BaseModel):
+    """Managed workspace summary."""
+
+    id: str
+    name: str
+    kind: Literal["project", "agent", "session", "run"] | str
+    source: str
+    root_path: str
+    created_at: str
+    updated_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceDetail(WorkspaceSummary):
+    """Managed workspace detail with an optional shallow file listing."""
+
+    files: list[WorkspaceFileEntry] = Field(default_factory=list)
+    files_truncated: bool = False
+
+
+class WorkspaceFileContentUpdateRequest(BaseModel):
+    """Text file update request inside a managed workspace."""
+
+    path: str = Field(..., min_length=1, description="工作区内相对路径")
+    content: str = Field(default="", description="完整文本内容")
+    encoding: str = Field(default="utf-8", description="文本编码")
 
 
 class ShellToolConfigRequest(BaseModel):
@@ -259,8 +368,12 @@ class AgentCreateRequest(BaseModel):
     tools: list[str] = Field(default_factory=list, description="可用工具名称列表")
     output_format: Literal["text", "json"] = Field(default="text", description="输出格式: text | json")
     max_iterations: int = Field(default=10, ge=1, le=50, description="tool_use 最大循环次数")
+    model: Optional[str] = Field(default=None, description="可选：该 Agent 使用的模型名称")
+    llm: Optional[AgentLLMConfig] = None
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: list[MCPServerConfigRequest] = Field(default_factory=list)
+    default_workspace_id: Optional[str] = Field(default=None, description="Agent 默认工作区 ID")
+    default_workspace_root: Optional[str] = Field(default=None, description="Agent 默认工作区根路径")
 
 
 class AgentUpdateRequest(BaseModel):
@@ -271,8 +384,12 @@ class AgentUpdateRequest(BaseModel):
     tools: Optional[list[str]] = None
     output_format: Optional[Literal["text", "json"]] = None
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
+    model: Optional[str] = None
+    llm: Optional[AgentLLMConfig] = None
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
+    default_workspace_id: Optional[str] = None
+    default_workspace_root: Optional[str] = None
 
 
 # ========================
@@ -331,12 +448,14 @@ class MemorySettingsUpdateRequest(BaseModel):
 class ChatSessionCreateRequest(BaseModel):
     """创建聊天分页/会话请求"""
 
+    workspace_id: Optional[str] = Field(default=None, description="可选：绑定到该会话的工作区 ID")
     title: Optional[str] = Field(default=None, description="可选会话标题")
 
 
 class ChatSessionUpdateRequest(BaseModel):
     """更新聊天分页/会话请求"""
 
+    workspace_id: Optional[str] = Field(default=None, description="可选：更新会话工作区绑定")
     title: Optional[str] = Field(default=None, description="新的会话标题")
 
 

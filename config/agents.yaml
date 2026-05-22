@@ -14,6 +14,9 @@
 #   description     — 描述（前端展示 + 被其他 Agent 当工具调用时的 tool description）
 #   system_prompt   — 系统提示词（定义 Agent 角色、流程、约束、输出契约）
 #   tools           — 可用工具列表（普通工具 + 其他 Agent 名称均可）
+#   model           — 可选快捷字段，覆盖该 Agent 的模型名；更完整配置使用 llm。
+#   llm             — 可选，Agent 专属 LLM 配置；支持 provider/api_key/model/base_url/temperature/top_p/
+#                     max_tokens/stop_sequences/reasoning_effort/openai/anthropic。响应只返回 api_key_set。
 #   output_format   — LLM 最终输出的解析方式: "text"（原样返回）| "json"（JSON 解析）
 #   max_iterations  — tool_use 循环最大次数（默认 10）
 #   input_schema    — 当该 Agent 被其他 Agent 当工具调用时，LLM 看到的参数定义（JSON Schema）
@@ -21,6 +24,7 @@
 #                     directories 会扫描子目录下的 SKILL.md；items 可内联 name/description/instructions 或 path。
 #   mcp_servers     — 可选，Agent 专属 MCP server 配置列表；字段 name/command/args/env/cwd/enabled/description/transport。
 #                     当前通用 Agent 会把启用 server 作为运行时上下文注入；实际工具暴露依赖后续 MCP adapter。
+#   default_workspace_id/root — 可选，Agent 默认工作区；运行时只信任服务端解析出的根目录，不接受外部 raw root。
 
 agents:
   # ─── 对话助手 ───────────────────────────────────────────

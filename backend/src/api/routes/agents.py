@@ -2,6 +2,8 @@
 
 端点:
 - GET  /api/agents              — 列出所有已注册 Agent
+- GET  /api/agents/configs      — 列出 Agent 配置视图（Tools/MCP/Skills/默认工作区）
+- GET  /api/agents/{name}/config — 获取单个 Agent 配置视图
 - GET  /api/agents/{name}       — 获取特定 Agent 详情
 - POST /api/agents              — 创建新 Agent
 - PUT  /api/agents/{name}       — 更新 Agent 配置
@@ -10,6 +12,7 @@
 - GET  /api/agents/capabilities/list — 列出所有可用能力（供 Agent 选择 tools）
 """
 from copy import deepcopy
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -17,14 +20,30 @@ from pydantic import BaseModel, Field
 from ..schemas import (
     APIResponse,
     AgentInfo,
+    AgentMCPMount,
     AgentInvokeRequest,
     AgentCreateRequest,
+    AgentSkillMount,
+    AgentToolMount,
     AgentUpdateRequest,
+    AgentWorkspaceBinding,
 )
 from ..dependencies import get_agent_registry, get_capability_registry, reload_agent_fn
+from core.chat_history import ChatHistoryStore
 from core.config import load_single_yaml, save_yaml_config
 from core.persona import BASE_PERSONA_ID, DEFAULT_BINDABLE_AGENT_ROLES, PersonaBindingService
-from core.mcp import build_mcp_capability_status, validate_agent_mcp_servers_payload
+from core.workspace import (
+    WorkspaceNotFoundError,
+    WorkspaceStore,
+    resolve_project_path,
+    session_workspace_id,
+    session_workspace_root,
+)
+from core.mcp import (
+    build_mcp_capability_status,
+    validate_agent_mcp_servers_payload,
+    validate_mcp_server_payload,
+)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -32,6 +51,7 @@ PROTECTED_AGENT_NAMES = {
     *DEFAULT_BINDABLE_AGENT_ROLES,
     "persona_evolution",
 }
+MASKED_SECRET_VALUES = {"********", "••••••••"}
 
 
 class AgentPersonaBindRequest(BaseModel):
@@ -72,12 +92,246 @@ def _agent_config_fields(name: str) -> dict:
         return {}
     return {
         "system_prompt": config.get("system_prompt"),
+        "tools": _as_str_list(config.get("tools")),
         "output_format": config.get("output_format"),
         "max_iterations": config.get("max_iterations"),
         "skills": config.get("skills"),
+        "skill_mount": _build_skill_mount(config),
         "mcp_servers": config.get("mcp_servers") or [],
+        "mcp_mounts": _build_mcp_mounts(config),
         "mcp_capability_status": build_mcp_capability_status(config),
+        **_workspace_config_fields(config),
     }
+
+
+def _as_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _runtime_meta_map() -> dict[str, Any]:
+    registry = get_agent_registry()
+    if not registry:
+        return {}
+    return {
+        meta.name: meta
+        for meta in registry.list_all()
+        if getattr(meta, "name", None)
+    }
+
+
+def _capability_schema_map() -> dict[str, Any]:
+    cap_registry = get_capability_registry()
+    if not cap_registry:
+        return {}
+    return {
+        schema.name: schema
+        for schema in cap_registry.list_all()
+        if getattr(schema, "name", None)
+    }
+
+
+def _meta_status(meta: Any | None, fallback: str = "configured") -> str:
+    if meta is None:
+        return fallback
+    status = getattr(meta, "status", fallback)
+    return str(getattr(status, "value", status))
+
+
+def _meta_description(meta: Any | None, config: dict[str, Any]) -> str:
+    if meta is not None and getattr(meta, "description", ""):
+        return str(meta.description)
+    return str(config.get("description") or "")
+
+
+def _build_tool_mounts(
+    tool_names: list[str],
+    runtime_metas: dict[str, Any],
+    capability_schemas: dict[str, Any],
+) -> list[AgentToolMount]:
+    mounts: list[AgentToolMount] = []
+    for name in tool_names:
+        schema = capability_schemas.get(name)
+        agent_meta = runtime_metas.get(name)
+        mount_type = "agent" if agent_meta else "tool" if schema else "unknown"
+        mounts.append(
+            AgentToolMount(
+                name=name,
+                type=mount_type,
+                configured=True,
+                available=bool(schema or agent_meta),
+                description=(
+                    str(getattr(agent_meta, "description", ""))
+                    if agent_meta
+                    else str(getattr(schema, "description", "")) if schema else ""
+                ),
+                parameters=getattr(schema, "parameters", {}) if schema else {},
+            )
+        )
+    return mounts
+
+
+def _build_skill_mount(config: dict[str, Any]) -> AgentSkillMount:
+    skills = config.get("skills")
+    if not isinstance(skills, dict):
+        return AgentSkillMount(configured=False)
+
+    items = [
+        item
+        for item in skills.get("items", [])
+        if isinstance(item, dict)
+    ] if isinstance(skills.get("items"), list) else []
+    return AgentSkillMount(
+        configured=True,
+        enabled=bool(skills.get("enabled", True)),
+        directories=_as_str_list(skills.get("directories")),
+        items=items,
+        disabled=_as_str_list(skills.get("disabled")),
+        strategy=str(skills.get("strategy") or "metadata_and_instructions"),
+        item_count=len(items),
+    )
+
+
+def _build_mcp_mounts(config: dict[str, Any]) -> list[AgentMCPMount]:
+    servers = config.get("mcp_servers")
+    if not isinstance(servers, list):
+        return []
+
+    mounts: list[AgentMCPMount] = []
+    for server in servers:
+        if not isinstance(server, dict):
+            continue
+        errors = validate_mcp_server_payload(server)
+        enabled = bool(server.get("enabled", True))
+        status = "disabled" if not enabled else "config_error" if errors else "configured_not_connected"
+        mounts.append(
+            AgentMCPMount(
+                name=str(server.get("name") or ""),
+                enabled=enabled,
+                transport=str(server.get("transport") or "stdio"),
+                command=str(server.get("command") or ""),
+                description=str(server.get("description") or ""),
+                status=status,
+                errors=errors,
+            )
+        )
+    return mounts
+
+
+def _workspace_config_fields(config: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = str(
+        config.get("default_workspace_id")
+        or config.get("workspace_id")
+        or ""
+    ).strip() or None
+    workspace_root = str(
+        config.get("default_workspace_root")
+        or config.get("workspace_root")
+        or ""
+    ).strip() or None
+    return {
+        "default_workspace_id": workspace_id,
+        "default_workspace_root": workspace_root,
+        "workspace_binding": AgentWorkspaceBinding(
+            workspace_id=workspace_id,
+            workspace_root=workspace_root,
+            source="agent_config" if workspace_id or workspace_root else "not_configured",
+        ),
+    }
+
+
+def _public_agent_llm_config(config: dict[str, Any], *, source: str) -> dict[str, Any] | None:
+    public: dict[str, Any] = {}
+    has_values = False
+    for key in (
+        "provider",
+        "model",
+        "base_url",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "reasoning_effort",
+        "stop_sequences",
+        "openai",
+        "anthropic",
+    ):
+        value = config.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+        if isinstance(value, (dict, list)) and not value:
+            continue
+        public[key] = value
+        has_values = True
+    api_key_set = bool(config.get("api_key_set") or str(config.get("api_key") or "").strip())
+    if not has_values and not api_key_set:
+        return None
+    public["api_key_set"] = api_key_set
+    public["source"] = source
+    return public
+
+
+def _agent_llm_config(config: dict[str, Any], runtime_meta: Any | None = None) -> dict[str, Any] | None:
+    llm = config.get("llm")
+    normalized: dict[str, Any] = {}
+    if isinstance(llm, dict):
+        for key in llm:
+            if llm.get(key) is not None:
+                normalized[key] = llm.get(key)
+    if config.get("model") and "model" not in normalized:
+        normalized["model"] = str(config["model"])
+    public = _public_agent_llm_config(normalized, source="agent_config")
+    if public:
+        return public
+
+    runtime_config = getattr(runtime_meta, "runtime_config", None)
+    if isinstance(runtime_config, dict) and isinstance(runtime_config.get("llm"), dict):
+        return _public_agent_llm_config(runtime_config["llm"], source=str(runtime_config["llm"].get("source") or "global_default"))
+    return None
+
+
+def _build_agent_info(
+    name: str,
+    *,
+    config: dict[str, Any] | None = None,
+    runtime_meta: Any | None = None,
+    runtime_metas: dict[str, Any] | None = None,
+    capability_schemas: dict[str, Any] | None = None,
+) -> AgentInfo:
+    config = config if isinstance(config, dict) else {}
+    runtime_metas = runtime_metas or _runtime_meta_map()
+    capability_schemas = capability_schemas or _capability_schema_map()
+
+    runtime_tools = _as_str_list(getattr(runtime_meta, "capabilities", []))
+    configured_tools = _as_str_list(config.get("tools"))
+    tool_names = configured_tools or runtime_tools
+    llm_config = _agent_llm_config(config, runtime_meta)
+
+    return AgentInfo(
+        name=name,
+        status=_meta_status(runtime_meta),
+        registered=runtime_meta is not None,
+        capabilities=runtime_tools or tool_names,
+        runtime_tools=runtime_tools,
+        tools=tool_names,
+        tool_mounts=_build_tool_mounts(tool_names, runtime_metas, capability_schemas),
+        description=_meta_description(runtime_meta, config),
+        system_prompt=config.get("system_prompt"),
+        model=llm_config.get("model") if llm_config else None,
+        llm=llm_config,
+        output_format=config.get("output_format"),
+        max_iterations=config.get("max_iterations"),
+        skills=config.get("skills") if isinstance(config.get("skills"), dict) else None,
+        skill_mount=_build_skill_mount(config),
+        mcp_servers=config.get("mcp_servers") if isinstance(config.get("mcp_servers"), list) else [],
+        mcp_mounts=_build_mcp_mounts(config),
+        mcp_capability_status=build_mcp_capability_status(config),
+        **_workspace_config_fields(config),
+    )
 
 
 def _format_mcp_validation_error(mcp_servers: list[dict]) -> str | None:
@@ -106,6 +360,70 @@ async def _save_config_and_reload(data: dict, previous_data: dict) -> None:
         except Exception as rollback_exc:  # pragma: no cover - defensive logging path
             print(f"[ERROR] failed to rollback agents.yaml after reload error: {rollback_exc}")
         raise RuntimeError(f"Agent 配置已回滚，热重载失败: {exc}") from exc
+
+
+def _sanitize_agent_config_for_response(config: dict[str, Any]) -> dict[str, Any]:
+    """Return an Agent config copy with secret fields masked for API responses."""
+
+    sanitized = deepcopy(config)
+    llm = sanitized.get("llm")
+    if isinstance(llm, dict):
+        api_key = str(llm.pop("api_key", "") or "").strip()
+        llm["api_key_set"] = bool(api_key)
+    return sanitized
+
+
+def _attach_trusted_workspace_context(payload: dict[str, Any], agent_name: str) -> str | None:
+    """Resolve workspace context from trusted server state and drop raw roots."""
+
+    payload.pop("workspace_root", None)
+    payload.pop("_trusted_workspace_root", None)
+
+    workspace_id = str(payload.get("workspace_id") or "").strip()
+    if workspace_id:
+        try:
+            workspace = WorkspaceStore().get(workspace_id)
+        except WorkspaceNotFoundError:
+            return f"workspace not found: {workspace_id}"
+        payload["workspace_id"] = workspace.id
+        payload["_trusted_workspace_root"] = workspace.root_path
+        return None
+
+    session_id = str(payload.get("session_id") or "").strip()
+    if session_id:
+        session = ChatHistoryStore().get_session(session_id)
+        bound_workspace_id = str((session or {}).get("workspace_id") or "").strip()
+        if bound_workspace_id:
+            try:
+                workspace = WorkspaceStore().get(bound_workspace_id)
+            except WorkspaceNotFoundError:
+                return f"workspace not found: {bound_workspace_id}"
+            payload["workspace_id"] = workspace.id
+            payload["_trusted_workspace_root"] = workspace.root_path
+            return None
+
+        payload["workspace_id"] = session_workspace_id(session_id)
+        payload["_trusted_workspace_root"] = str(session_workspace_root(session_id))
+        return None
+
+    config = _agent_config_map().get(agent_name, {})
+    if not isinstance(config, dict):
+        return None
+    default_workspace_id = str(config.get("default_workspace_id") or config.get("workspace_id") or "").strip()
+    if default_workspace_id:
+        try:
+            workspace = WorkspaceStore().get(default_workspace_id)
+        except WorkspaceNotFoundError:
+            return f"workspace not found: {default_workspace_id}"
+        payload["workspace_id"] = workspace.id
+        payload["_trusted_workspace_root"] = workspace.root_path
+        return None
+
+    default_workspace_root = str(config.get("default_workspace_root") or config.get("workspace_root") or "").strip()
+    if default_workspace_root:
+        payload["workspace_id"] = f"agent-{agent_name}"
+        payload["_trusted_workspace_root"] = str(resolve_project_path(default_workspace_root))
+    return None
 
 
 # ─── 读取端点 ─────────────────────────────────────────────
@@ -175,24 +493,40 @@ async def list_agents():
 
     agents = []
     config_by_name = _agent_config_map()
+    runtime_metas = _runtime_meta_map()
+    capability_schemas = _capability_schema_map()
     for meta in registry.list_all():
         config = config_by_name.get(meta.name, {})
-        agents.append(
-            AgentInfo(
-                name=meta.name,
-                status=meta.status.value,
-                capabilities=meta.capabilities,
-                description=meta.description,
-                system_prompt=config.get("system_prompt") if isinstance(config, dict) else None,
-                output_format=config.get("output_format") if isinstance(config, dict) else None,
-                max_iterations=config.get("max_iterations") if isinstance(config, dict) else None,
-                skills=config.get("skills") if isinstance(config, dict) else None,
-                mcp_servers=config.get("mcp_servers") if isinstance(config, dict) else [],
-                mcp_capability_status=build_mcp_capability_status(config) if isinstance(config, dict) else build_mcp_capability_status({}),
-            ).model_dump()
-        )
+        agents.append(_build_agent_info(
+            meta.name,
+            config=config,
+            runtime_meta=meta,
+            runtime_metas=runtime_metas,
+            capability_schemas=capability_schemas,
+        ).model_dump())
 
     return APIResponse(status="ok", data=agents)
+
+
+@router.get("/configs", response_model=APIResponse)
+async def list_agent_configs():
+    """Return Agent-centered configuration views for Tools/MCP/Skills/workspace bindings."""
+
+    config_by_name = _agent_config_map()
+    runtime_metas = _runtime_meta_map()
+    capability_schemas = _capability_schema_map()
+    names = sorted(set(config_by_name) | set(runtime_metas))
+    payload = [
+        _build_agent_info(
+            name,
+            config=config_by_name.get(name, {}),
+            runtime_meta=runtime_metas.get(name),
+            runtime_metas=runtime_metas,
+            capability_schemas=capability_schemas,
+        ).model_dump()
+        for name in names
+    ]
+    return APIResponse(status="ok", data=payload)
 
 
 @router.get("/capabilities/list", response_model=APIResponse)
@@ -213,6 +547,24 @@ async def list_capabilities():
     return APIResponse(status="ok", data=capabilities)
 
 
+@router.get("/{name}/config", response_model=APIResponse)
+async def get_agent_config(name: str):
+    """Return one Agent-centered configuration view."""
+
+    config_by_name = _agent_config_map()
+    runtime_metas = _runtime_meta_map()
+    if name not in config_by_name and name not in runtime_metas:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' 不存在")
+    return APIResponse(
+        status="ok",
+        data=_build_agent_info(
+            name,
+            config=config_by_name.get(name, {}),
+            runtime_meta=runtime_metas.get(name),
+        ).model_dump(),
+    )
+
+
 @router.get("/{name}", response_model=APIResponse)
 async def get_agent(name: str):
     """获取特定 Agent 详情"""
@@ -225,15 +577,11 @@ async def get_agent(name: str):
         raise HTTPException(status_code=404, detail=f"Agent '{name}' 不存在")
 
     meta = agent.get_metadata()
-    info = AgentInfo(
-        name=meta.name,
-        status=meta.status.value,
-        capabilities=meta.capabilities,
-        description=meta.description,
-        **_agent_config_fields(name),
+    config = _agent_config_map().get(name, {})
+    return APIResponse(
+        status="ok",
+        data=_build_agent_info(name, config=config, runtime_meta=meta).model_dump(),
     )
-
-    return APIResponse(status="ok", data=info.model_dump())
 
 
 # ─── CRUD 端点 ────────────────────────────────────────────
@@ -272,6 +620,13 @@ async def create_agent(req: AgentCreateRequest):
         new_agent["skills"] = req.skills.model_dump()
     if mcp_servers:
         new_agent["mcp_servers"] = mcp_servers
+    llm_config = _llm_request_payload(req)
+    if llm_config:
+        new_agent["llm"] = llm_config
+    if req.default_workspace_id is not None:
+        new_agent["default_workspace_id"] = req.default_workspace_id
+    if req.default_workspace_root is not None:
+        new_agent["default_workspace_root"] = req.default_workspace_root
     agents_list.append(new_agent)
     data["agents"] = agents_list
 
@@ -281,7 +636,11 @@ async def create_agent(req: AgentCreateRequest):
     except RuntimeError as exc:
         return APIResponse(status="error", message=str(exc))
 
-    return APIResponse(status="ok", message=f"Agent '{req.name}' 已创建", data=new_agent)
+    return APIResponse(
+        status="ok",
+        message=f"Agent '{req.name}' 已创建",
+        data=_sanitize_agent_config_for_response(new_agent),
+    )
 
 
 @router.put("/{name}", response_model=APIResponse)
@@ -323,6 +682,40 @@ async def update_agent(name: str, req: AgentUpdateRequest):
         if mcp_error:
             return APIResponse(status="error", message=mcp_error)
         target["mcp_servers"] = mcp_servers
+    if "llm" in req.model_fields_set:
+        if req.llm is None or not req.llm.model_fields_set:
+            target.pop("llm", None)
+        else:
+            llm_payload = _llm_request_payload(req)
+            if llm_payload:
+                existing_llm = target.get("llm") if isinstance(target.get("llm"), dict) else {}
+                merged_llm = {**existing_llm, **llm_payload}
+                target["llm"] = merged_llm
+    elif "model" in req.model_fields_set:
+        if req.model is None:
+            existing_llm = target.get("llm")
+            if isinstance(existing_llm, dict):
+                existing_llm.pop("model", None)
+                if existing_llm:
+                    target["llm"] = existing_llm
+                else:
+                    target.pop("llm", None)
+            else:
+                target.pop("model", None)
+        else:
+            if not isinstance(target.get("llm"), dict):
+                target["llm"] = {}
+            target["llm"]["model"] = req.model
+    if "default_workspace_id" in req.model_fields_set:
+        if req.default_workspace_id is None:
+            target.pop("default_workspace_id", None)
+        else:
+            target["default_workspace_id"] = req.default_workspace_id
+    if "default_workspace_root" in req.model_fields_set:
+        if req.default_workspace_root is None:
+            target.pop("default_workspace_root", None)
+        else:
+            target["default_workspace_root"] = req.default_workspace_root
 
     data["agents"] = agents_list
 
@@ -331,7 +724,11 @@ async def update_agent(name: str, req: AgentUpdateRequest):
     except RuntimeError as exc:
         return APIResponse(status="error", message=str(exc))
 
-    return APIResponse(status="ok", message=f"Agent '{name}' 已更新", data=target)
+    return APIResponse(
+        status="ok",
+        message=f"Agent '{name}' 已更新",
+        data=_sanitize_agent_config_for_response(target),
+    )
 
 
 @router.delete("/{name}", response_model=APIResponse)
@@ -365,6 +762,31 @@ async def delete_agent(name: str):
 # ─── 调用端点 ─────────────────────────────────────────────
 
 
+def _llm_request_payload(req: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    llm = getattr(req, "llm", None)
+    if llm is not None:
+        dumped = llm.model_dump(
+            exclude_none=True,
+            exclude_unset=True,
+            exclude={"source", "api_key_set"},
+        )
+        for key, value in dumped.items():
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    continue
+                if key == "api_key" and value in MASKED_SECRET_VALUES:
+                    continue
+            if isinstance(value, dict) and not value:
+                continue
+            payload[key] = value
+    model = str(getattr(req, "model", "") or "").strip()
+    if model:
+        payload["model"] = model
+    return payload
+
+
 @router.post("/{name}/invoke", response_model=APIResponse)
 async def invoke_agent(name: str, req: AgentInvokeRequest):
     """直接调用某个 Agent（通过 CapabilityRegistry）"""
@@ -373,7 +795,11 @@ async def invoke_agent(name: str, req: AgentInvokeRequest):
         raise HTTPException(status_code=404, detail=f"Agent '{name}' 不存在")
 
     try:
-        result = await cap_registry.execute(name, **req.data)
+        payload = dict(req.data or {})
+        workspace_error = _attach_trusted_workspace_context(payload, name)
+        if workspace_error:
+            return APIResponse(status="error", message=workspace_error)
+        result = await cap_registry.execute(name, **payload)
         return APIResponse(status="ok", data=result)
     except Exception as e:
         return APIResponse(status="error", message=f"Agent 调用失败: {str(e)}")
