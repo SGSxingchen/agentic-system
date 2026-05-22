@@ -10,6 +10,7 @@
 - /api/tasks           — 任务管理
 - /api/config          — 配置查询
 """
+import asyncio
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -35,6 +36,8 @@ from core.agent import AgentRegistry
 
 
 class EchoAgentCapability(CapabilityBase):
+    calls = []
+
     @property
     def name(self):
         return "assistant"
@@ -47,6 +50,7 @@ class EchoAgentCapability(CapabilityBase):
         return CapabilitySchema(name=self.name, description=self.description)
 
     async def execute(self, **kwargs):
+        self.__class__.calls.append(dict(kwargs))
         return {"response": kwargs.get("message"), "workspace_id": kwargs.get("workspace_id")}
 
 
@@ -123,6 +127,7 @@ async def setup_deps():
     formation = MemoryFormation(store=store)
     retriever = MemoryRetriever(store=store)
     cap_registry = CapabilityRegistry()
+    EchoAgentCapability.calls = []
     cap_registry.register_native(EchoAgentCapability())
     cap_registry.register_native(
         DynamicToolCapability(
@@ -393,6 +398,8 @@ class TestChatSessionsAPI:
                     "output_tokens": 20,
                     "total_tokens": 30,
                 },
+                "agent_name": "assistant",
+                "error": "example_error",
             },
         )
         assert resp.status_code == 200
@@ -401,7 +408,12 @@ class TestChatSessionsAPI:
         assert session["messages"][0]["id"] == "msg-1"
         assert session["messages"][0]["elapsedMs"] == 123.4
         assert session["messages"][0]["usage"]["total_tokens"] == 30
+        assert session["messages"][0]["agent_name"] == "assistant"
+        assert session["messages"][0]["error"] == "example_error"
         assert chat_sessions_file.exists()
+
+        list_resp = await client.get("/api/chat-sessions")
+        assert list_resp.json()["data"][0]["last_message"] == "帮我设计一个私人助理 Agent"
 
     async def test_multiple_chat_sessions_are_isolated(self, client, chat_sessions_file):
         first = (await client.post("/api/chat-sessions", json={"title": "A"})).json()["data"]
@@ -459,6 +471,15 @@ class TestChatSessionsAPI:
 # ========================
 
 class TestRunsAPI:
+    async def _wait_for_run(self, client, run_id: str) -> dict:
+        for _ in range(50):
+            resp = await client.get(f"/api/runs/{run_id}")
+            data = resp.json()["data"]
+            if data["status"] in {"completed", "failed", "killed"}:
+                return data
+            await asyncio.sleep(0.01)
+        return data
+
     async def test_list_runs(self, client):
         resp = await client.get("/api/runs")
         assert resp.status_code == 200
@@ -503,6 +524,119 @@ class TestRunsAPI:
         resume_resp = await client.post(f"/api/runs/{run_id}/control", json={"action": "resume"})
         assert resume_resp.status_code == 200
         assert resume_resp.json()["data"]["status"] == "running"
+
+    async def test_create_run_auto_memory_injects_and_reflects(self, client, monkeypatch):
+        from api.routes import tasks as tasks_route
+
+        reflected = []
+        monkeypatch.setattr(
+            tasks_route,
+            "build_memory_context",
+            AsyncMock(return_value=("- remembered run context", 1)),
+        )
+        monkeypatch.setattr(
+            tasks_route,
+            "schedule_memory_reflection",
+            lambda **kwargs: reflected.append(kwargs),
+        )
+
+        resp = await client.post(
+            "/api/runs",
+            json={
+                "goal": "实现运行记忆",
+                "agent_name": "assistant",
+                "input": {"context": "需要召回长期偏好"},
+                "auto_memory": True,
+            },
+        )
+        assert resp.status_code == 200
+        run_id = resp.json()["data"]["run_id"]
+
+        data = await self._wait_for_run(client, run_id)
+
+        assert data["status"] == "completed"
+        assert tasks_route.build_memory_context.await_count == 1
+        assert EchoAgentCapability.calls[-1]["memory_context"] == "- remembered run context"
+        assert EchoAgentCapability.calls[-1]["auto_memory"] is True
+        assert reflected
+        assert reflected[-1]["source"] == "agent_run:assistant"
+
+        events_resp = await client.get(f"/api/runs/{run_id}/events")
+        events = [item["payload"] for item in events_resp.json()["data"]["events"]]
+        started = next(item for item in events if item.get("kind") == "agent_run" and "workspace_root" in item)
+        assert started["auto_memory"] is True
+        assert started["memory_count"] == 1
+
+    async def test_create_run_auto_memory_false_skips_recall_and_reflection(self, client, monkeypatch):
+        from api.routes import tasks as tasks_route
+
+        reflected = []
+        monkeypatch.setattr(
+            tasks_route,
+            "build_memory_context",
+            AsyncMock(return_value=("- should not be used", 1)),
+        )
+        monkeypatch.setattr(
+            tasks_route,
+            "schedule_memory_reflection",
+            lambda **kwargs: reflected.append(kwargs),
+        )
+
+        resp = await client.post(
+            "/api/runs",
+            json={
+                "goal": "禁用运行记忆",
+                "agent_name": "assistant",
+                "input": {"memory_context": "caller supplied context should be stripped"},
+                "auto_memory": False,
+            },
+        )
+        assert resp.status_code == 200
+        run_id = resp.json()["data"]["run_id"]
+
+        data = await self._wait_for_run(client, run_id)
+
+        assert data["status"] == "completed"
+        assert tasks_route.build_memory_context.await_count == 0
+        assert "memory_context" not in EchoAgentCapability.calls[-1]
+        assert EchoAgentCapability.calls[-1]["auto_memory"] is False
+        assert reflected == []
+
+    async def test_create_run_uses_agent_default_workspace_root_fallback(self, client, monkeypatch):
+        from api.routes import tasks as tasks_route
+
+        default_root = "./workspace/agent-default-test"
+        monkeypatch.setattr(
+            tasks_route,
+            "load_single_yaml",
+            lambda name: {
+                "agents": [
+                    {
+                        "name": "assistant",
+                        "default_workspace_root": default_root,
+                    }
+                ]
+            },
+        )
+
+        resp = await client.post(
+            "/api/runs",
+            json={"goal": "使用 Agent 默认工作区根", "agent_name": "assistant"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        run_id = body["data"]["run_id"]
+        assert body["data"]["workspace_id"] == "agent-assistant"
+
+        data = await self._wait_for_run(client, run_id)
+        expected_root = (Path(__file__).resolve().parents[3] / default_root).resolve()
+
+        assert data["status"] == "completed"
+        assert expected_root.is_dir()
+        assert EchoAgentCapability.calls[-1]["workspace_id"] == "agent-assistant"
+        assert EchoAgentCapability.calls[-1]["workspace_root"] == str(expected_root)
+        assert EchoAgentCapability.calls[-1]["_trusted_workspace_root"] == str(expected_root)
 
     async def test_get_run_memory_context(self, client, setup_deps):
         await setup_deps["formation"].create_memory(

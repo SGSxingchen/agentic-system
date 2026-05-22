@@ -12,6 +12,7 @@ import {
   buildAgentUpdatePayload,
   type AgentDraft,
 } from './agentFormLogic'
+import { Select } from './Select'
 import './AgentPanel.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -320,19 +321,20 @@ export function AgentPanel() {
                   </div>
                   <div className="agent-form-field">
                     <label>输出格式</label>
-                    <select
+                    <Select
                       value={draft.output_format}
                       disabled={!editing}
-                      onChange={(event) =>
+                      onChange={(value) =>
                         setDraft({
                           ...draft,
-                          output_format: event.target.value as 'text' | 'json',
+                          output_format: value as 'text' | 'json',
                         })
                       }
-                    >
-                      <option value="text">text</option>
-                      <option value="json">json</option>
-                    </select>
+                      options={[
+                        { value: 'text', label: 'text' },
+                        { value: 'json', label: 'json' },
+                      ]}
+                    />
                   </div>
                   <div className="agent-form-field">
                     <label>最大迭代次数</label>
@@ -352,23 +354,29 @@ export function AgentPanel() {
                   </div>
                   <div className="agent-form-field">
                     <label>默认工作区</label>
-                    <select
+                    <Select
                       value={draft.default_workspace_id}
                       disabled={!editing}
-                      onChange={(event) =>
+                      onChange={(value) =>
                         setDraft({
                           ...draft,
-                          default_workspace_id: event.target.value,
+                          default_workspace_id: value,
                         })
                       }
-                    >
-                      <option value="">未指定（运行时由用户选择）</option>
-                      {state.workspaces.map((workspace) => (
-                        <option key={workspace.id} value={workspace.id}>
-                          {workspace.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        {
+                          value: '',
+                          label: '未指定',
+                          description: '运行时由用户选择',
+                        },
+                        ...state.workspaces.map((workspace) => ({
+                          value: workspace.id,
+                          label: workspace.name,
+                          description:
+                            workspace.metadata?.description || '受管理工作区',
+                        })),
+                      ]}
+                    />
                   </div>
                 </div>
               </div>
@@ -386,17 +394,26 @@ export function AgentPanel() {
                 <div className="agent-form-grid">
                   <div className="agent-form-field">
                     <label>Provider</label>
-                    <select
+                    <Select
                       value={draft.llm_provider}
                       disabled={!editing}
-                      onChange={(event) =>
-                        setDraft({ ...draft, llm_provider: event.target.value })
+                      onChange={(value) =>
+                        setDraft({ ...draft, llm_provider: value })
                       }
-                    >
-                      <option value="">继承全局</option>
-                      <option value="openai">OpenAI / 兼容接口</option>
-                      <option value="anthropic">Anthropic</option>
-                    </select>
+                      options={[
+                        { value: '', label: '继承全局' },
+                        {
+                          value: 'openai',
+                          label: 'OpenAI / 兼容接口',
+                          description: 'OpenAI Chat Completions 协议',
+                        },
+                        {
+                          value: 'anthropic',
+                          label: 'Anthropic',
+                          description: 'Anthropic Messages 协议',
+                        },
+                      ]}
+                    />
                   </div>
                   <div className="agent-form-field">
                     <label>模型</label>

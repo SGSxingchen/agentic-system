@@ -142,7 +142,7 @@ class AgentMCPMount(BaseModel):
     transport: str = "stdio"
     command: str = ""
     description: str = ""
-    status: Literal["configured_not_connected", "disabled", "config_error"] | str = "configured_not_connected"
+    status: Literal["configured_pending_runtime", "disabled", "config_error"] | str = "configured_pending_runtime"
     errors: list[str] = Field(default_factory=list)
 
 
@@ -473,6 +473,8 @@ class ChatMessageCreateRequest(BaseModel):
     elapsedMs: Optional[float] = Field(default=None, ge=0)
     usage: Optional[dict[str, int]] = None
     toolCalls: Optional[list[dict[str, Any]]] = None
+    agent_name: Optional[str] = None
+    error: Optional[str] = None
     timeline: Optional[list[dict[str, Any]]] = None
     artifacts: Optional[list[dict[str, Any]]] = None
 

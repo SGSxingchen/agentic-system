@@ -32,10 +32,16 @@ def _project_root() -> Path:
 
 
 def _resolve_path(raw_path: str | Path, base: Optional[Path] = None) -> Path:
+    root = (base or _project_root()).resolve()
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
-        path = (base or _project_root()) / path
-    return path.resolve()
+        path = root / path
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("skill paths must stay within the configured project root") from exc
+    return resolved
 
 
 def _split_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
@@ -72,10 +78,10 @@ def _extract_named_section(body: str, names: Iterable[str]) -> str:
     return "\n".join(captured).strip()
 
 
-def load_skill_file(path: str | Path) -> SkillMetadata:
+def load_skill_file(path: str | Path, *, base: Optional[Path] = None) -> SkillMetadata:
     """Load one SKILL.md file or skill directory."""
 
-    resolved = _resolve_path(path)
+    resolved = _resolve_path(path, base)
     skill_file = resolved / "SKILL.md" if resolved.is_dir() else resolved
     text = skill_file.read_text(encoding="utf-8")
     meta, body = _split_frontmatter(text)
@@ -147,7 +153,7 @@ def load_agent_skills(agent_config: Dict[str, Any], *, project_root: Optional[Pa
                     if source in seen_sources:
                         continue
                     seen_sources.add(source)
-                    skill = load_skill_file(skill_file)
+                    skill = load_skill_file(skill_file, base=base)
                     if skill.enabled and skill.name not in disabled:
                         loaded.append(skill)
             except Exception:
@@ -166,7 +172,7 @@ def load_agent_skills(agent_config: Dict[str, Any], *, project_root: Optional[Pa
             path = item.get("path")
             if path:
                 try:
-                    skill = load_skill_file(_resolve_path(str(path), base))
+                    skill = load_skill_file(_resolve_path(str(path), base), base=base)
                 except Exception:
                     continue
                 # Inline fields override file metadata for convenient UI edits.

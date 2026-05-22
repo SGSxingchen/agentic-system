@@ -67,6 +67,22 @@ capabilities:
   type: native
   class: capabilities.tools.evolution_config.CreateAgentConfigCapability
   description: 受限配置写入工具：创建或更新 YAML Agent 配置，并可挂载到 assistant；生效需要重新装载或重启后端。
+- name: read_agent_config
+  type: native
+  class: capabilities.tools.agent_management.ReadAgentConfigCapability
+  description: 只读 Agent 配置工具：读取 config/agents.yaml 中的 Agent 提示词、模型、Tools、Skills、MCP 与工作区设置，并对密钥脱敏。
+- name: validate_agent_config_patch
+  type: native
+  class: capabilities.tools.agent_management.ValidateAgentConfigPatchCapability
+  description: 只读 Agent 配置补丁校验工具：检查字段白名单、高风险工具、模型参数、MCP 配置和工作区设置；不会写入配置。
+- name: propose_agent_config_patch
+  type: native
+  class: capabilities.tools.agent_management.ProposeAgentConfigPatchCapability
+  description: 只读 Agent 配置补丁提案工具：生成字段级补丁预览和风险说明；提案不会生效，写入必须另行显式审批。
+- name: apply_agent_config_patch
+  type: native
+  class: capabilities.tools.agent_management.ApplyAgentConfigPatchCapability
+  description: 受控 Agent 配置补丁应用工具：仅在 admin_approved=true、reviewer 非空且可选管理 token 匹配时修改白名单字段；热重载失败会回滚。
 - name: bash
   type: native
   class: capabilities.tools.bash.BashCapability

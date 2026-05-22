@@ -4,11 +4,14 @@ import { useWebSocket } from './hooks/useWebSocket'
 import { Sidebar } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { OverviewPanel } from './components/OverviewPanel'
+import { ChatPanel } from './components/ChatPanel'
 import { WorkspacePanel } from './components/WorkspacePanel'
 import { AgentPanel } from './components/AgentPanel'
 import { RunsPanel } from './components/RunsPanel'
 import { MonitorPanel } from './components/MonitorPanel'
 import { MemoryPanel } from './components/MemoryPanel'
+import { SkillsPanel } from './components/SkillsPanel'
+import { McpPanel } from './components/McpPanel'
 import { PersonaPanel } from './components/PersonaPanel'
 import { Settings } from './components/Settings'
 import * as api from './api/client'
@@ -91,6 +94,8 @@ function AppContent() {
     switch (state.activePanel) {
       case 'overview':
         return <OverviewPanel />
+      case 'chat':
+        return <ChatPanel />
       case 'workspaces':
         return <WorkspacePanel />
       case 'agents':
@@ -101,6 +106,10 @@ function AppContent() {
         return <MonitorPanel />
       case 'memory':
         return <MemoryPanel />
+      case 'skills':
+        return <SkillsPanel />
+      case 'mcp':
+        return <McpPanel />
       case 'personas':
         return <PersonaPanel />
       default:
@@ -110,11 +119,14 @@ function AppContent() {
 
   const titleByPanel: Record<string, string> = {
     overview: '总览',
+    chat: '对话',
     workspaces: '工作区',
     agents: '智能体',
     runs: '运行',
     monitor: '监控',
     memory: '记忆',
+    skills: 'Skills',
+    mcp: 'MCP',
     personas: '人格',
   }
 

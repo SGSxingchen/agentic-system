@@ -19,7 +19,7 @@ const FILTERS: Array<{ value: string; label: string; matches: (event: WSEvent) =
     label: '工具',
     matches: (event) => {
       const type = event.event_type || event.type || ''
-      return type.startsWith('tool_call')
+      return type.includes('tool') || Boolean(event.data?.tool)
     },
   },
   {
@@ -90,6 +90,68 @@ function formatTimeShort(value?: string) {
   return date.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+function mergeRunEvent(runs: Task[], event: WSEvent): Task[] {
+  const eventType = event.event_type || event.type || ''
+  if (
+    !eventType.startsWith('agent_run') &&
+    eventType !== 'agent_progress'
+  ) {
+    return runs
+  }
+
+  const data = event.data || {}
+  const runId = data.run_id || data.task_id
+  if (!runId) return runs
+
+  const now = event.timestamp || new Date().toISOString()
+  const status = data.status || (eventType === 'agent_run_started' ? 'running' : undefined)
+  const nextProgress = {
+    activity: data.activity || data.event_type || '',
+    current_step: data.current_step || data.event_type || null,
+    last_tool: data.tool || null,
+  }
+
+  const existing = runs.find((run) => run.id === runId || run.run_id === runId || run.task_id === runId)
+  const merged: Task = {
+    ...(existing || {
+      id: runId,
+      task_id: runId,
+      run_id: runId,
+      type: 'agent_run',
+      requirement: data.goal || '',
+      goal: data.goal || '',
+      status: 'running',
+      created_at: now,
+    }),
+    id: existing?.id || runId,
+    task_id: existing?.task_id || runId,
+    run_id: existing?.run_id || runId,
+    agent_name: data.agent || existing?.agent_name || existing?.agent || null,
+    agent: data.agent || existing?.agent || existing?.agent_name || undefined,
+    workspace_id: data.workspace_id || existing?.workspace_id || null,
+    session_id: data.session_id || existing?.session_id || null,
+    auto_memory: typeof data.auto_memory === 'boolean' ? data.auto_memory : existing?.auto_memory,
+    status: (status || existing?.status || 'running') as Task['status'],
+    requirement: existing?.requirement || data.goal || '',
+    goal: existing?.goal || data.goal || '',
+    updated_at: now,
+    progress: {
+      tool_count: existing?.progress?.tool_count || 0,
+      total_tokens: existing?.progress?.total_tokens || 0,
+      ...existing?.progress,
+      ...Object.fromEntries(
+        Object.entries(nextProgress).filter(([, value]) => value !== '' && value !== null)
+      ),
+    },
+  }
+
+  if (eventType === 'agent_run_completed' || eventType === 'agent_run_failed' || eventType === 'agent_run_cancelled') {
+    merged.ended_at = now
+  }
+
+  return [merged, ...runs.filter((run) => run.id !== runId && run.run_id !== runId && run.task_id !== runId)]
+}
+
 export function MonitorPanel() {
   const { state, dispatch } = useAppStore()
   const [filter, setFilter] = useState('all')
@@ -104,6 +166,12 @@ export function MonitorPanel() {
     const t = window.setInterval(load, 4000)
     return () => window.clearInterval(t)
   }, [])
+
+  useEffect(() => {
+    const latest = state.wsEvents[state.wsEvents.length - 1]
+    if (!latest) return
+    setRuns((prev) => mergeRunEvent(prev, latest))
+  }, [state.wsEvents])
 
   const grouped = useMemo(() => {
     const map = new Map<string, Task[]>()
@@ -193,6 +261,12 @@ export function MonitorPanel() {
                             {run.progress?.activity || '等待事件…'}
                             {run.progress?.last_tool
                               ? ` · 最近工具 ${run.progress.last_tool}`
+                              : ''}
+                          </div>
+                          <div className="monitor-run-pill__sub">
+                            工作区 {run.workspace_id || '未指定'}
+                            {typeof run.progress?.memory_count === 'number'
+                              ? ` · 记忆 ${run.progress.memory_count} 条`
                               : ''}
                           </div>
                         </div>

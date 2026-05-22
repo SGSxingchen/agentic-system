@@ -1,14 +1,22 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from core.mcp import (
     build_mcp_capability_status,
     format_mcp_servers_for_prompt,
+    merge_mcp_servers_preserving_masked_env,
     normalize_agent_mcp_servers,
     validate_agent_mcp_servers_payload,
     validate_mcp_server_payload,
+)
+from core.mcp_adapter import (
+    MCPServerProxyCapability,
+    build_agent_mcp_runtime_status,
+    build_mcp_proxy_tool_name,
+    create_agent_mcp_proxy_capabilities,
 )
 from core.skills import format_skills_for_prompt, load_agent_skills
 
@@ -22,14 +30,14 @@ def test_load_agent_skills_from_directory_and_disabled(tmp_path):
     )
 
     agent = {"name": "assistant", "skills": {"directories": [str(tmp_path / "skills")]}}
-    skills = load_agent_skills(agent)
+    skills = load_agent_skills(agent, project_root=tmp_path)
     assert [skill.name for skill in skills] == ["demo"]
     prompt = format_skills_for_prompt(skills)
     assert "Demo skill" in prompt
     assert "Follow demo steps" in prompt
 
     disabled = {"name": "assistant", "skills": {"directories": [str(tmp_path / "skills")], "disabled": ["demo"]}}
-    assert load_agent_skills(disabled) == []
+    assert load_agent_skills(disabled, project_root=tmp_path) == []
 
 
 def test_load_agent_skills_inline_items_are_agent_scoped():
@@ -61,7 +69,7 @@ def test_disabled_skill_or_missing_path_does_not_prevent_startup(tmp_path):
         },
     }
 
-    skills = load_agent_skills(agent)
+    skills = load_agent_skills(agent, project_root=tmp_path)
 
     assert [skill.name for skill in skills] == ["active_inline"]
 
@@ -87,7 +95,7 @@ def test_agent_mcp_normalization_validation_and_prompt():
     assert servers[0].env == {"DEBUG": "1"}
     prompt = format_mcp_servers_for_prompt(servers)
     assert "filesystem" in prompt
-    assert "not automatically expose" in prompt
+    assert "Agent-scoped proxy tool" in prompt
     assert validate_mcp_server_payload({"name": "bad", "enabled": True}) == ["command is required when server is enabled"]
 
 
@@ -104,7 +112,32 @@ def test_mcp_payload_list_validation_reports_duplicate_and_invalid_servers():
     assert "MCP server 'bad' 配置无效: transport must be one of http, sse, stdio, streamable_http" in errors
 
 
-def test_mcp_capability_status_explains_configured_not_connected():
+def test_mcp_masked_env_values_preserve_existing_secrets():
+    merged = merge_mcp_servers_preserving_masked_env(
+        [
+            {
+                "name": "filesystem",
+                "command": "npx",
+                "env": {"TOKEN": "real-secret", "MODE": "prod"},
+            }
+        ],
+        [
+            {
+                "name": "filesystem",
+                "command": "npx",
+                "env": {"TOKEN": "********", "MODE": "dev", "NEW": "${NEW_TOKEN}"},
+            }
+        ],
+    )
+
+    assert merged[0]["env"] == {
+        "TOKEN": "real-secret",
+        "MODE": "dev",
+        "NEW": "${NEW_TOKEN}",
+    }
+
+
+def test_mcp_capability_status_explains_runtime_pending():
     status = build_mcp_capability_status({
         "mcp_servers": [
             {"name": "fs", "command": "npx", "enabled": True},
@@ -112,10 +145,10 @@ def test_mcp_capability_status_explains_configured_not_connected():
         ]
     })
 
-    assert status["state"] == "configured_not_connected"
+    assert status["state"] == "configured_pending_runtime"
     assert status["enabled_servers"] == 1
     assert status["configured_servers"] == 2
-    assert "不会自动启动 MCP 进程" in status["message"]
+    assert "Agent 作用域代理工具" in status["message"]
 
 
 def test_mcp_capability_status_reports_config_errors():
@@ -124,6 +157,126 @@ def test_mcp_capability_status_reports_config_errors():
     assert status["state"] == "config_error"
     assert status["enabled_servers"] == 0
     assert status["errors"] == ["MCP server 'bad' 配置无效: command is required when server is enabled"]
+
+
+def test_mcp_capability_status_keeps_disabled_servers_unconnected():
+    status = build_mcp_capability_status({
+        "mcp_servers": [
+            {"name": "disabled_fs", "command": "npx", "enabled": False},
+        ]
+    })
+
+    assert status["state"] == "disabled"
+    assert status["configured_servers"] == 1
+    assert status["enabled_servers"] == 0
+    assert status["connected_tools"] == 0
+
+
+def test_mcp_proxy_tool_name_is_agent_scoped_and_stable():
+    first = build_mcp_proxy_tool_name("assistant", "filesystem")
+    second = build_mcp_proxy_tool_name("assistant", "filesystem")
+    sanitized = build_mcp_proxy_tool_name("assistant", "file-system")
+    reviewer = build_mcp_proxy_tool_name("reviewer", "filesystem")
+
+    assert first == "mcp__assistant__filesystem"
+    assert second == first
+    assert sanitized == "mcp__assistant__file-system"
+    assert reviewer == "mcp__reviewer__filesystem"
+    assert reviewer != first
+
+
+def test_mcp_adapter_does_not_register_disabled_servers():
+    servers = normalize_agent_mcp_servers({
+        "mcp_servers": [
+            {"name": "filesystem", "command": "npx", "enabled": True},
+            {"name": "off", "command": "npx", "enabled": False},
+        ]
+    })
+    tools = create_agent_mcp_proxy_capabilities(
+        agent_name="assistant",
+        servers=servers,
+        project_root=Path.cwd(),
+    )
+
+    names = [tool.name for tool in tools]
+    assert names == ["mcp__assistant__filesystem"]
+    assert all("__off__" not in name for name in names)
+
+
+def test_agent_mcp_proxy_tools_remain_scoped_in_agent_runtime_tools():
+    assistant = SimpleNamespace(name="assistant", _tools=[])
+    reviewer = SimpleNamespace(name="reviewer", _tools=[])
+    server = normalize_agent_mcp_servers({"mcp_servers": [{"name": "filesystem", "command": "npx"}]})
+
+    assistant._tools.extend(
+        create_agent_mcp_proxy_capabilities(
+            agent_name="assistant",
+            servers=server,
+            project_root=Path.cwd(),
+        )
+    )
+    reviewer._tools.extend(
+        create_agent_mcp_proxy_capabilities(
+            agent_name="reviewer",
+            servers=server,
+            project_root=Path.cwd(),
+        )
+    )
+
+    assistant_tool_names = {tool.name for tool in assistant._tools}
+    reviewer_tool_names = {tool.name for tool in reviewer._tools}
+
+    assert assistant_tool_names == {"mcp__assistant__filesystem"}
+    assert reviewer_tool_names == {"mcp__reviewer__filesystem"}
+    assert assistant_tool_names.isdisjoint(reviewer_tool_names)
+
+
+def test_mcp_capability_status_reports_adapter_connection_states():
+    configured = {"mcp_servers": [{"name": "filesystem", "command": "npx", "enabled": True}]}
+
+    for expected_state in ("proxy_available", "partial", "adapter_unavailable"):
+        status = build_mcp_capability_status(
+            configured,
+            runtime_status={
+                "state": expected_state,
+                "registered_tools": 1,
+                "connected_tools": 1 if expected_state in {"proxy_available", "partial"} else 0,
+            },
+        )
+
+        assert status["state"] == expected_state
+        assert status["state"] != "configured_not_connected"
+        assert status["enabled_servers"] == 1
+
+
+def test_mcp_runtime_status_reports_adapter_unavailable(monkeypatch, tmp_path):
+    import core.mcp_adapter as adapter
+
+    monkeypatch.setattr(adapter, "is_mcp_sdk_available", lambda: False)
+    servers = normalize_agent_mcp_servers({"mcp_servers": [{"name": "filesystem", "command": "npx"}]})
+
+    status = build_agent_mcp_runtime_status("assistant", servers, project_root=tmp_path)
+
+    assert status["state"] == "adapter_unavailable"
+    assert status["registered_tools"] == 1
+    assert status["connected_tools"] == 0
+    assert status["servers"]["filesystem"]["tool"] == "mcp__assistant__filesystem"
+
+
+async def test_mcp_proxy_returns_clear_error_when_sdk_missing(monkeypatch, tmp_path):
+    import core.mcp_adapter as adapter
+
+    monkeypatch.setattr(adapter, "is_mcp_sdk_available", lambda: False)
+    server = normalize_agent_mcp_servers({"mcp_servers": [{"name": "filesystem", "command": "npx"}]})[0]
+    tool = MCPServerProxyCapability(
+        agent_name="assistant",
+        server=server,
+        project_root=tmp_path,
+    )
+
+    result = await tool.execute(operation="list_tools")
+
+    assert result["error"] == "mcp_sdk_unavailable"
 
 
 async def test_agent_routes_return_scoped_config_and_mcp_status(monkeypatch):
@@ -137,7 +290,16 @@ async def test_agent_routes_return_scoped_config_and_mcp_status(monkeypatch):
         status = Status()
         capabilities = ["memory_search"]
         description = "Assistant"
-        runtime_config = {"llm": {"provider": "openai", "model": "gpt-global", "source": "global_default"}}
+        runtime_config = {
+            "llm": {"provider": "openai", "model": "gpt-global", "source": "global_default"},
+            "mcp_capability_status": {
+                "state": "adapter_unavailable",
+                "configured_servers": 1,
+                "enabled_servers": 1,
+                "registered_tools": 1,
+                "connected_tools": 0,
+            },
+        }
 
     class Agent:
         def get_metadata(self):
@@ -153,7 +315,7 @@ async def test_agent_routes_return_scoped_config_and_mcp_status(monkeypatch):
     config = {
         "name": "assistant",
         "skills": {"items": [{"name": "style", "instructions": "short"}]},
-        "mcp_servers": [{"name": "fs", "command": "npx", "enabled": True}],
+        "mcp_servers": [{"name": "fs", "command": "npx", "env": {"TOKEN": "secret"}, "enabled": True}],
         "llm": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.2},
         "default_workspace_id": "project-demo",
     }
@@ -166,7 +328,8 @@ async def test_agent_routes_return_scoped_config_and_mcp_status(monkeypatch):
     assert listed.status == "ok"
     assert listed.data[0]["skills"]["items"][0]["name"] == "style"
     assert listed.data[0]["mcp_servers"][0]["name"] == "fs"
-    assert listed.data[0]["mcp_capability_status"]["state"] == "configured_not_connected"
+    assert listed.data[0]["mcp_servers"][0]["env"] == {"TOKEN": "********"}
+    assert listed.data[0]["mcp_capability_status"]["state"] == "adapter_unavailable"
     assert listed.data[0]["llm"]["model"] == "gpt-5.4-mini"
     assert listed.data[0]["model"] == "gpt-5.4-mini"
     assert listed.data[0]["workspace_binding"]["workspace_id"] == "project-demo"
@@ -227,8 +390,52 @@ async def test_agent_create_rejects_invalid_mcp_before_saving(monkeypatch):
     ))
 
     assert response.status == "error"
-    assert "MCP server 'fs' 配置无效: command is required when server is enabled" in response.message
+    assert "command is required when server is enabled" in response.message
     assert saved is False
+
+
+async def test_agent_create_rejects_high_risk_tools_before_saving(monkeypatch):
+    from api.routes import agents as agent_routes
+    from api.schemas import AgentCreateRequest
+
+    saved = False
+
+    async def fail_if_saved(*args, **kwargs):
+        nonlocal saved
+        saved = True
+
+    monkeypatch.setattr(agent_routes, "load_single_yaml", lambda name: {"agents": []})
+    monkeypatch.setattr(agent_routes, "_save_config_and_reload", fail_if_saved)
+
+    response = await agent_routes.create_agent(
+        AgentCreateRequest(name="unsafe_agent", tools=["bash"])
+    )
+
+    assert response.status == "error"
+    assert saved is False
+
+
+async def test_agent_update_rejects_adding_management_tool(monkeypatch):
+    from api.routes import agents as agent_routes
+    from api.schemas import AgentUpdateRequest
+
+    async def fail_if_saved(*args, **kwargs):
+        raise AssertionError("should not save invalid agent update")
+
+    monkeypatch.setattr(
+        agent_routes,
+        "load_single_yaml",
+        lambda name: {"agents": [{"name": "assistant", "tools": ["memory_search"]}]},
+    )
+    monkeypatch.setattr(agent_routes, "_save_config_and_reload", fail_if_saved)
+
+    response = await agent_routes.update_agent(
+        "assistant",
+        AgentUpdateRequest(tools=["memory_search", "apply_agent_config_patch"]),
+    )
+
+    assert response.status == "error"
+    assert "Agent" in response.message
 
 
 async def test_agent_create_persists_llm_secret_without_returning_it(monkeypatch):
@@ -396,3 +603,36 @@ def test_create_agents_from_config_uses_agent_specific_model(monkeypatch):
     assert agents[1].llm is global_client
     assert agents[0]._runtime_config["llm"]["source"] == "agent_config"
     assert agents[1]._runtime_config["llm"]["source"] == "global_default"
+
+
+def test_create_agents_from_config_mounts_mcp_proxy_only_on_owning_agent(monkeypatch):
+    from api import main as api_main
+    from core.capability import CapabilityRegistry
+
+    monkeypatch.setattr(api_main, "PROJECT_ROOT", Path.cwd())
+    global_client = object()
+    cap_registry = CapabilityRegistry()
+    agents = api_main._create_agents_from_config(
+        [
+            {
+                "name": "assistant",
+                "tools": [],
+                "mcp_servers": [{"name": "filesystem", "command": "npx"}],
+            },
+            {"name": "reviewer", "tools": []},
+        ],
+        global_client,
+        cap_registry,
+        base_llm_config={},
+    )
+
+    assistant_tools = set(agents[0].get_capabilities())
+    reviewer_tools = set(agents[1].get_capabilities())
+
+    assert "mcp__assistant__filesystem" in assistant_tools
+    assert "mcp__assistant__filesystem" not in reviewer_tools
+    assert "mcp__assistant__filesystem" in cap_registry.list_names()
+    assert agents[0]._runtime_config["mcp_capability_status"]["state"] in {
+        "adapter_unavailable",
+        "proxy_available",
+    }

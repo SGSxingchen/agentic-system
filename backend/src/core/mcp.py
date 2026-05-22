@@ -1,18 +1,20 @@
-"""MCP server configuration helpers.
+"""Agent-scoped MCP server configuration helpers.
 
-This module validates and formats MCP server definitions.  It does not start
-external MCP processes yet; the generic in-process Agent receives the sanitized
-configuration so adapters for Codex/Claude/native MCP clients can consume it or
-report a clear degraded mode.
+MCP server definitions belong to one Agent.  This module validates, normalizes,
+sanitizes, and formats those definitions.  Runtime proxy capabilities are
+implemented in ``core.mcp_adapter``.
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 
 SUPPORTED_MCP_TRANSPORTS = {"stdio", "sse", "http", "streamable_http"}
+MASKED_MCP_ENV_VALUE = "********"
+MASKED_MCP_ENV_VALUES = {MASKED_MCP_ENV_VALUE, "***", "**********", "<masked>"}
 
 
 @dataclass(frozen=True)
@@ -28,16 +30,14 @@ class MCPServerConfig:
 
 
 def normalize_agent_mcp_servers(agent_config: Dict[str, Any]) -> List[MCPServerConfig]:
-    """Return validated enabled MCP servers from one agent config only.
-
-    The effective runtime config is agent-scoped.  Callers that support
-    templates/defaults must explicitly merge/inherit them into ``agent_config``
-    before creating the agent.
-    """
+    """Return validated enabled MCP servers from one agent config only."""
 
     servers: Any = agent_config.get("mcp_servers", [])
     if isinstance(servers, dict):
-        servers = [{"name": name, **value} if isinstance(value, dict) else {"name": name} for name, value in servers.items()]
+        servers = [
+            {"name": name, **value} if isinstance(value, dict) else {"name": name}
+            for name, value in servers.items()
+        ]
     if not isinstance(servers, list):
         return []
 
@@ -121,13 +121,76 @@ def validate_agent_mcp_servers_payload(servers: Any) -> List[str]:
     return errors
 
 
-def build_mcp_capability_status(agent_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Return an explainable status for agent-scoped MCP configuration.
+def sanitize_mcp_servers_for_response(servers: Any) -> List[Dict[str, Any]]:
+    """Return MCP server configs with env values masked for API/tool responses."""
 
-    This backend intentionally does not launch MCP servers yet. The status tells
-    API/UI callers whether config exists, whether it is valid, and whether tools
-    are actually connected.
-    """
+    if isinstance(servers, dict):
+        servers = [
+            {"name": name, **value} if isinstance(value, dict) else {"name": name}
+            for name, value in servers.items()
+        ]
+    if not isinstance(servers, list):
+        return []
+
+    sanitized: List[Dict[str, Any]] = []
+    for server in servers:
+        if not isinstance(server, dict):
+            continue
+        item = deepcopy(server)
+        env = item.get("env")
+        if isinstance(env, dict):
+            item["env"] = {str(key): MASKED_MCP_ENV_VALUE for key in env}
+        sanitized.append(item)
+    return sanitized
+
+
+def is_masked_mcp_env_value(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return text in MASKED_MCP_ENV_VALUES or (bool(text) and set(text) == {"*"})
+
+
+def merge_mcp_servers_preserving_masked_env(
+    existing_servers: Any,
+    incoming_servers: Any,
+) -> List[Dict[str, Any]]:
+    """Preserve stored MCP env values when API clients echo masked values."""
+
+    existing_list = existing_servers if isinstance(existing_servers, list) else []
+    incoming_list = incoming_servers if isinstance(incoming_servers, list) else []
+    existing_by_name = {
+        str(server.get("name") or "").strip(): server
+        for server in existing_list
+        if isinstance(server, dict) and str(server.get("name") or "").strip()
+    }
+
+    merged: List[Dict[str, Any]] = []
+    for server in incoming_list:
+        if not isinstance(server, dict):
+            continue
+        item = deepcopy(server)
+        name = str(item.get("name") or "").strip()
+        env = item.get("env")
+        existing_env = existing_by_name.get(name, {}).get("env") if name else None
+        if isinstance(env, dict) and isinstance(existing_env, dict):
+            next_env: Dict[str, Any] = {}
+            for key, value in env.items():
+                key_text = str(key)
+                if is_masked_mcp_env_value(value) and key_text in existing_env:
+                    next_env[key_text] = existing_env[key_text]
+                else:
+                    next_env[key_text] = value
+            item["env"] = next_env
+        merged.append(item)
+    return merged
+
+
+def build_mcp_capability_status(
+    agent_config: Dict[str, Any],
+    runtime_status: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Return an explainable status for agent-scoped MCP configuration."""
 
     raw_servers = agent_config.get("mcp_servers", [])
     if raw_servers is None:
@@ -143,8 +206,9 @@ def build_mcp_capability_status(agent_config: Dict[str, Any]) -> Dict[str, Any]:
             "configured_servers": 0,
             "enabled_servers": 0,
             "connected_tools": 0,
+            "registered_tools": 0,
             "errors": ["mcp_servers must be a list"],
-            "message": "MCP 配置无效：mcp_servers 必须是列表。当前不会启动 MCP 进程。",
+            "message": "MCP 配置无效：mcp_servers 必须是列表。",
         }
 
     errors = validate_agent_mcp_servers_payload(raw_servers)
@@ -157,17 +221,27 @@ def build_mcp_capability_status(agent_config: Dict[str, Any]) -> Dict[str, Any]:
             "configured_servers": configured_count,
             "enabled_servers": enabled_count,
             "connected_tools": 0,
+            "registered_tools": 0,
             "errors": errors,
-            "message": "MCP 配置存在错误；后端不会自动启动 MCP 进程，也不会把这些 server 暴露成可调用工具。",
+            "message": "MCP 配置存在校验错误；不会注册 MCP 代理工具。",
         }
+    if runtime_status:
+        status = dict(runtime_status)
+        status["configured_servers"] = configured_count
+        status["enabled_servers"] = enabled_count
+        status.setdefault("connected_tools", status.get("registered_tools", 0))
+        status.setdefault("registered_tools", status.get("connected_tools", 0))
+        status.setdefault("errors", [])
+        return status
     if enabled_count > 0:
         return {
-            "state": "configured_not_connected",
+            "state": "configured_pending_runtime",
             "configured_servers": configured_count,
             "enabled_servers": enabled_count,
             "connected_tools": 0,
+            "registered_tools": 0,
             "errors": [],
-            "message": "MCP server 已配置并会注入 Agent 上下文，但当前后端不会自动启动 MCP 进程；尚未注册为可调用工具。",
+            "message": "MCP server 已配置；运行时会尝试注册 Agent 作用域代理工具。",
         }
     if configured_count > 0:
         return {
@@ -175,14 +249,16 @@ def build_mcp_capability_status(agent_config: Dict[str, Any]) -> Dict[str, Any]:
             "configured_servers": configured_count,
             "enabled_servers": 0,
             "connected_tools": 0,
+            "registered_tools": 0,
             "errors": [],
-            "message": "仅存在禁用的 MCP server 配置；运行时不会连接或暴露工具。",
+            "message": "仅存在已禁用的 MCP server 配置；运行时不会注册工具。",
         }
     return {
         "state": "not_configured",
         "configured_servers": 0,
         "enabled_servers": 0,
         "connected_tools": 0,
+        "registered_tools": 0,
         "errors": [],
         "message": "该 Agent 未配置 MCP server。",
     }
@@ -193,13 +269,21 @@ def format_mcp_servers_for_prompt(servers: List[MCPServerConfig]) -> str:
         return ""
     lines = [
         "# MCP Servers configured for this runtime",
-        "These MCP server definitions were passed to the agent startup context. This generic backend does not automatically expose them as callable tools unless an MCP adapter/client registers their tools in CapabilityRegistry. If tools are unavailable, clearly say MCP is configured but not connected rather than inventing results.",
+        (
+            "These MCP server definitions belong only to this Agent. When the "
+            "MCP adapter is available, the backend registers one Agent-scoped "
+            "proxy tool per enabled stdio server. Use the proxy tool to list "
+            "remote tools before calling them. If a proxy is unavailable or "
+            "returns an error, report that state instead of inventing MCP results."
+        ),
     ]
     for server in servers:
         suffix = " ".join(server.args).strip()
         cmd = f"{server.command} {suffix}".strip()
         env_keys = ", ".join(sorted(server.env)) if server.env else "none"
-        desc = f" — {server.description}" if server.description else ""
-        lines.append(f"- {server.name}{desc}: transport={server.transport}, command={cmd}, cwd={server.cwd or '-'}, env_keys={env_keys}")
+        desc = f" - {server.description}" if server.description else ""
+        lines.append(
+            f"- {server.name}{desc}: transport={server.transport}, "
+            f"command={cmd}, cwd={server.cwd or '-'}, env_keys={env_keys}"
+        )
     return "\n".join(lines)
-

@@ -47,6 +47,7 @@ class TaskRegistry:
         agent_name: Optional[str] = None,
         session_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        workspace_root: Optional[str] = None,
         mode: str = "autonomous",
         strategy: str = "agent_decides",
         max_iterations: int = 50,
@@ -68,6 +69,7 @@ class TaskRegistry:
             agent_name=agent_name,
             session_id=session_id,
             workspace_id=workspace_id,
+            workspace_root=workspace_root,
             mode=mode,
             strategy=strategy,
             max_iterations=max_iterations,
@@ -218,6 +220,8 @@ class TaskRegistry:
             progress.tool_count += int(delta["tool_count"])
         if "total_tokens" in delta and delta["total_tokens"] is not None:
             progress.total_tokens += int(delta["total_tokens"])
+        if "memory_count" in delta and delta["memory_count"] is not None:
+            progress.memory_count = int(delta["memory_count"])
         if "activity" in delta and delta["activity"] is not None:
             progress.activity = str(delta["activity"])
         if "last_tool" in delta and delta["last_tool"] is not None:

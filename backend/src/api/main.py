@@ -26,7 +26,12 @@ from core.config import load_config, load_yaml_configs
 from core.chat_history import ChatHistoryStore
 from core.context import ContextStore
 from core.llm import create_llm_client
-from core.mcp import format_mcp_servers_for_prompt, normalize_agent_mcp_servers
+from core.mcp import build_mcp_capability_status, format_mcp_servers_for_prompt, normalize_agent_mcp_servers
+from core.mcp_adapter import (
+    build_agent_mcp_runtime_status,
+    create_agent_mcp_proxy_capabilities,
+    is_mcp_proxy_capability_name,
+)
 from core.skills import format_skills_for_prompt, load_agent_skills
 from core.workspace import (
     WorkspaceNotFoundError,
@@ -350,6 +355,17 @@ def _create_agents_from_config(
 
         loaded_skills = load_agent_skills(agent_def, project_root=PROJECT_ROOT)
         mcp_servers = normalize_agent_mcp_servers(agent_def)
+        mcp_runtime_status = build_agent_mcp_runtime_status(
+            name,
+            mcp_servers,
+            project_root=PROJECT_ROOT,
+        )
+        mcp_proxy_tools = create_agent_mcp_proxy_capabilities(
+            name,
+            mcp_servers,
+            project_root=PROJECT_ROOT,
+        )
+        tools.extend(mcp_proxy_tools)
         runtime_blocks = [
             block
             for block in (
@@ -365,7 +381,11 @@ def _create_agents_from_config(
         if loaded_skills:
             print(f"  [skills] agent '{name}' loaded {len(loaded_skills)} skill(s): {', '.join(skill.name for skill in loaded_skills)}")
         if mcp_servers:
-            print(f"  [mcp] agent '{name}' configured {len(mcp_servers)} MCP server(s): {', '.join(server.name for server in mcp_servers)} (adapter not auto-started)")
+            print(
+                f"  [mcp] agent '{name}' configured {len(mcp_servers)} MCP server(s): "
+                f"{', '.join(server.name for server in mcp_servers)} "
+                f"(state={mcp_runtime_status.get('state')}, proxy_tools={len(mcp_proxy_tools)})"
+            )
         if has_llm_override:
             print(
                 f"  [llm] agent '{name}' uses "
@@ -387,11 +407,17 @@ def _create_agents_from_config(
             runtime_config={
                 "skills": [skill.__dict__ for skill in loaded_skills],
                 "mcp_servers": [server.__dict__ for server in mcp_servers],
-                "mcp_capability_status": "configured_not_connected" if mcp_servers else "not_configured",
+                "mcp_capability_status": build_mcp_capability_status(
+                    agent_def,
+                    runtime_status=mcp_runtime_status if mcp_servers else None,
+                ),
                 "llm": _public_llm_config(agent_llm_config, overridden=has_llm_override),
             },
         )
         agents.append(agent)
+
+        for capability in mcp_proxy_tools:
+            cap_registry.register_native(capability)
 
         cap_registry.register_native(
             AgentCapability(agent, agent_def.get("input_schema"))
@@ -439,6 +465,9 @@ async def reload_agents() -> None:
 
         for metadata in registry.list_all():
             cap_registry.unregister(metadata.name)
+        for capability_name in list(cap_registry.list_names()):
+            if is_mcp_proxy_capability_name(capability_name):
+                cap_registry.unregister(capability_name)
         for metadata in registry.list_all():
             registry.unregister(metadata.name)
 

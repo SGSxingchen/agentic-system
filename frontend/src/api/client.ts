@@ -1,6 +1,10 @@
 import type {
   APIResponse,
+  AgentMCPServerConfig,
   AgentInfo,
+  AgentSkillConfig,
+  ChatSession,
+  ChatSessionSummary,
   Memory,
   MemoryStats,
   MemoryForgetResult,
@@ -291,8 +295,8 @@ export async function createAgent(data: {
   max_iterations?: number
   model?: string | null
   llm?: Record<string, unknown> | null
-  skills?: Record<string, unknown> | null
-  mcp_servers?: Array<Record<string, unknown>>
+  skills?: AgentSkillConfig | null
+  mcp_servers?: AgentMCPServerConfig[]
   default_workspace_id?: string
   default_workspace_root?: string
 }): Promise<APIResponse<unknown>> {
@@ -311,8 +315,8 @@ export async function updateAgent(
     max_iterations?: number
     model?: string | null
     llm?: Record<string, unknown> | null
-    skills?: Record<string, unknown> | null
-    mcp_servers?: Array<Record<string, unknown>>
+    skills?: AgentSkillConfig | null
+    mcp_servers?: AgentMCPServerConfig[]
     default_workspace_id?: string | null
     default_workspace_root?: string | null
   }
@@ -460,14 +464,72 @@ export async function saveWorkspaceFileContent(
 
 export async function invokeAgent(
   name: string,
-  input: string
+  input: string,
+  options?: {
+    session_id?: string
+    workspace_id?: string
+    messages?: Array<{ role: 'user' | 'assistant'; content: string }>
+  }
 ): Promise<APIResponse<any>> {
-  return post<any>(`/api/agents/${name}/invoke`, {
+  const payload: Record<string, unknown> = {
     data: {
       message: input,
       input,
+      ...(options?.session_id ? { session_id: options.session_id } : {}),
+      ...(options?.workspace_id ? { workspace_id: options.workspace_id } : {}),
+      ...(options?.messages ? { messages: options.messages } : {}),
     },
-  })
+  }
+  return post<any>(`/api/agents/${name}/invoke`, payload)
+}
+
+// ===== 聊天会话 API =====
+
+export async function listChatSessions(): Promise<APIResponse<ChatSessionSummary[]>> {
+  return get<ChatSessionSummary[]>('/api/chat-sessions')
+}
+
+export async function createChatSession(data?: {
+  title?: string
+  workspace_id?: string
+}): Promise<APIResponse<ChatSession>> {
+  return post<ChatSession>('/api/chat-sessions', data || {})
+}
+
+export async function getChatSession(id: string): Promise<APIResponse<ChatSession>> {
+  return get<ChatSession>(`/api/chat-sessions/${encodeURIComponent(id)}`)
+}
+
+export async function updateChatSession(
+  id: string,
+  data: { title?: string; workspace_id?: string | null }
+): Promise<APIResponse<ChatSession>> {
+  return put<ChatSession>(`/api/chat-sessions/${encodeURIComponent(id)}`, data)
+}
+
+export async function deleteChatSession(id: string): Promise<APIResponse<void>> {
+  return del<void>(`/api/chat-sessions/${encodeURIComponent(id)}`)
+}
+
+export async function addChatSessionMessage(
+  id: string,
+  message: {
+    id?: string
+    type: 'user' | 'assistant' | 'system'
+    content: string
+    timestamp?: string
+    memoriesUsed?: number
+    elapsedMs?: number
+    usage?: Record<string, number>
+    toolCalls?: Array<Record<string, unknown>>
+    agent_name?: string
+    error?: string
+  }
+): Promise<APIResponse<ChatSession>> {
+  return post<ChatSession>(
+    `/api/chat-sessions/${encodeURIComponent(id)}/messages`,
+    message
+  )
 }
 
 // ===== 人格系统 API =====
@@ -513,6 +575,30 @@ export async function bindAgentPersona(agentName: string, personaId: string): Pr
 export async function unbindAgentPersona(agentName: string): Promise<APIResponse<unknown>> {
   const response = await del(`/api/agents/persona-bindings/agents/${encodeURIComponent(agentName)}`)
   if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
+  return response
+}
+
+export async function bindSessionPersona(
+  sessionId: string,
+  personaId: string
+): Promise<APIResponse<unknown>> {
+  const response = await put(
+    `/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`,
+    { persona_id: personaId }
+  )
+  if (response.status === 'ok')
+    invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
+  return response
+}
+
+export async function unbindSessionPersona(
+  sessionId: string
+): Promise<APIResponse<unknown>> {
+  const response = await del(
+    `/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`
+  )
+  if (response.status === 'ok')
+    invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
   return response
 }
 

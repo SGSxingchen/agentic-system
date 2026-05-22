@@ -17,6 +17,11 @@ const Icon = {
       <rect x="3" y="16" width="7" height="5" rx="1" />
     </svg>
   ),
+  chat: (
+    <svg viewBox="0 0 24 24">
+      <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
   workspaces: (
     <svg viewBox="0 0 24 24">
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -49,6 +54,20 @@ const Icon = {
       <path d="M8 17h5" />
     </svg>
   ),
+  skills: (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.3 7.2 16.9l.9-5.4L4.2 7.7l5.4-.8z" />
+    </svg>
+  ),
+  mcp: (
+    <svg viewBox="0 0 24 24">
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <circle cx="12" cy="18" r="2.5" />
+      <path d="M6 8.5v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3" />
+      <path d="M12 13.5v2" />
+    </svg>
+  ),
   personas: (
     <svg viewBox="0 0 24 24">
       <path d="M12 3l8 4v5c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V7l8-4z" />
@@ -69,6 +88,7 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
     label: '工作台',
     items: [
       { key: 'overview', icon: Icon.overview, label: '总览' },
+      { key: 'chat', icon: Icon.chat, label: '对话' },
       { key: 'workspaces', icon: Icon.workspaces, label: '工作区' },
     ],
   },
@@ -78,6 +98,13 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
       { key: 'agents', icon: Icon.agents, label: '智能体' },
       { key: 'runs', icon: Icon.runs, label: '运行' },
       { key: 'monitor', icon: Icon.monitor, label: '监控' },
+    ],
+  },
+  {
+    label: '能力与扩展',
+    items: [
+      { key: 'skills', icon: Icon.skills, label: 'Skills' },
+      { key: 'mcp', icon: Icon.mcp, label: 'MCP' },
     ],
   },
   {

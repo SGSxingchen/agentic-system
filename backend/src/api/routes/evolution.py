@@ -202,7 +202,7 @@ def _mcp_items() -> List[Dict[str, Any]]:
                     "agent": agent_def.get("name", ""),
                     "servers": len(servers),
                     "enabled": len(enabled),
-                    "status": "configured_not_connected",
+                    "status": "configured_pending_runtime",
                 }
             )
     return items

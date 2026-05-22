@@ -107,6 +107,52 @@
   border: none;
 }
 
+.workspace-import-area__file-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+  transition: border-color var(--duration-fast), background var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.workspace-import-area__file-btn:hover {
+  border-color: var(--color-primary);
+  border-style: solid;
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+.workspace-import-area__file-btn svg {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.workspace-import-area__file-btn:hover svg {
+  color: var(--color-primary);
+}
+
+.workspace-import-area__file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-import-area__file-size {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
 .workspace-detail {
   display: grid;
   grid-template-rows: auto 1fr;

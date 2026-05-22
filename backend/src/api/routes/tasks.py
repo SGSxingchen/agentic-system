@@ -24,7 +24,11 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import APIResponse, AgentRunCreateRequest, RunControlRequest, TaskSubmitRequest
 from ..dependencies import get_capability_registry, get_memory_retriever
-from ..websocket.handlers import broadcast_monitor_event
+from ..websocket.handlers import (
+    broadcast_monitor_event,
+    build_memory_context,
+    schedule_memory_reflection,
+)
 from core.chat_history import ChatHistoryStore
 from core.config import load_single_yaml
 from core.task import (
@@ -42,7 +46,8 @@ from core.task import (
 from core.workspace import (
     WorkspaceNotFoundError,
     WorkspaceStore,
-    session_workspace_id,
+    default_workspace_root,
+    resolve_project_path,
     session_workspace_root,
     workspace_path,
 )
@@ -54,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 # 进程内单例：所有任务的注册中心
 _registry = TaskRegistry()
+_run_workspace_roots: dict[str, Path] = {}
 
 
 def get_task_registry() -> TaskRegistry:
@@ -91,6 +97,14 @@ def _run_workspace(workspace_id: str):
     return workspace_path("runs", safe_id, create=True)
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _session_workspace_id(session_id: Optional[str]) -> Optional[str]:
     if not session_id:
         return None
@@ -112,6 +126,82 @@ def _agent_default_workspace_id(agent_name: str) -> Optional[str]:
         value = str(agent.get("default_workspace_id") or agent.get("workspace_id") or "").strip()
         return value or None
     return None
+
+
+def _agent_default_workspace_root(agent_name: str) -> Optional[Path]:
+    data = load_single_yaml("agents.yaml")
+    agents = data.get("agents", [])
+    if not isinstance(agents, list):
+        return None
+    for agent in agents:
+        if not isinstance(agent, dict) or agent.get("name") != agent_name:
+            continue
+        raw = str(agent.get("default_workspace_root") or agent.get("workspace_root") or "").strip()
+        if not raw:
+            return None
+        if Path(raw).expanduser().is_absolute():
+            raise ValueError("default_workspace_root must be a relative path under ./workspace")
+        resolved = resolve_project_path(raw)
+        workspace_root = default_workspace_root().resolve()
+        if not _is_relative_to(resolved, workspace_root):
+            raise ValueError("default_workspace_root must resolve under ./workspace")
+        resolved.mkdir(parents=True, exist_ok=True)
+        return resolved
+    return None
+
+
+def _memory_query(goal: str, input_data: Dict[str, Any]) -> str:
+    context = input_data.get("context")
+    if context is None:
+        context = input_data.get("requirement") or input_data.get("message")
+    pieces = [str(goal or "").strip(), str(context or "").strip()]
+    return "\n\n".join(piece for piece in pieces if piece)
+
+
+def _extract_response_text(result: Any) -> str:
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for key in ("response", "content", "text", "message", "output", "answer", "error"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, dict):
+                nested = _extract_response_text(value)
+                if nested:
+                    return nested
+    return str(result)
+
+
+def _resolve_workspace_for_run(
+    *,
+    req: AgentRunCreateRequest,
+    agent_name: str,
+    run_id: str,
+) -> tuple[str, Path]:
+    requested_workspace_id = (
+        req.workspace_id
+        or _session_workspace_id(req.session_id)
+        or (session_workspace_id(req.session_id) if req.session_id else None)
+    )
+    if requested_workspace_id:
+        workspace_id = _safe_instance_id(requested_workspace_id, fallback=f"run-{run_id[:8]}")
+        return workspace_id, _run_workspace(workspace_id)
+
+    default_workspace_id = _agent_default_workspace_id(agent_name)
+    if default_workspace_id:
+        workspace_id = _safe_instance_id(default_workspace_id, fallback=f"agent-{agent_name}")
+        return workspace_id, _run_workspace(workspace_id)
+
+    default_root = _agent_default_workspace_root(agent_name)
+    if default_root is not None:
+        workspace_id = _safe_instance_id(f"agent-{agent_name}", fallback=f"run-{run_id[:8]}")
+        return workspace_id, default_root
+
+    workspace_id = _safe_instance_id(None, fallback=f"run-{run_id[:8]}")
+    return workspace_id, _run_workspace(workspace_id)
 
 
 async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = False) -> APIResponse:
@@ -169,18 +259,26 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
         auto_memory=req.auto_memory,
         parent_id=req.parent_id,
     )
-    requested_workspace_id = (
-        req.workspace_id
-        or _session_workspace_id(req.session_id)
-        or (session_workspace_id(req.session_id) if req.session_id else None)
-        or _agent_default_workspace_id(agent_name)
-    )
-    fallback_workspace_id = (
-        f"run-{provisional.id[:8]}"
-    )
-    workspace_id = _safe_instance_id(requested_workspace_id, fallback=fallback_workspace_id)
-    _registry.update(provisional.id, workspace_id=workspace_id)
+    try:
+        workspace_id, workspace_root = _resolve_workspace_for_run(
+            req=req,
+            agent_name=agent_name,
+            run_id=provisional.id,
+        )
+    except ValueError as exc:
+        _registry.mark_done(provisional.id, TaskStatus.FAILED, error=str(exc))
+        return APIResponse(status="error", message=str(exc), data=provisional.to_dict())
+    _registry.update(provisional.id, workspace_id=workspace_id, workspace_root=str(workspace_root))
+    _run_workspace_roots[provisional.id] = workspace_root
     provisional.output_file = str(transcript_path(provisional.id))
+
+    run_input = dict(req.input or {})
+    run_input.pop("memory_context", None)
+    memory_count = 0
+    if req.auto_memory:
+        memory_context, memory_count = await build_memory_context(_memory_query(req.goal, run_input))
+        if memory_context:
+            run_input["memory_context"] = memory_context
 
     writer = TranscriptWriter(provisional.id)
     writer.write(
@@ -191,11 +289,13 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
             "agent_name": agent_name,
             "session_id": req.session_id,
             "workspace_id": workspace_id,
+            "workspace_root": str(workspace_root),
             "mode": req.mode,
             "strategy": req.strategy,
             "max_iterations": req.max_iterations,
             "completion_criteria": req.completion_criteria,
             "auto_memory": req.auto_memory,
+            "memory_count": memory_count,
             "compat_task": compat_task,
         },
     )
@@ -207,8 +307,10 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
             agent_name,
             req.goal,
             workspace_id,
+            workspace_root,
             req.session_id,
-            req.input or {},
+            run_input,
+            memory_count,
             writer,
         )
     )
@@ -222,6 +324,8 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
             "task_id": provisional.id,
             "agent": agent_name,
             "workspace_id": workspace_id,
+            "auto_memory": req.auto_memory,
+            "memory_count": memory_count,
             "session_id": req.session_id,
             "goal": req.goal,
             "status": "running",
@@ -262,13 +366,14 @@ async def _run_agent_task(
     agent_name: str,
     goal: str,
     workspace_id: str,
+    workspace_root: Path,
     session_id: Optional[str],
     input_data: Dict[str, Any],
+    memory_count: int,
     writer: TranscriptWriter,
 ) -> None:
     """Run one autonomous Agent instance and persist its event stream."""
 
-    workspace_root = _run_workspace(workspace_id)
     parent_token = set_parent_task_id(task_id)
     workspace_token = set_workspace_root_override(workspace_root)
     started = asyncio.get_event_loop().time()
@@ -292,6 +397,7 @@ async def _run_agent_task(
             "auto_memory": state.auto_memory if state else True,
         }
     )
+    auto_memory = bool(payload.get("auto_memory", True))
 
     try:
         writer.write(
@@ -299,10 +405,18 @@ async def _run_agent_task(
             {
                 "kind": "agent_run",
                 "agent_name": agent_name,
+                "workspace_id": workspace_id,
                 "workspace_root": str(workspace_root),
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
             },
         )
-        _registry.set_progress(task_id, current_step="agent_loop", activity="agent deciding next action")
+        _registry.set_progress(
+            task_id,
+            current_step="agent_loop",
+            activity="agent deciding next action",
+            memory_count=memory_count,
+        )
         await broadcast_monitor_event(
             "agent_progress",
             {
@@ -311,6 +425,8 @@ async def _run_agent_task(
                 "agent": agent_name,
                 "workspace_id": workspace_id,
                 "session_id": session_id,
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
                 "activity": "agent_loop",
                 "status": "running",
                 "current_step": "agent_loop",
@@ -333,6 +449,8 @@ async def _run_agent_task(
                             "agent": agent_name,
                             "workspace_id": workspace_id,
                             "session_id": session_id,
+                            "auto_memory": auto_memory,
+                            "memory_count": memory_count,
                             "activity": "thinking",
                             "status": "running",
                             "current_step": "agent_loop",
@@ -353,6 +471,8 @@ async def _run_agent_task(
                             "agent": agent_name,
                             "workspace_id": workspace_id,
                             "session_id": session_id,
+                            "auto_memory": auto_memory,
+                            "memory_count": memory_count,
                             "activity": "calling_tool",
                             "status": "running",
                             "tool": event.get("tool"),
@@ -377,6 +497,8 @@ async def _run_agent_task(
                             "agent": agent_name,
                             "workspace_id": workspace_id,
                             "session_id": session_id,
+                            "auto_memory": auto_memory,
+                            "memory_count": memory_count,
                             "activity": "tool_result",
                             "status": "error" if is_error else "running",
                             "tool": event.get("tool"),
@@ -401,6 +523,9 @@ async def _run_agent_task(
                         "task_id": task_id,
                         "agent": agent_name,
                         "workspace_id": workspace_id,
+                        "session_id": session_id,
+                        "auto_memory": auto_memory,
+                        "memory_count": memory_count,
                         "event_type": ev_type,
                         "tool": event.get("tool"),
                         "status": "running",
@@ -417,6 +542,8 @@ async def _run_agent_task(
                     "agent": agent_name,
                     "workspace_id": workspace_id,
                     "session_id": session_id,
+                    "auto_memory": auto_memory,
+                    "memory_count": memory_count,
                     "activity": "running",
                     "status": "running",
                 },
@@ -432,6 +559,14 @@ async def _run_agent_task(
             _registry.mark_done(task_id, TaskStatus.COMPLETED, output=final_output)
             status = "completed"
 
+        if auto_memory:
+            schedule_memory_reflection(
+                user_message=_memory_query(goal, input_data),
+                assistant_text=_extract_response_text(final_output),
+                source=f"agent_run:{agent_name}",
+                session_id=session_id,
+            )
+
         await broadcast_monitor_event(
             "agent_run_completed",
             {
@@ -439,6 +574,9 @@ async def _run_agent_task(
                 "task_id": task_id,
                 "agent": agent_name,
                 "workspace_id": workspace_id,
+                "session_id": session_id,
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
                 "status": status,
                 "duration_ms": int((asyncio.get_event_loop().time() - started) * 1000),
             },
@@ -451,6 +589,8 @@ async def _run_agent_task(
                 "agent": agent_name,
                 "workspace_id": workspace_id,
                 "session_id": session_id,
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
                 "activity": "completed" if status == "completed" else "failed",
                 "status": status,
                 "duration_ms": int((asyncio.get_event_loop().time() - started) * 1000),
@@ -463,11 +603,30 @@ async def _run_agent_task(
         writer.write("killed", {})
         await broadcast_monitor_event(
             "agent_run_cancelled",
-            {"run_id": task_id, "task_id": task_id, "agent": agent_name, "status": "killed"},
+            {
+                "run_id": task_id,
+                "task_id": task_id,
+                "agent": agent_name,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
+                "status": "killed",
+            },
         )
         await broadcast_monitor_event(
             "agent_progress",
-            {"run_id": task_id, "task_id": task_id, "agent": agent_name, "activity": "cancelled", "status": "killed"},
+            {
+                "run_id": task_id,
+                "task_id": task_id,
+                "agent": agent_name,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
+                "activity": "cancelled",
+                "status": "killed",
+            },
         )
         raise
     except Exception as exc:
@@ -476,11 +635,32 @@ async def _run_agent_task(
         writer.write("error", {"error": str(exc)})
         await broadcast_monitor_event(
             "agent_run_failed",
-            {"run_id": task_id, "task_id": task_id, "agent": agent_name, "status": "failed", "error": str(exc)},
+            {
+                "run_id": task_id,
+                "task_id": task_id,
+                "agent": agent_name,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
+                "status": "failed",
+                "error": str(exc),
+            },
         )
         await broadcast_monitor_event(
             "agent_progress",
-            {"run_id": task_id, "task_id": task_id, "agent": agent_name, "activity": "failed", "status": "failed", "error": str(exc)},
+            {
+                "run_id": task_id,
+                "task_id": task_id,
+                "agent": agent_name,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "auto_memory": auto_memory,
+                "memory_count": memory_count,
+                "activity": "failed",
+                "status": "failed",
+                "error": str(exc),
+            },
         )
     finally:
         reset_workspace_root_override(workspace_token)
@@ -575,11 +755,17 @@ async def list_run_workspaces():
     grouped: Dict[str, Dict[str, Any]] = {}
     for run in [t for t in _registry.list() if t.type is TaskType.AGENT_RUN]:
         workspace_id = run.workspace_id or "default"
+        stored_root = str(getattr(run, "workspace_root", "") or "").strip()
+        workspace_root = (
+            Path(stored_root).resolve()
+            if stored_root
+            else (_run_workspace_roots.get(run.id) or _run_workspace(workspace_id))
+        )
         item = grouped.setdefault(
             workspace_id,
             {
                 "workspace_id": workspace_id,
-                "path": str(_run_workspace(workspace_id)),
+                "path": str(workspace_root),
                 "runs": 0,
                 "active_runs": 0,
                 "latest_updated_at": run.updated_at,

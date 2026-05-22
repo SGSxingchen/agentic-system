@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
 import type { AgentInfo, RunEvent, Task } from '../types'
+import { Select } from './Select'
 import './RunsPanel.css'
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
@@ -220,32 +221,37 @@ export function RunsPanel() {
 
           <div className="run-form__field">
             <label>智能体</label>
-            <select
+            <Select
               value={formAgent}
-              onChange={(event) => setFormAgent(event.target.value)}
-            >
-              {agents.length === 0 && <option value="">未发现智能体</option>}
-              {agents.map((agent) => (
-                <option key={agent.name} value={agent.name}>
-                  {agent.name} — {agent.description || '无描述'}
-                </option>
-              ))}
-            </select>
+              onChange={setFormAgent}
+              placeholder={agents.length === 0 ? '未发现智能体' : '请选择智能体'}
+              disabled={agents.length === 0}
+              options={agents.map((agent) => ({
+                value: agent.name,
+                label: agent.name,
+                description: agent.description || '无描述',
+              }))}
+            />
           </div>
 
           <div className="run-form__field">
             <label>工作区</label>
-            <select
+            <Select
               value={formWorkspace}
-              onChange={(event) => setFormWorkspace(event.target.value)}
-            >
-              <option value="">不绑定（运行时由智能体决定）</option>
-              {state.workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}
-                </option>
-              ))}
-            </select>
+              onChange={setFormWorkspace}
+              options={[
+                {
+                  value: '',
+                  label: '不绑定',
+                  description: '运行时由智能体决定',
+                },
+                ...state.workspaces.map((workspace) => ({
+                  value: workspace.id,
+                  label: workspace.name,
+                  description: workspace.metadata?.description || '受管理工作区',
+                })),
+              ]}
+            />
             {state.selectedWorkspace?.id &&
               formWorkspace === state.selectedWorkspace.id && (
                 <span className="text-muted" style={{ fontSize: 11 }}>
@@ -266,15 +272,14 @@ export function RunsPanel() {
           <div className="run-form__row">
             <div className="run-form__field">
               <label>运行模式</label>
-              <select
+              <Select
                 value={formMode}
-                onChange={(event) =>
-                  setFormMode(event.target.value as 'continuous' | 'once')
-                }
-              >
-                <option value="continuous">持续运行</option>
-                <option value="once">单次执行</option>
-              </select>
+                onChange={(value) => setFormMode(value as 'continuous' | 'once')}
+                options={[
+                  { value: 'continuous', label: '持续运行', description: '直至命中完成标准或达到迭代上限' },
+                  { value: 'once', label: '单次执行', description: '只跑一轮' },
+                ]}
+              />
             </div>
             <div className="run-form__field">
               <label>最大迭代</label>

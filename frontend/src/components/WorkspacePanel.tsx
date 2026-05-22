@@ -405,12 +405,37 @@ export function WorkspacePanel() {
               type="file"
               accept=".zip,application/zip,application/x-zip-compressed"
               onChange={handlePickFile}
+              style={{ display: 'none' }}
             />
-            {pickedFile && (
-              <div style={{ fontSize: 11.5, color: 'var(--color-text-muted)' }}>
-                {pickedFile.name} · {formatBytes(pickedFile.size)}
-              </div>
-            )}
+            <button
+              type="button"
+              className="workspace-import-area__file-btn"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span className="workspace-import-area__file-name">
+                {pickedFile ? pickedFile.name : '选择 .zip 文件'}
+              </span>
+              {pickedFile && (
+                <span className="workspace-import-area__file-size">
+                  {formatBytes(pickedFile.size)}
+                </span>
+              )}
+            </button>
             <input
               type="text"
               placeholder="工作区名称（可选）"

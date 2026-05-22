@@ -12,6 +12,7 @@
 - GET  /api/agents/capabilities/list — 列出所有可用能力（供 Agent 选择 tools）
 """
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -35,23 +36,42 @@ from core.persona import BASE_PERSONA_ID, DEFAULT_BINDABLE_AGENT_ROLES, PersonaB
 from core.workspace import (
     WorkspaceNotFoundError,
     WorkspaceStore,
+    default_workspace_root,
+    project_root,
     resolve_project_path,
     session_workspace_id,
     session_workspace_root,
 )
 from core.mcp import (
     build_mcp_capability_status,
+    merge_mcp_servers_preserving_masked_env,
+    sanitize_mcp_servers_for_response,
     validate_agent_mcp_servers_payload,
     validate_mcp_server_payload,
 )
+from ..websocket.handlers import build_memory_context, schedule_memory_reflection
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 PROTECTED_AGENT_NAMES = {
     *DEFAULT_BINDABLE_AGENT_ROLES,
+    "agent_manager",
     "persona_evolution",
 }
 MASKED_SECRET_VALUES = {"********", "••••••••"}
+HIGH_RISK_TOOLS = {
+    "bash",
+    "write_file",
+    "create_agent_config",
+    "create_dynamic_tool_config",
+    "dispatch_agent",
+}
+AGENT_MANAGEMENT_TOOLS = {
+    "read_agent_config",
+    "validate_agent_config_patch",
+    "propose_agent_config_patch",
+    "apply_agent_config_patch",
+}
 
 
 class AgentPersonaBindRequest(BaseModel):
@@ -97,7 +117,7 @@ def _agent_config_fields(name: str) -> dict:
         "max_iterations": config.get("max_iterations"),
         "skills": config.get("skills"),
         "skill_mount": _build_skill_mount(config),
-        "mcp_servers": config.get("mcp_servers") or [],
+        "mcp_servers": sanitize_mcp_servers_for_response(config.get("mcp_servers") or []),
         "mcp_mounts": _build_mcp_mounts(config),
         "mcp_capability_status": build_mcp_capability_status(config),
         **_workspace_config_fields(config),
@@ -204,7 +224,7 @@ def _build_mcp_mounts(config: dict[str, Any]) -> list[AgentMCPMount]:
             continue
         errors = validate_mcp_server_payload(server)
         enabled = bool(server.get("enabled", True))
-        status = "disabled" if not enabled else "config_error" if errors else "configured_not_connected"
+        status = "disabled" if not enabled else "config_error" if errors else "configured_pending_runtime"
         mounts.append(
             AgentMCPMount(
                 name=str(server.get("name") or ""),
@@ -294,6 +314,13 @@ def _agent_llm_config(config: dict[str, Any], runtime_meta: Any | None = None) -
     return None
 
 
+def _runtime_mcp_status(runtime_meta: Any | None) -> dict[str, Any] | None:
+    runtime_config = getattr(runtime_meta, "runtime_config", None)
+    if isinstance(runtime_config, dict) and isinstance(runtime_config.get("mcp_capability_status"), dict):
+        return runtime_config["mcp_capability_status"]
+    return None
+
+
 def _build_agent_info(
     name: str,
     *,
@@ -327,9 +354,12 @@ def _build_agent_info(
         max_iterations=config.get("max_iterations"),
         skills=config.get("skills") if isinstance(config.get("skills"), dict) else None,
         skill_mount=_build_skill_mount(config),
-        mcp_servers=config.get("mcp_servers") if isinstance(config.get("mcp_servers"), list) else [],
+        mcp_servers=sanitize_mcp_servers_for_response(config.get("mcp_servers") if isinstance(config.get("mcp_servers"), list) else []),
         mcp_mounts=_build_mcp_mounts(config),
-        mcp_capability_status=build_mcp_capability_status(config),
+        mcp_capability_status=build_mcp_capability_status(
+            config,
+            runtime_status=_runtime_mcp_status(runtime_meta),
+        ),
         **_workspace_config_fields(config),
     )
 
@@ -337,6 +367,86 @@ def _build_agent_info(
 def _format_mcp_validation_error(mcp_servers: list[dict]) -> str | None:
     errors = validate_agent_mcp_servers_payload(mcp_servers)
     return "; ".join(errors) if errors else None
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_workspace_root_field(value: Any) -> str | None:
+    if value is None or not str(value).strip():
+        return None
+    raw = str(value).strip()
+    if Path(raw).expanduser().is_absolute():
+        return "default_workspace_root must be a relative path under ./workspace; use default_workspace_id for managed project workspaces"
+    try:
+        resolved = resolve_project_path(raw)
+    except Exception as exc:
+        return f"default_workspace_root is invalid: {exc}"
+    workspace_root = default_workspace_root().resolve()
+    if not _is_relative_to(resolved, workspace_root):
+        return "default_workspace_root must resolve under ./workspace"
+    return None
+
+
+def _validate_skill_paths(skills: Any) -> str | None:
+    if skills is None:
+        return None
+    if not isinstance(skills, dict):
+        return "skills must be an object or null"
+
+    root = project_root().resolve()
+    raw_paths: list[str] = []
+    directories = skills.get("directories", skills.get("paths", []))
+    if isinstance(directories, str):
+        raw_paths.append(directories)
+    elif isinstance(directories, list):
+        raw_paths.extend(str(item) for item in directories if str(item).strip())
+
+    items = skills.get("items", skills.get("list", []))
+    if isinstance(items, dict):
+        items = list(items.values())
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, str):
+                raw_paths.append(item)
+            elif isinstance(item, dict) and item.get("path"):
+                raw_paths.append(str(item["path"]))
+
+    for raw in raw_paths:
+        path = Path(raw).expanduser()
+        if path.is_absolute():
+            return "skills paths must be relative to the project root"
+        resolved = (root / path).resolve()
+        if not _is_relative_to(resolved, root):
+            return "skills paths must stay within the project root"
+    return None
+
+
+def _validate_tools_for_write(
+    agent_name: str,
+    tools: list[str] | None,
+    *,
+    existing_tools: list[str] | None = None,
+    creating: bool = False,
+) -> str | None:
+    if tools is None:
+        return None
+    tool_set = set(tools)
+    if agent_name != "agent_manager" and tool_set & AGENT_MANAGEMENT_TOOLS:
+        blocked = ", ".join(sorted(tool_set & AGENT_MANAGEMENT_TOOLS))
+        return f"Agent 管理工具只能挂载到 agent_manager: {blocked}"
+    if creating:
+        blocked = sorted(tool_set & HIGH_RISK_TOOLS)
+    else:
+        blocked = sorted((tool_set - set(existing_tools or [])) & HIGH_RISK_TOOLS)
+    if blocked:
+        return "普通 Agent API 不能新增高风险工具，请通过 agent_manager 审批: " + ", ".join(blocked)
+    return None
 
 
 async def _reload_agents():
@@ -370,6 +480,8 @@ def _sanitize_agent_config_for_response(config: dict[str, Any]) -> dict[str, Any
     if isinstance(llm, dict):
         api_key = str(llm.pop("api_key", "") or "").strip()
         llm["api_key_set"] = bool(api_key)
+    if "mcp_servers" in sanitized:
+        sanitized["mcp_servers"] = sanitize_mcp_servers_for_response(sanitized.get("mcp_servers"))
     return sanitized
 
 
@@ -421,6 +533,9 @@ def _attach_trusted_workspace_context(payload: dict[str, Any], agent_name: str) 
 
     default_workspace_root = str(config.get("default_workspace_root") or config.get("workspace_root") or "").strip()
     if default_workspace_root:
+        root_error = _validate_workspace_root_field(default_workspace_root)
+        if root_error:
+            return root_error
         payload["workspace_id"] = f"agent-{agent_name}"
         payload["_trusted_workspace_root"] = str(resolve_project_path(default_workspace_root))
     return None
@@ -603,6 +718,17 @@ async def create_agent(req: AgentCreateRequest):
             return APIResponse(status="error", message=f"Agent '{req.name}' 已存在")
 
     # 添加新 agent
+    tools_error = _validate_tools_for_write(req.name, req.tools, creating=True)
+    if tools_error:
+        return APIResponse(status="error", message=tools_error)
+    if req.skills is not None:
+        skills_error = _validate_skill_paths(req.skills.model_dump())
+        if skills_error:
+            return APIResponse(status="error", message=skills_error)
+    root_error = _validate_workspace_root_field(req.default_workspace_root)
+    if root_error:
+        return APIResponse(status="error", message=root_error)
+
     mcp_servers = [server.model_dump() for server in req.mcp_servers]
     mcp_error = _format_mcp_validation_error(mcp_servers)
     if mcp_error:
@@ -646,6 +772,9 @@ async def create_agent(req: AgentCreateRequest):
 @router.put("/{name}", response_model=APIResponse)
 async def update_agent(name: str, req: AgentUpdateRequest):
     """更新 Agent 配置，写入 YAML 并热重载"""
+    if name == "agent_manager":
+        return APIResponse(status="error", message="agent_manager 只能通过受控 agent_manager 工具链修改")
+
     data = load_single_yaml("agents.yaml")
     previous_data = deepcopy(data)
     agents_list = data.get("agents", [])
@@ -660,6 +789,24 @@ async def update_agent(name: str, req: AgentUpdateRequest):
 
     if target is None:
         return APIResponse(status="error", message=f"Agent '{name}' 不存在")
+
+    if req.tools is not None:
+        tools_error = _validate_tools_for_write(
+            name,
+            req.tools,
+            existing_tools=_as_str_list(target.get("tools")),
+            creating=False,
+        )
+        if tools_error:
+            return APIResponse(status="error", message=tools_error)
+    if req.skills is not None:
+        skills_error = _validate_skill_paths(req.skills.model_dump())
+        if skills_error:
+            return APIResponse(status="error", message=skills_error)
+    if "default_workspace_root" in req.model_fields_set:
+        root_error = _validate_workspace_root_field(req.default_workspace_root)
+        if root_error:
+            return APIResponse(status="error", message=root_error)
 
     if req.description is not None:
         target["description"] = req.description
@@ -681,7 +828,10 @@ async def update_agent(name: str, req: AgentUpdateRequest):
         mcp_error = _format_mcp_validation_error(mcp_servers)
         if mcp_error:
             return APIResponse(status="error", message=mcp_error)
-        target["mcp_servers"] = mcp_servers
+        target["mcp_servers"] = merge_mcp_servers_preserving_masked_env(
+            target.get("mcp_servers"),
+            mcp_servers,
+        )
     if "llm" in req.model_fields_set:
         if req.llm is None or not req.llm.model_fields_set:
             target.pop("llm", None)
@@ -787,6 +937,23 @@ def _llm_request_payload(req: Any) -> dict[str, Any]:
     return payload
 
 
+def _extract_agent_response_text(result: Any) -> str:
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for key in ("response", "content", "text", "message", "output", "answer"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, dict):
+                nested = _extract_agent_response_text(value)
+                if nested:
+                    return nested
+    return str(result)
+
+
 @router.post("/{name}/invoke", response_model=APIResponse)
 async def invoke_agent(name: str, req: AgentInvokeRequest):
     """直接调用某个 Agent（通过 CapabilityRegistry）"""
@@ -799,7 +966,23 @@ async def invoke_agent(name: str, req: AgentInvokeRequest):
         workspace_error = _attach_trusted_workspace_context(payload, name)
         if workspace_error:
             return APIResponse(status="error", message=workspace_error)
+        message = str(payload.get("message") or payload.get("input") or "").strip()
+        memories_used = 0
+        if message:
+            memory_context, memories_used = await build_memory_context(message)
+            if memory_context:
+                payload["memory_context"] = memory_context
         result = await cap_registry.execute(name, **payload)
+        if message:
+            response_text = _extract_agent_response_text(result)
+            schedule_memory_reflection(
+                user_message=message,
+                assistant_text=response_text,
+                source=f"agent_invoke:{name}",
+                session_id=payload.get("session_id"),
+            )
+            if isinstance(result, dict):
+                result = {**result, "memories_used": memories_used}
         return APIResponse(status="ok", data=result)
     except Exception as e:
         return APIResponse(status="error", message=f"Agent 调用失败: {str(e)}")

@@ -138,6 +138,7 @@ export interface TaskProgress {
   activity?: string
   last_tool?: string | null
   current_step?: string | null
+  memory_count?: number
 }
 
 export interface Task {
@@ -153,6 +154,7 @@ export interface Task {
   agent_name?: string | null
   session_id?: string | null
   workspace_id?: string | null
+  workspace_root?: string | null
   mode?: string
   strategy?: string
   max_iterations?: number
@@ -252,6 +254,54 @@ export interface WorkspaceFileListing {
   files: WorkspaceFileEntry[]
 }
 
+// ===== 聊天会话 =====
+
+export interface ChatTokenUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+  [key: string]: number | undefined
+}
+
+export interface ChatToolCallRecord {
+  id?: string
+  name?: string
+  arguments?: Record<string, any> | string
+  result?: any
+  error?: string
+  status?: 'running' | 'success' | 'error' | string
+  started_at?: string
+  ended_at?: string
+}
+
+export interface ChatMessage {
+  id: string
+  type: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+  memoriesUsed?: number
+  elapsedMs?: number
+  usage?: ChatTokenUsage
+  toolCalls?: ChatToolCallRecord[]
+  agent_name?: string
+  error?: string
+}
+
+export interface ChatSessionSummary {
+  id: string
+  title: string
+  workspace_id?: string | null
+  created_at: string
+  updated_at: string
+  last_message?: string
+  last_message_preview?: string
+  message_count?: number
+}
+
+export interface ChatSession extends ChatSessionSummary {
+  messages: ChatMessage[]
+}
+
 // ===== 配置 =====
 
 export interface LLMConfig {
@@ -333,11 +383,14 @@ export interface CapabilityInfo {
 
 export type PanelType =
   | 'overview'
+  | 'chat'
   | 'workspaces'
   | 'agents'
   | 'runs'
   | 'monitor'
   | 'memory'
+  | 'skills'
+  | 'mcp'
   | 'personas'
   | 'settings'
 
