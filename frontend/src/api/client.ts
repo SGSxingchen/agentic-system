@@ -9,19 +9,15 @@ import type {
   SystemConfig,
   Task,
   RunEventsResponse,
+  RunMemoryContext,
   RunWorkspaceSummary,
-  ChatSession,
-  ChatSessionSummary,
-  Message,
-  EvolutionGraph,
-  EvolutionSystemStatus,
-  EvolutionCommand,
-  ToolPromptInfo,
   Persona,
   PersonaBindings,
   PersonaProposal,
   PersonaVersion,
-  Artifact,
+  ManagedWorkspace,
+  WorkspaceFileContent,
+  WorkspaceFileListing,
 } from '../types'
 
 const API_BASE = ''
@@ -101,15 +97,42 @@ async function fetchAPI<T>(
 
     const data = await res.json()
 
-    // 后端可能直接返回数据，也可能包装在 { status, data } 中
     if (data && typeof data === 'object' && 'status' in data) {
       return data as APIResponse<T>
     }
 
     return { status: 'ok', data: data as T }
   } catch (err: unknown) {
-    const message =
-      err instanceof Error ? err.message : '网络请求失败'
+    const message = err instanceof Error ? err.message : '网络请求失败'
+    return { status: 'error', message }
+  }
+}
+
+async function fetchFormAPI<T>(
+  path: string,
+  formData: FormData
+): Promise<APIResponse<T>> {
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return {
+        status: 'error',
+        message: `HTTP ${res.status}: ${text || res.statusText}`,
+      }
+    }
+
+    const data = await res.json()
+    if (data && typeof data === 'object' && 'status' in data) {
+      return data as APIResponse<T>
+    }
+    return { status: 'ok', data: data as T }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '网络请求失败'
     return { status: 'error', message }
   }
 }
@@ -174,8 +197,6 @@ export async function getHealth(): Promise<APIResponse<HealthStatus>> {
 }
 
 // ===== 记忆 API =====
-
-export type MemoryStatsResponse = MemoryStats
 
 export async function getMemoryStats(): Promise<APIResponse<MemoryStats>> {
   return get<MemoryStats>('/api/memory/stats')
@@ -268,11 +289,15 @@ export async function createAgent(data: {
   tools?: string[]
   output_format?: string
   max_iterations?: number
+  model?: string | null
+  llm?: Record<string, unknown> | null
   skills?: Record<string, unknown> | null
   mcp_servers?: Array<Record<string, unknown>>
+  default_workspace_id?: string
+  default_workspace_root?: string
 }): Promise<APIResponse<unknown>> {
   const response = await post('/api/agents', data)
-  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
+  if (response.status === 'ok') invalidateGetCache('/api/agents')
   return response
 }
 
@@ -284,18 +309,22 @@ export async function updateAgent(
     tools?: string[]
     output_format?: string
     max_iterations?: number
+    model?: string | null
+    llm?: Record<string, unknown> | null
     skills?: Record<string, unknown> | null
     mcp_servers?: Array<Record<string, unknown>>
+    default_workspace_id?: string | null
+    default_workspace_root?: string | null
   }
 ): Promise<APIResponse<unknown>> {
   const response = await put(`/api/agents/${name}`, data)
-  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
+  if (response.status === 'ok') invalidateGetCache('/api/agents')
   return response
 }
 
 export async function deleteAgent(name: string): Promise<APIResponse<void>> {
   const response = await del<void>(`/api/agents/${name}`)
-  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
+  if (response.status === 'ok') invalidateGetCache('/api/agents')
   return response
 }
 
@@ -303,140 +332,6 @@ export async function deleteAgent(name: string): Promise<APIResponse<void>> {
 
 export async function listCapabilities(): Promise<APIResponse<{ name: string; description: string; parameters?: any }[]>> {
   return getCached('/api/agents/capabilities/list', 60_000)
-}
-
-// ===== 进化 API =====
-
-export async function getEvolutionGraph(): Promise<APIResponse<EvolutionGraph>> {
-  return get<EvolutionGraph>('/api/evolution/graph')
-}
-
-export async function getEvolutionSystemStatus(): Promise<APIResponse<EvolutionSystemStatus>> {
-  return get<EvolutionSystemStatus>('/api/evolution/system-status')
-}
-
-export async function createEvolutionCommand(
-  goal: string
-): Promise<APIResponse<EvolutionCommand>> {
-  return post<EvolutionCommand>('/api/evolution/command', { goal })
-}
-
-export async function createDynamicTool(data: {
-  name: string
-  description?: string
-  mode: 'template' | 'checklist' | 'regex_extract'
-  input_schema?: Record<string, unknown>
-  config?: Record<string, unknown>
-  attach_to_agents?: string[]
-  overwrite?: boolean
-}): Promise<APIResponse<unknown>> {
-  const response = await post('/api/evolution/dynamic-tools', data)
-  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
-  return response
-}
-
-export async function reloadEvolutionExtensions(): Promise<APIResponse<unknown>> {
-  const response = await post('/api/evolution/reload')
-  if (response.status === 'ok') invalidateGetCache('/api/agents', '/api/agents/capabilities/list')
-  return response
-}
-
-export async function getToolPrompts(): Promise<APIResponse<ToolPromptInfo[]>> {
-  return get<ToolPromptInfo[]>('/api/evolution/tool-prompts')
-}
-
-export async function updateToolPrompt(
-  name: string,
-  prompt: string
-): Promise<APIResponse<unknown>> {
-  return put(`/api/evolution/tool-prompts/${encodeURIComponent(name)}`, { prompt })
-}
-
-// ===== 聊天 API =====
-
-export async function sendMessage(
-  message: string
-): Promise<APIResponse<{ response: string; memories_used?: number }>> {
-  return post<{ response: string; memories_used?: number }>('/api/chat', {
-    message,
-  })
-}
-
-export async function listChatSessions(): Promise<APIResponse<ChatSessionSummary[]>> {
-  return get<ChatSessionSummary[]>('/api/chat-sessions')
-}
-
-export async function createChatSession(
-  title?: string
-): Promise<APIResponse<ChatSession>> {
-  return post<ChatSession>('/api/chat-sessions', { title })
-}
-
-export async function getChatSession(
-  sessionId: string
-): Promise<APIResponse<ChatSession>> {
-  return get<ChatSession>(`/api/chat-sessions/${encodeURIComponent(sessionId)}`)
-}
-
-export async function updateChatSession(
-  sessionId: string,
-  title: string
-): Promise<APIResponse<ChatSession>> {
-  return put<ChatSession>(`/api/chat-sessions/${encodeURIComponent(sessionId)}`, {
-    title,
-  })
-}
-
-export async function deleteChatSession(
-  sessionId: string
-): Promise<APIResponse<void>> {
-  return del<void>(`/api/chat-sessions/${encodeURIComponent(sessionId)}`)
-}
-
-export async function addChatSessionMessage(
-  sessionId: string,
-  message: Message
-): Promise<APIResponse<ChatSession>> {
-  return post<ChatSession>(
-    `/api/chat-sessions/${encodeURIComponent(sessionId)}/messages`,
-    message
-  )
-}
-
-
-// ===== Artifact API =====
-
-export async function listArtifacts(sessionId?: string): Promise<APIResponse<Artifact[]>> {
-  const suffix = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
-  return get<Artifact[]>(`/api/artifacts${suffix}`)
-}
-
-export async function getArtifactContent(id: string): Promise<APIResponse<{ artifact: Artifact; content: string }>> {
-  return get<{ artifact: Artifact; content: string }>(`/api/artifacts/${encodeURIComponent(id)}/content`)
-}
-
-// ===== 任务 API =====
-
-export async function submitTask(
-  requirement: string
-): Promise<APIResponse<Task>> {
-  return post<Task>('/api/tasks', { requirement })
-}
-
-export async function getTasks(): Promise<APIResponse<Task[]>> {
-  return get<Task[]>('/api/tasks')
-}
-
-export async function getTask(
-  taskId: string
-): Promise<APIResponse<Task>> {
-  return get<Task>(`/api/tasks/${taskId}`)
-}
-
-export async function deleteTask(
-  taskId: string
-): Promise<APIResponse<void>> {
-  return del<void>(`/api/tasks/${taskId}`)
 }
 
 // ===== Agent Run API =====
@@ -448,6 +343,9 @@ export async function createRun(data: {
   workspace_id?: string
   mode?: string
   strategy?: string
+  max_iterations?: number
+  completion_criteria?: string
+  auto_memory?: boolean
   input?: Record<string, unknown>
 }): Promise<APIResponse<Task>> {
   return post<Task>('/api/runs', data)
@@ -480,15 +378,85 @@ export async function cancelRun(runId: string): Promise<APIResponse<Task>> {
   return del<Task>(`/api/runs/${runId}`)
 }
 
+export async function controlRun(
+  runId: string,
+  action: 'cancel'
+): Promise<APIResponse<Task>> {
+  return post<Task>(`/api/runs/${runId}/control`, { action })
+}
+
+export async function getRunMemoryContext(runId: string): Promise<APIResponse<RunMemoryContext>> {
+  return get<RunMemoryContext>(`/api/runs/${runId}/memory-context`)
+}
+
 export async function getRunWorkspaces(): Promise<APIResponse<RunWorkspaceSummary[]>> {
   return get<RunWorkspaceSummary[]>('/api/runs/workspaces')
 }
 
-// ===== 智能体调用 =====
+// ===== 受管理工作区 API =====
 
-export async function getAgents(): Promise<APIResponse<AgentInfo[]>> {
-  return listAgents()
+export async function listWorkspaces(): Promise<APIResponse<ManagedWorkspace[]>> {
+  return get<ManagedWorkspace[]>('/api/workspaces')
 }
+
+export async function getWorkspace(
+  workspaceId: string
+): Promise<APIResponse<ManagedWorkspace>> {
+  return get<ManagedWorkspace>(`/api/workspaces/${encodeURIComponent(workspaceId)}`)
+}
+
+export async function importWorkspace(data: {
+  file: File
+  name?: string
+  description?: string
+}): Promise<APIResponse<ManagedWorkspace>> {
+  const formData = new FormData()
+  formData.append('file', data.file)
+  if (data.name?.trim()) formData.append('name', data.name.trim())
+  if (data.description?.trim()) {
+    formData.append('description', data.description.trim())
+  }
+
+  return fetchFormAPI<ManagedWorkspace>('/api/workspaces/import', formData)
+}
+
+export async function deleteWorkspace(workspaceId: string): Promise<APIResponse<void>> {
+  return del<void>(`/api/workspaces/${encodeURIComponent(workspaceId)}`)
+}
+
+export async function listWorkspaceFiles(
+  workspaceId: string,
+  path: string = ''
+): Promise<APIResponse<WorkspaceFileListing>> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : ''
+  return get<WorkspaceFileListing>(`/api/workspaces/${encodeURIComponent(workspaceId)}/files${qs}`)
+}
+
+export async function getWorkspaceFileContent(
+  workspaceId: string,
+  path: string
+): Promise<APIResponse<WorkspaceFileContent>> {
+  return get<WorkspaceFileContent>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}`
+  )
+}
+
+export async function saveWorkspaceFileContent(
+  workspaceId: string,
+  data: { path: string; content: string; encoding?: string }
+): Promise<APIResponse<{ workspace_id: string; path: string; size: number; updated_at: string }>> {
+  return put(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/files/content`,
+    {
+      path: data.path,
+      content: data.content,
+      encoding: data.encoding || 'utf-8',
+      create_parents: true,
+    }
+  )
+}
+
+// ===== 智能体调用 =====
 
 export async function invokeAgent(
   name: string,
@@ -503,7 +471,6 @@ export async function invokeAgent(
 }
 
 // ===== 人格系统 API =====
-
 
 export async function listPersonas(includeArchived = false): Promise<APIResponse<Persona[]>> {
   return getCached<Persona[]>(`/api/personas?include_archived=${includeArchived ? 'true' : 'false'}`)
@@ -537,11 +504,6 @@ export async function getAgentPersonaBindings(): Promise<APIResponse<PersonaBind
   return getCached<PersonaBindings>('/api/agents/persona-bindings')
 }
 
-// Compatibility reader for older deployments. New UI should prefer getAgentPersonaBindings().
-export async function getPersonaBindings(): Promise<APIResponse<PersonaBindings>> {
-  return getCached<PersonaBindings>('/api/personas/bindings')
-}
-
 export async function bindAgentPersona(agentName: string, personaId: string): Promise<APIResponse<unknown>> {
   const response = await put(`/api/agents/persona-bindings/agents/${encodeURIComponent(agentName)}`, { persona_id: personaId })
   if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
@@ -554,35 +516,9 @@ export async function unbindAgentPersona(agentName: string): Promise<APIResponse
   return response
 }
 
-export async function bindSessionPersona(sessionId: string, personaId: string): Promise<APIResponse<unknown>> {
-  const response = await put(`/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`, { persona_id: personaId })
-  if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
-  return response
-}
-
-export async function unbindSessionPersona(sessionId: string): Promise<APIResponse<unknown>> {
-  const response = await del(`/api/agents/persona-bindings/sessions/${encodeURIComponent(sessionId)}`)
-  if (response.status === 'ok') invalidateGetCache('/api/agents/persona-bindings', '/api/personas/bindings')
-  return response
-}
-
 export async function listPersonaProposals(status?: string): Promise<APIResponse<PersonaProposal[]>> {
   const suffix = status ? `?status=${encodeURIComponent(status)}` : ''
   return getCached<PersonaProposal[]>(`/api/personas/proposals${suffix}`, 10_000)
-}
-
-export async function createPersonaProposal(personaId: string, data: {
-  source: string
-  feedback?: string
-  proposal_text?: string
-  proposed_patch?: Record<string, unknown>
-  session_id?: string
-  message_id?: string
-  reflection_id?: string
-}): Promise<APIResponse<PersonaProposal>> {
-  const response = await post<PersonaProposal>(`/api/personas/${encodeURIComponent(personaId)}/proposals`, data)
-  if (response.status === 'ok') invalidateGetCache('/api/personas/proposals')
-  return response
 }
 
 export async function approvePersonaProposal(id: string, reviewer: string, note = ''): Promise<APIResponse<unknown>> {

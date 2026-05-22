@@ -1,72 +1,24 @@
-/* ===== CSS Variables - Claude-style Warm Light Theme ===== */
-/* ===== CSS Variables - Claude-style Warm Light Theme ===== */
-:root {
-  --color-primary: #b85f3f;
-  --color-primary-dark: #8f472f;
-  --color-primary-light: rgba(184, 95, 63, 0.10);
-  --color-primary-glow: rgba(184, 95, 63, 0.14);
+/* ===== Reset & Base =====
+   Variables, typography and component-level defaults are defined in theme.css.
+   This file only handles document-level resets, focus, and selection.
+*/
 
-  --color-accent: #9d6b4f;
-  --color-accent-light: rgba(157, 107, 79, 0.10);
-
-  --color-bg: #f7f5f0;
-  --color-bg-secondary: #efebe3;
-  --color-surface: #fffdf8;
-  --color-surface-elevated: #ffffff;
-  --color-hover: rgba(88, 76, 64, 0.055);
-
-  --color-text-primary: #2f2a24;
-  --color-text-secondary: #655d54;
-  --color-text-muted: #948b80;
-
-  --color-border: #e7dfd3;
-  --color-border-light: #d8cec0;
-
-  --color-success: #4b7f52;
-  --color-danger: #b94a3d;
-  --color-warning: #b87828;
-  --color-info: #55739c;
-
-  --gradient-primary: #b85f3f;
-  --gradient-surface: #fffdf8;
-  --gradient-sidebar: #eee9df;
-
-  --shadow-sm: 0 1px 2px rgba(57, 47, 36, 0.04), 0 1px 8px rgba(57, 47, 36, 0.035);
-  --shadow-md: 0 10px 28px rgba(57, 47, 36, 0.07);
-  --shadow-lg: 0 22px 60px rgba(57, 47, 36, 0.10);
-  --shadow-glow: 0 0 0 4px rgba(184, 95, 63, 0.12);
-
-  --radius-sm: 11px;
-  --radius-md: 14px;
-  --radius-lg: 18px;
-  --radius-xl: 24px;
-
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.25s ease;
-}
-
-/* ===== Reset & Base ===== */
 *,
 *::before,
 *::after {
-  box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
 html {
-  font-size: 16px;
+  font-size: 13px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
-  background: var(--color-bg);
-  color: var(--color-text-primary);
-  line-height: 1.6;
   overflow: hidden;
+  -webkit-text-size-adjust: 100%;
 }
 
 #root {
@@ -75,39 +27,32 @@ body {
   overflow: hidden;
 }
 
-/* ===== Scrollbar ===== */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-light);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
-}
-
-/* ===== Focus ===== */
+/* Focus */
 :focus-visible {
   outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
 
-/* ===== Selection ===== */
+/* Selection */
 ::selection {
   background: var(--color-primary-light);
   color: var(--color-primary-dark);
 }
 
-/* ===== Utility classes ===== */
-.text-success { color: var(--color-success) !important; }
-.text-danger { color: var(--color-danger) !important; }
-.text-warning { color: var(--color-warning) !important; }
-.text-info { color: var(--color-info) !important; }
+/* Utility */
+.text-success { color: var(--color-success); }
+.text-danger { color: var(--color-danger); }
+.text-warning { color: var(--color-warning); }
+.text-info { color: var(--color-info); }
+.text-muted { color: var(--color-text-muted); }
+.text-faint { color: var(--color-text-faint); }
+.text-mono { font-family: var(--font-mono); }
+
+.flex { display: flex; }
+.flex-1 { flex: 1; }
+.flex-col { flex-direction: column; }
+.gap-4 { gap: 4px; }
+.gap-6 { gap: 6px; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }

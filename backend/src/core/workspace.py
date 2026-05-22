@@ -300,6 +300,22 @@ class WorkspaceStore:
 
         raise WorkspaceNotFoundError(safe_id)
 
+    def delete(self, workspace_id: str) -> ManagedWorkspace:
+        """Delete one managed project workspace and its files."""
+
+        workspace = self.get(workspace_id)
+        root_path = Path(workspace.root_path).resolve()
+        if not _is_relative_to(root_path, self.projects_root):
+            raise WorkspaceFileError("workspace root escapes managed projects root")
+
+        registry = self._load_registry()
+        registry.pop(workspace.id, None)
+        self._write_registry(registry)
+
+        if root_path.exists():
+            shutil.rmtree(root_path)
+        return workspace
+
     def import_zip(
         self,
         zip_path: str | Path,
@@ -424,12 +440,21 @@ class WorkspaceStore:
             raise WorkspaceFileError("path is not a file")
 
         size = path.stat().st_size
-        if size > MAX_TEXT_FILE_BYTES:
-            raise WorkspaceFileError("file is too large to edit as text")
-
         data = path.read_bytes()
         if b"\x00" in data:
-            raise WorkspaceFileError("file appears to be binary")
+            return {
+                **self._file_entry(path, root, "file"),
+                "content": "",
+                "encoding": encoding,
+                "editable": False,
+                "is_text": False,
+                "binary": True,
+                "too_large": False,
+                "max_editable_bytes": MAX_TEXT_FILE_BYTES,
+            }
+        too_large = size > MAX_TEXT_FILE_BYTES
+        if too_large:
+            data = data[:MAX_TEXT_FILE_BYTES]
         try:
             content = data.decode(encoding)
         except (LookupError, UnicodeDecodeError) as exc:
@@ -439,7 +464,11 @@ class WorkspaceStore:
             **self._file_entry(path, root, "file"),
             "content": content,
             "encoding": encoding,
-            "editable": True,
+            "editable": not too_large,
+            "is_text": True,
+            "binary": False,
+            "too_large": too_large,
+            "max_editable_bytes": MAX_TEXT_FILE_BYTES,
         }
 
     def write_text_file(
@@ -474,15 +503,24 @@ class WorkspaceStore:
             "content": content,
             "encoding": encoding,
             "editable": True,
+            "is_text": True,
+            "binary": False,
+            "too_large": False,
+            "max_editable_bytes": MAX_TEXT_FILE_BYTES,
         }
 
     def _file_entry(self, path: Path, root: Path, kind: str) -> dict[str, Any]:
         stat_result = path.stat()
+        relative = path.relative_to(root).as_posix()
+        modified_at = datetime.fromtimestamp(stat_result.st_mtime, timezone.utc).isoformat()
         return {
-            "path": path.relative_to(root).as_posix(),
+            "path": relative,
+            "name": path.name,
             "kind": kind,
+            "type": kind,
             "size": stat_result.st_size if kind == "file" else None,
-            "modified_at": datetime.fromtimestamp(stat_result.st_mtime, timezone.utc).isoformat(),
+            "modified_at": modified_at,
+            "updated_at": modified_at,
         }
 
     def _resolve_relative_path(self, root: Path, raw_path: str | os.PathLike[str]) -> Path:

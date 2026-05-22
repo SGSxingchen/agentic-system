@@ -58,6 +58,9 @@ class AgentRunCreateRequest(BaseModel):
     workspace_id: Optional[str] = Field(default=None, description="工作区实例 ID；为空则自动创建 run- 前缀工作区")
     mode: str = Field(default="autonomous", description="运行语义：autonomous/interactive/compat")
     strategy: str = Field(default="agent_decides", description="调度策略说明；不表达固定步骤")
+    max_iterations: int = Field(default=50, ge=1, le=500, description="最大迭代次数")
+    completion_criteria: str = Field(default="", description="运行完成标准说明")
+    auto_memory: bool = Field(default=True, description="是否自动使用记忆上下文")
     input: dict[str, Any] = Field(default_factory=dict, description="附加上下文输入")
     parent_id: Optional[str] = Field(default=None, description="可选父 run/task ID")
 
@@ -65,7 +68,7 @@ class AgentRunCreateRequest(BaseModel):
 class RunControlRequest(BaseModel):
     """运行控制请求。"""
 
-    action: Literal["cancel"] = Field(default="cancel", description="目前支持 cancel；pause/resume 留给后续协作协议")
+    action: Literal["pause", "resume", "cancel"] = Field(default="cancel", description="运行控制动作")
 
 
 class TaskResponse(BaseModel):

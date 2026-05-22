@@ -67,6 +67,20 @@ async def get_workspace(
     return APIResponse(status="ok", data=payload)
 
 
+@router.delete("/{workspace_id}", response_model=APIResponse)
+async def delete_workspace(workspace_id: str) -> APIResponse:
+    """Delete a managed project workspace."""
+
+    try:
+        workspace = _workspace_store().delete(workspace_id)
+    except WorkspaceNotFoundError:
+        raise HTTPException(status_code=404, detail="workspace not found") from None
+    except WorkspaceFileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    return APIResponse(status="ok", message="工作区已删除", data={"id": workspace.id})
+
+
 @router.get("/{workspace_id}/files", response_model=APIResponse)
 async def list_workspace_files(
     workspace_id: str,

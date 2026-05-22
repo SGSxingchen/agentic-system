@@ -6,7 +6,6 @@ import {
   type Dispatch,
 } from 'react'
 import type {
-  Message,
   AgentInfo,
   MemoryStats,
   LLMConfig,
@@ -15,12 +14,17 @@ import type {
   PanelType,
   Persona,
   PersonaBindings,
+  ManagedWorkspace,
 } from '../types'
 
 // ===== State =====
 
+export interface SelectedWorkspaceRef {
+  id: string
+  name: string
+}
+
 export interface AppState {
-  messages: Message[]
   agents: AgentInfo[]
   memoryStats: MemoryStats | null
   config: LLMConfig | null
@@ -28,7 +32,8 @@ export interface AppState {
   connected: boolean
   activePanel: PanelType
   wsEvents: WSEvent[]
-  sending: boolean
+  workspaces: ManagedWorkspace[]
+  selectedWorkspace: SelectedWorkspaceRef | null
   personaCache: {
     personas: Persona[]
     includeArchived: boolean
@@ -38,16 +43,44 @@ export interface AppState {
   }
 }
 
+const SELECTED_WORKSPACE_KEY = 'agentic.selectedWorkspace'
+
+function readPersistedWorkspace(): SelectedWorkspaceRef | null {
+  try {
+    const raw = window.localStorage.getItem(SELECTED_WORKSPACE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed.id === 'string' && typeof parsed.name === 'string') {
+      return parsed as SelectedWorkspaceRef
+    }
+  } catch {
+    // ignore SSR / quota / parse failures
+  }
+  return null
+}
+
+function writePersistedWorkspace(value: SelectedWorkspaceRef | null) {
+  try {
+    if (value) {
+      window.localStorage.setItem(SELECTED_WORKSPACE_KEY, JSON.stringify(value))
+    } else {
+      window.localStorage.removeItem(SELECTED_WORKSPACE_KEY)
+    }
+  } catch {
+    // ignore
+  }
+}
+
 const initialState: AppState = {
-  messages: [],
   agents: [],
   memoryStats: null,
   config: null,
   health: null,
   connected: false,
-  activePanel: 'chat',
+  activePanel: 'overview',
   wsEvents: [],
-  sending: false,
+  workspaces: [],
+  selectedWorkspace: typeof window !== 'undefined' ? readPersistedWorkspace() : null,
   personaCache: {
     personas: [],
     includeArchived: false,
@@ -60,8 +93,6 @@ const initialState: AppState = {
 // ===== Actions =====
 
 export type AppAction =
-  | { type: 'ADD_MESSAGE'; payload: Message }
-  | { type: 'SET_MESSAGES'; payload: Message[] }
   | { type: 'SET_AGENTS'; payload: AgentInfo[] }
   | { type: 'SET_MEMORY_STATS'; payload: MemoryStats | null }
   | { type: 'SET_CONFIG'; payload: LLMConfig | null }
@@ -70,8 +101,9 @@ export type AppAction =
   | { type: 'SET_ACTIVE_PANEL'; payload: PanelType }
   | { type: 'ADD_WS_EVENT'; payload: WSEvent }
   | { type: 'CLEAR_WS_EVENTS' }
-  | { type: 'SET_SENDING'; payload: boolean }
   | { type: 'UPDATE_AGENT_STATUS'; payload: { name: string; status: AgentInfo['status'] } }
+  | { type: 'SET_WORKSPACES'; payload: ManagedWorkspace[] }
+  | { type: 'SET_SELECTED_WORKSPACE'; payload: SelectedWorkspaceRef | null }
   | { type: 'SET_PERSONAS_CACHE'; payload: { personas: Persona[]; includeArchived: boolean; fetchedAt?: number } }
   | { type: 'SET_PERSONA_BINDINGS_CACHE'; payload: { bindings: PersonaBindings; fetchedAt?: number } }
   | { type: 'INVALIDATE_PERSONA_CACHE' }
@@ -80,10 +112,6 @@ export type AppAction =
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case 'ADD_MESSAGE':
-      return { ...state, messages: [...state.messages, action.payload] }
-    case 'SET_MESSAGES':
-      return { ...state, messages: action.payload }
     case 'SET_AGENTS':
       return { ...state, agents: action.payload }
     case 'SET_MEMORY_STATS':
@@ -103,8 +131,6 @@ function appReducer(state: AppState, action: AppAction): AppState {
       }
     case 'CLEAR_WS_EVENTS':
       return { ...state, wsEvents: [] }
-    case 'SET_SENDING':
-      return { ...state, sending: action.payload }
     case 'UPDATE_AGENT_STATUS':
       return {
         ...state,
@@ -114,6 +140,24 @@ function appReducer(state: AppState, action: AppAction): AppState {
             : a
         ),
       }
+    case 'SET_WORKSPACES': {
+      const workspaces = action.payload
+      let selected = state.selectedWorkspace
+      if (selected && !workspaces.some((w) => w.id === selected!.id)) {
+        selected = null
+        writePersistedWorkspace(null)
+      } else if (selected) {
+        const match = workspaces.find((w) => w.id === selected!.id)
+        if (match && match.name !== selected.name) {
+          selected = { id: match.id, name: match.name }
+          writePersistedWorkspace(selected)
+        }
+      }
+      return { ...state, workspaces, selectedWorkspace: selected }
+    }
+    case 'SET_SELECTED_WORKSPACE':
+      writePersistedWorkspace(action.payload)
+      return { ...state, selectedWorkspace: action.payload }
     case 'SET_PERSONAS_CACHE':
       return {
         ...state,

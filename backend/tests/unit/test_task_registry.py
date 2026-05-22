@@ -185,3 +185,55 @@ def test_create_agent_run_state_has_instance_fields() -> None:
     assert payload["session_id"] == "session-a"
     assert payload["workspace_id"] == "workspace-a"
     assert payload["strategy"] == "agent_decides"
+
+
+def test_create_agent_run_state_has_continuous_goal_fields() -> None:
+    registry = TaskRegistry()
+    state = registry.create(
+        task_type=TaskType.AGENT_RUN,
+        requirement="持续优化项目直到可演示",
+        agent_name="assistant",
+        mode="continuous",
+        strategy="memory_guided_agent_loop",
+        max_iterations=80,
+        completion_criteria="前端构建通过，目标工作台可用",
+        auto_memory=True,
+    )
+
+    payload = state.to_dict()
+
+    assert payload["mode"] == "continuous"
+    assert payload["strategy"] == "memory_guided_agent_loop"
+    assert payload["max_iterations"] == 80
+    assert payload["iteration"] == 0
+    assert payload["completion_criteria"] == "前端构建通过，目标工作台可用"
+    assert payload["auto_memory"] is True
+
+
+def test_pause_and_resume_agent_run() -> None:
+    registry = TaskRegistry()
+    state = registry.create(
+        task_type=TaskType.AGENT_RUN,
+        requirement="持续推进目标",
+        agent_name="assistant",
+    )
+    registry.update(state.id, status=TaskStatus.RUNNING)
+
+    assert registry.pause(state.id) is True
+    assert registry.get(state.id).status is TaskStatus.PAUSED
+
+    assert registry.resume(state.id) is True
+    assert registry.get(state.id).status is TaskStatus.RUNNING
+
+
+def test_pause_terminal_agent_run_returns_false() -> None:
+    registry = TaskRegistry()
+    state = registry.create(
+        task_type=TaskType.AGENT_RUN,
+        requirement="已经完成",
+        agent_name="assistant",
+    )
+    registry.mark_done(state.id, TaskStatus.COMPLETED, output={"ok": True})
+
+    assert registry.pause(state.id) is False
+    assert registry.get(state.id).status is TaskStatus.COMPLETED

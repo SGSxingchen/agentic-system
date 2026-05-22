@@ -1,18 +1,19 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AppProvider, useAppStore } from './store/appStore'
 import { useWebSocket } from './hooks/useWebSocket'
 import { Sidebar } from './components/Sidebar'
-import { ChatPanel } from './components/ChatPanel'
+import { Topbar } from './components/Topbar'
+import { OverviewPanel } from './components/OverviewPanel'
+import { WorkspacePanel } from './components/WorkspacePanel'
 import { AgentPanel } from './components/AgentPanel'
-import { MemoryPanel } from './components/MemoryPanel'
+import { RunsPanel } from './components/RunsPanel'
 import { MonitorPanel } from './components/MonitorPanel'
-import { TaskPanel } from './components/TaskPanel'
-import { EvolutionPanel } from './components/EvolutionPanel'
+import { MemoryPanel } from './components/MemoryPanel'
 import { PersonaPanel } from './components/PersonaPanel'
 import { Settings } from './components/Settings'
-import type { WSEvent, Message } from './types'
+import * as api from './api/client'
+import type { WSEvent } from './types'
 import './App.css'
-import './theme.css'
 
 function AppContent() {
   const { state, dispatch } = useAppStore()
@@ -23,24 +24,7 @@ function AppContent() {
       const event = raw as WSEvent
       dispatch({ type: 'ADD_WS_EVENT', payload: event })
 
-      // Handle specific event types
       const eventType = event.event_type || event.type
-
-      if (eventType === 'assistant_response' && event.data) {
-        const msg: Message = {
-          id: `ws-assistant-${Date.now()}`,
-          type: 'assistant',
-          content:
-            event.data.response ||
-            event.data.content ||
-            event.data.message ||
-            JSON.stringify(event.data),
-          timestamp: event.timestamp,
-          memoriesUsed:
-            event.data.memories_used || event.data.memory_count || 0,
-        }
-        dispatch({ type: 'ADD_MESSAGE', payload: msg })
-      }
 
       if (eventType === 'agent_status_update' && event.data) {
         dispatch({
@@ -75,35 +59,74 @@ function AppContent() {
     onDisconnect: handleWSDisconnect,
   })
 
+  // Load workspaces & health on mount
+  useEffect(() => {
+    let cancelled = false
+
+    const loadWorkspaces = async () => {
+      const res = await api.listWorkspaces()
+      if (cancelled) return
+      if (res.status === 'ok' && Array.isArray(res.data)) {
+        dispatch({ type: 'SET_WORKSPACES', payload: res.data })
+      }
+    }
+    const loadHealth = async () => {
+      const res = await api.getHealth()
+      if (cancelled) return
+      if (res.status === 'ok' && res.data) {
+        dispatch({ type: 'SET_HEALTH', payload: res.data })
+      }
+    }
+
+    loadWorkspaces()
+    loadHealth()
+    const t = window.setInterval(loadHealth, 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [dispatch])
+
   const renderPanel = () => {
     switch (state.activePanel) {
-      case 'chat':
-        return <ChatPanel />
-      case 'tasks':
-        return <TaskPanel />
+      case 'overview':
+        return <OverviewPanel />
+      case 'workspaces':
+        return <WorkspacePanel />
       case 'agents':
         return <AgentPanel />
-      case 'evolution':
-        return <EvolutionPanel />
-      case 'personas':
-        return <PersonaPanel />
-      case 'memory':
-        return <MemoryPanel initialTab="memories" />
+      case 'runs':
+        return <RunsPanel />
       case 'monitor':
         return <MonitorPanel />
+      case 'memory':
+        return <MemoryPanel />
+      case 'personas':
+        return <PersonaPanel />
       default:
-        return <ChatPanel />
+        return <OverviewPanel />
     }
+  }
+
+  const titleByPanel: Record<string, string> = {
+    overview: '总览',
+    workspaces: '工作区',
+    agents: '智能体',
+    runs: '运行',
+    monitor: '监控',
+    memory: '记忆',
+    personas: '人格',
   }
 
   return (
     <div className="app-layout">
       <Sidebar onOpenSettings={() => setShowSettings(true)} />
-      <main className="main-content">{renderPanel()}</main>
+      <div className="main-column">
+        <Topbar pageTitle={titleByPanel[state.activePanel] || '工作台'} />
+        <main className="main-content">{renderPanel()}</main>
+      </div>
 
-      {showSettings && (
-        <Settings onClose={() => setShowSettings(false)} />
-      )}
+      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
     </div>
   )
 }

@@ -1,0 +1,131 @@
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.overview-stat {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.overview-stat__label {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.overview-stat__value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-stat__hint {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+.overview-columns {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1.4fr 1fr;
+}
+
+.overview-events {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.overview-event {
+  display: grid;
+  grid-template-columns: 90px 130px 1fr;
+  gap: 12px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-row);
+}
+.overview-event:last-child { border-bottom: none; }
+
+.overview-event__time {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.overview-event__type {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.overview-event__detail {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-runs {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.overview-run {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border-row);
+  gap: 10px;
+}
+.overview-run:last-child { border-bottom: none; }
+
+.overview-run__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.overview-run__sub {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.overview-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+}
+
+.overview-summary__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.overview-summary__label {
+  color: var(--color-text-muted);
+}
+
+.overview-summary__value {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+@media (max-width: 1100px) {
+  .overview-grid { grid-template-columns: repeat(2, 1fr); }
+  .overview-columns { grid-template-columns: 1fr; }
+}

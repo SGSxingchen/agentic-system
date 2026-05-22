@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -20,72 +20,76 @@ const transpiled = ts.transpileModule(source, {
 await mkdir(dirname(outPath), { recursive: true })
 await writeFile(outPath, transpiled.outputText, 'utf8')
 
-const { submitAgentForm, parseAgentRuntimeConfig } = await import(pathToFileURL(outPath).href + `?cache=${Date.now()}`)
+try {
+  const {
+    agentToDraft,
+    buildAgentUpdatePayload,
+  } = await import(pathToFileURL(outPath).href + `?cache=${Date.now()}`)
 
-const baseForm = {
-  name: 'writer_agent',
-  description: 'Writes concise summaries',
-  system_prompt: 'You write concise summaries.',
-  tools: ['code_parser'],
-  output_format: 'text',
-  max_iterations: 10,
-  skills_json: JSON.stringify({ enabled: true, directories: [], items: [], disabled: [], strategy: 'metadata_and_instructions' }),
-  mcp_servers_json: '[]',
-}
-
-function createMockApi() {
-  const calls = []
-  return {
-    calls,
-    api: {
-      async createAgent(data) {
-        calls.push({ method: 'createAgent', data })
-        return { status: 'ok', data: { name: data.name } }
-      },
-      async updateAgent(name, data) {
-        calls.push({ method: 'updateAgent', name, data })
-        return { status: 'ok', data: { name, ...data } }
-      },
+  const globalAgent = {
+    name: 'assistant',
+    status: 'idle',
+    capabilities: ['code_parser'],
+    description: '通用助手',
+    system_prompt: '保持正式、准确。',
+    output_format: 'text',
+    max_iterations: 8,
+    default_workspace_id: null,
+    llm: {
+      source: 'global_default',
+      provider: 'openai',
+      model: 'gpt-global',
     },
   }
-}
 
-{
-  const { calls, api } = createMockApi()
-  const response = await submitAgentForm({ editingAgent: '__new__', form: baseForm, api })
-  assert.equal(response.status, 'ok')
-  assert.equal(calls.length, 1, 'clicking save for a new Agent should call createAgent once')
-  assert.equal(calls[0].method, 'createAgent')
-  assert.equal(calls[0].data.name, 'writer_agent')
-  assert.deepEqual(calls[0].data.tools, ['code_parser'])
-}
-
-{
-  const { calls, api } = createMockApi()
-  const response = await submitAgentForm({
-    editingAgent: 'assistant',
-    form: { ...baseForm, name: 'assistant', description: 'Updated assistant' },
-    api,
+  const inheritedDraft = agentToDraft(globalAgent)
+  assert.equal(inheritedDraft.llm_provider, '')
+  assert.equal(inheritedDraft.llm_model, '')
+  assert.deepEqual(buildAgentUpdatePayload(inheritedDraft), {
+    description: '通用助手',
+    system_prompt: '保持正式、准确。',
+    output_format: 'text',
+    max_iterations: 8,
+    tools: ['code_parser'],
+    default_workspace_id: null,
   })
-  assert.equal(response.status, 'ok')
-  assert.equal(calls.length, 1, 'clicking save while editing should call updateAgent once')
-  assert.equal(calls[0].method, 'updateAgent')
-  assert.equal(calls[0].name, 'assistant')
-  assert.equal(calls[0].data.description, 'Updated assistant')
-}
 
-{
-  assert.deepEqual(parseAgentRuntimeConfig({ skills_json: '', mcp_servers_json: '' }), {
-    skills: null,
-    mcpServers: [],
+  const agentScopedDraft = agentToDraft({
+    ...globalAgent,
+    llm: {
+      source: 'agent_config',
+      provider: 'openai',
+      model: 'gpt-agent',
+      base_url: 'https://api.example.test/v1',
+      temperature: 0.4,
+      max_tokens: 4096,
+    },
   })
-}
+  assert.equal(agentScopedDraft.llm_model, 'gpt-agent')
 
-{
-  await assert.rejects(
-    () => submitAgentForm({ editingAgent: '__new__', form: { ...baseForm, skills_json: '[' }, api: createMockApi().api }),
-    /Skills 配置 不是合法 JSON/
+  const payload = buildAgentUpdatePayload({
+    ...agentScopedDraft,
+    default_workspace_id: 'workspace_1',
+    llm_api_key: 'sk-test',
+    llm_temperature: '0.7',
+    llm_max_tokens: '2048',
+  })
+  assert.deepEqual(payload.llm, {
+    provider: 'openai',
+    model: 'gpt-agent',
+    base_url: 'https://api.example.test/v1',
+    api_key: 'sk-test',
+    temperature: 0.7,
+    max_tokens: 2048,
+  })
+  assert.equal(payload.default_workspace_id, 'workspace_1')
+
+  assert.throws(
+    () => buildAgentUpdatePayload({ ...agentScopedDraft, llm_temperature: 'hot' }),
+    /模型温度 必须是有效数字/
   )
-}
 
-console.log('agentFormLogic tests passed')
+  console.log('agent form logic tests passed')
+} finally {
+  await rm(outPath, { force: true })
+}

@@ -31,6 +31,7 @@ class TaskStatus(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     KILLED = "killed"
@@ -73,6 +74,10 @@ class TaskState:
     workspace_id: Optional[str] = None
     mode: str = "autonomous"
     strategy: str = "agent_decides"
+    max_iterations: int = 50
+    iteration: int = 0
+    completion_criteria: str = ""
+    auto_memory: bool = True
     status: TaskStatus = TaskStatus.PENDING
     progress: AgentProgress = field(default_factory=AgentProgress)
     error: Optional[str] = None
@@ -111,6 +116,10 @@ class TaskState:
             "workspace_id": self.workspace_id,
             "mode": self.mode,
             "strategy": self.strategy,
+            "max_iterations": self.max_iterations,
+            "iteration": self.iteration,
+            "completion_criteria": self.completion_criteria,
+            "auto_memory": self.auto_memory,
             "progress": self.progress.to_dict(),
             "error": self.error,
             "plan": self.plan,

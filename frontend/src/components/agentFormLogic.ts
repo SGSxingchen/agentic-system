@@ -1,109 +1,81 @@
-import type { APIResponse } from '../types'
+import type { AgentInfo } from '../types'
 
-export interface AgentFormData {
-  name: string
+export interface AgentDraft {
   description: string
   system_prompt: string
-  tools: string[]
-  output_format: string
+  output_format: 'text' | 'json'
   max_iterations: number
-  skills_json: string
-  mcp_servers_json: string
+  tools: string[]
+  default_workspace_id: string
+  llm_provider: string
+  llm_model: string
+  llm_base_url: string
+  llm_api_key: string
+  llm_temperature: string
+  llm_max_tokens: string
 }
 
-export interface AgentRuntimeConfig {
-  skills: Record<string, unknown> | null
-  mcpServers: Array<Record<string, unknown>>
+function isAgentScopedLlm(agent: AgentInfo) {
+  return agent.llm?.source === 'agent_config' || (!agent.llm && Boolean(agent.model))
 }
 
-export interface AgentSaveApi {
-  createAgent(data: {
-    name: string
-    description?: string
-    system_prompt?: string
-    tools?: string[]
-    output_format?: string
-    max_iterations?: number
-    skills?: Record<string, unknown> | null
-    mcp_servers?: Array<Record<string, unknown>>
-  }): Promise<APIResponse<unknown>>
-  updateAgent(
-    name: string,
-    data: {
-      description?: string
-      system_prompt?: string
-      tools?: string[]
-      output_format?: string
-      max_iterations?: number
-      skills?: Record<string, unknown> | null
-      mcp_servers?: Array<Record<string, unknown>>
-    }
-  ): Promise<APIResponse<unknown>>
-}
-
-function parseJsonWithLabel(value: string, fallback: unknown, label: string): unknown {
-  const trimmed = value.trim()
-  if (!trimmed) return fallback
-  try {
-    return JSON.parse(trimmed)
-  } catch (error) {
-    const suffix = error instanceof Error ? `：${error.message}` : ''
-    throw new Error(`${label} 不是合法 JSON${suffix}`)
-  }
-}
-
-export function parseAgentRuntimeConfig(form: Pick<AgentFormData, 'skills_json' | 'mcp_servers_json'>): AgentRuntimeConfig {
-  const skills = parseJsonWithLabel(form.skills_json, null, 'Skills 配置')
-  if (skills !== null && (typeof skills !== 'object' || Array.isArray(skills))) {
-    throw new Error('Skills 配置必须是 JSON 对象；不需要高级配置时可留空')
-  }
-
-  const mcpServers = parseJsonWithLabel(form.mcp_servers_json, [], 'MCP servers 配置')
-  if (!Array.isArray(mcpServers)) {
-    throw new Error('MCP servers 配置必须是 JSON 数组；不需要 MCP 时可填写 [] 或留空')
-  }
+export function agentToDraft(agent: AgentInfo): AgentDraft {
+  const hasAgentLlm = isAgentScopedLlm(agent)
 
   return {
-    skills: skills as Record<string, unknown> | null,
-    mcpServers: mcpServers as Array<Record<string, unknown>>,
+    description: agent.description || '',
+    system_prompt: agent.system_prompt || '',
+    output_format: agent.output_format === 'json' ? 'json' : 'text',
+    max_iterations: agent.max_iterations || 10,
+    tools: [...(agent.capabilities || [])],
+    default_workspace_id: agent.default_workspace_id || '',
+    llm_provider: hasAgentLlm ? agent.llm?.provider || '' : '',
+    llm_model: hasAgentLlm ? agent.llm?.model || agent.model || '' : '',
+    llm_base_url: hasAgentLlm ? agent.llm?.base_url || '' : '',
+    llm_api_key: '',
+    llm_temperature:
+      hasAgentLlm && agent.llm?.temperature != null ? String(agent.llm.temperature) : '',
+    llm_max_tokens:
+      hasAgentLlm && agent.llm?.max_tokens != null ? String(agent.llm.max_tokens) : '',
   }
 }
 
-export async function submitAgentForm(params: {
-  editingAgent: string | null
-  form: AgentFormData
-  api: AgentSaveApi
-}): Promise<APIResponse<unknown>> {
-  const { editingAgent, form, api } = params
-  if (!editingAgent) {
-    return { status: 'error', message: '当前没有正在编辑的 Agent 表单，请重新打开后再保存' }
+function parseOptionalNumber(label: string, value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${label} 必须是有效数字`)
+  }
+  return parsed
+}
+
+export function buildAgentUpdatePayload(draft: AgentDraft): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    description: draft.description,
+    system_prompt: draft.system_prompt,
+    output_format: draft.output_format,
+    max_iterations: draft.max_iterations,
+    tools: draft.tools,
+    default_workspace_id: draft.default_workspace_id || null,
   }
 
-  const runtimeConfig = parseAgentRuntimeConfig(form)
-  if (editingAgent === '__new__') {
-    const name = form.name.trim()
-    if (!name) {
-      return { status: 'error', message: '名称不能为空' }
-    }
-    return api.createAgent({
-      name,
-      description: form.description,
-      system_prompt: form.system_prompt,
-      tools: form.tools,
-      output_format: form.output_format,
-      max_iterations: form.max_iterations,
-      skills: runtimeConfig.skills,
-      mcp_servers: runtimeConfig.mcpServers,
-    })
+  const llm: Record<string, unknown> = {}
+  if (draft.llm_provider.trim()) llm.provider = draft.llm_provider.trim()
+  if (draft.llm_model.trim()) llm.model = draft.llm_model.trim()
+  if (draft.llm_base_url.trim()) llm.base_url = draft.llm_base_url.trim()
+  if (draft.llm_api_key.trim()) llm.api_key = draft.llm_api_key.trim()
+
+  const temperature = parseOptionalNumber('模型温度', draft.llm_temperature)
+  if (temperature !== undefined) llm.temperature = temperature
+
+  const maxTokens = parseOptionalNumber('最大 Token 数', draft.llm_max_tokens)
+  if (maxTokens !== undefined) llm.max_tokens = maxTokens
+
+  if (Object.keys(llm).length > 0) {
+    payload.llm = llm
   }
 
-  return api.updateAgent(editingAgent, {
-    description: form.description,
-    system_prompt: form.system_prompt || undefined,
-    tools: form.tools,
-    output_format: form.output_format,
-    max_iterations: form.max_iterations,
-    skills: runtimeConfig.skills,
-    mcp_servers: runtimeConfig.mcpServers,
-  })
+  return payload
 }

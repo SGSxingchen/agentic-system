@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import APIResponse, AgentRunCreateRequest, RunControlRequest, TaskSubmitRequest
-from ..dependencies import get_capability_registry
+from ..dependencies import get_capability_registry, get_memory_retriever
 from ..websocket.handlers import broadcast_monitor_event
 from core.chat_history import ChatHistoryStore
 from core.config import load_single_yaml
@@ -140,6 +140,9 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
             workspace_id=_safe_instance_id(req.workspace_id, fallback="unassigned"),
             mode=req.mode or "autonomous",
             strategy=req.strategy or "agent_decides",
+            max_iterations=req.max_iterations,
+            completion_criteria=req.completion_criteria,
+            auto_memory=req.auto_memory,
             parent_id=req.parent_id,
         )
         failed.output_file = str(transcript_path(failed.id))
@@ -161,6 +164,9 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
         workspace_id=req.workspace_id,
         mode=req.mode or "autonomous",
         strategy=req.strategy or "agent_decides",
+        max_iterations=req.max_iterations,
+        completion_criteria=req.completion_criteria,
+        auto_memory=req.auto_memory,
         parent_id=req.parent_id,
     )
     requested_workspace_id = (
@@ -187,6 +193,9 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
             "workspace_id": workspace_id,
             "mode": req.mode,
             "strategy": req.strategy,
+            "max_iterations": req.max_iterations,
+            "completion_criteria": req.completion_criteria,
+            "auto_memory": req.auto_memory,
             "compat_task": compat_task,
         },
     )
@@ -265,6 +274,7 @@ async def _run_agent_task(
     started = asyncio.get_event_loop().time()
     final_output: Any = None
     failed_error: Optional[str] = None
+    state = _registry.get(task_id)
 
     payload = dict(input_data or {})
     payload.update(
@@ -277,6 +287,9 @@ async def _run_agent_task(
             "workspace_id": workspace_id,
             "workspace_root": str(workspace_root),
             "_trusted_workspace_root": str(workspace_root),
+            "max_iterations": state.max_iterations if state else 50,
+            "completion_criteria": state.completion_criteria if state else "",
+            "auto_memory": state.auto_memory if state else True,
         }
     )
 
@@ -617,7 +630,64 @@ async def control_run(run_id: str, req: RunControlRequest):
     if req.action == "cancel":
         _registry.kill(run_id)
         return APIResponse(status="ok", message="已请求取消运行", data=state.to_dict())
+    if req.action == "pause":
+        if not _registry.pause(run_id):
+            return APIResponse(status="error", message="当前运行不可暂停")
+        writer = TranscriptWriter(run_id)
+        writer.write("paused", {"reason": "user_control"})
+        return APIResponse(status="ok", message="运行已暂停", data=_registry.get(run_id).to_dict())
+    if req.action == "resume":
+        if not _registry.resume(run_id):
+            return APIResponse(status="error", message="当前运行不可继续")
+        writer = TranscriptWriter(run_id)
+        writer.write("resumed", {"reason": "user_control"})
+        return APIResponse(status="ok", message="运行已继续", data=_registry.get(run_id).to_dict())
     return APIResponse(status="error", message=f"不支持的控制动作: {req.action}")
+
+
+@runs_router.get("/{run_id}/memory-context", response_model=APIResponse)
+async def get_run_memory_context(run_id: str, max_results: int = 6):
+    """Return memories that would orient this run."""
+
+    state = _registry.get(run_id)
+    if state is None or state.type is not TaskType.AGENT_RUN:
+        raise HTTPException(status_code=404, detail="运行不存在")
+
+    retriever = get_memory_retriever()
+    if retriever is None:
+        return APIResponse(
+            status="ok",
+            data={
+                "run_id": run_id,
+                "query": state.requirement,
+                "completion_criteria": state.completion_criteria,
+                "auto_memory": state.auto_memory,
+                "memories": [],
+                "note": "记忆检索器未初始化",
+            },
+        )
+
+    scored = await retriever.retrieve_with_scores(
+        context=state.requirement,
+        max_results=max(1, min(max_results, 20)),
+    )
+    memories = []
+    for item in scored:
+        memory = item["memory"]
+        payload = memory.to_dict()
+        payload["retrieval"] = item.get("retrieval", {})
+        memories.append(payload)
+
+    return APIResponse(
+        status="ok",
+        data={
+            "run_id": run_id,
+            "query": state.requirement,
+            "completion_criteria": state.completion_criteria,
+            "auto_memory": state.auto_memory,
+            "memories": memories,
+        },
+    )
 
 
 @runs_router.delete("/{run_id}", response_model=APIResponse)
