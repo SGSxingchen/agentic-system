@@ -5,7 +5,7 @@
 
 设计要点:
 - 解析 subagent_type → CapabilityRegistry 中已注册的 AgentCapability
-- 通过 contextvars 取父 task_id / 父 notification_box（避免改 Agent / Pipeline 接口）
+- 通过 contextvars 取父 task_id / 父 notification_box（避免改 Agent 接口）
 - 可选 ``worktree=true``: 创建临时 git worktree 并设置 workspace_root_cv 隔离子 Agent 的文件操作
 - ``max_depth=1``: 子 Agent 内部再调 dispatch_agent 直接返错（防递归）
 - 子任务异常 / cancel / 完成都会回写 TaskRegistry 状态 + 父 notification_box + transcript
@@ -139,7 +139,7 @@ class DispatchAgentCapability(CapabilityBase):
         sub_state = task_registry.create(
             task_type=TaskType.SUB_AGENT,
             requirement=prompt,
-            pipeline_name=f"sub:{subagent_type}",
+            agent_name=subagent_type,
             parent_id=parent_task_id,
         )
         writer = TranscriptWriter(sub_state.id)

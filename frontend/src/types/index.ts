@@ -36,17 +36,34 @@ export interface AgentMCPServerConfig {
   transport?: string
 }
 
+export interface AgentLLMConfig {
+  provider?: string | null
+  api_key_set?: boolean | null
+  model?: string | null
+  base_url?: string | null
+  temperature?: number | null
+  top_p?: number | null
+  max_tokens?: number | null
+  reasoning_effort?: string | null
+  source?: 'agent_config' | 'global_default' | string
+  openai?: Record<string, any>
+  anthropic?: Record<string, any>
+}
+
 export interface AgentInfo {
   name: string
   status: 'idle' | 'busy' | 'error' | 'stopped'
   capabilities: string[]
   description?: string
   system_prompt?: string
+  model?: string | null
+  llm?: AgentLLMConfig | null
   output_format?: string
   max_iterations?: number
   skills?: AgentSkillConfig | null
   mcp_servers?: AgentMCPServerConfig[]
   default_workspace_id?: string | null
+  default_workspace_root?: string | null
 }
 
 // ===== 记忆 =====
@@ -98,6 +115,11 @@ export interface MemorySettings {
     runtime_store?: string
     note?: string
   }
+}
+
+export interface MemoryForgetResult {
+  forgotten: number
+  [key: string]: any
 }
 
 // ===== 任务 / Agent Run =====
@@ -187,8 +209,10 @@ export interface WorkspaceFileEntry {
   path: string
   name: string
   type: 'file' | 'directory' | string
+  kind?: 'file' | 'directory' | string
   size?: number | null
   updated_at?: string | null
+  modified_at?: string | null
 }
 
 export interface ManagedWorkspace {

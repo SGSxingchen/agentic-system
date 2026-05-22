@@ -50,7 +50,7 @@ class MemoryConfig(BaseModel):
     recall_score_threshold: float = Field(default=0.0, ge=0, le=1, description="召回结果最低综合分数阈值")
     fallback_to_memory_on_error: bool = Field(default=True, description="Chroma 初始化失败时是否降级内存")
     consolidation_threshold: float = Field(default=0.3, ge=0, le=1, description="记忆巩固相似阈值")
-    forget_after_days: int = Field(default=30, ge=1, description="多少天未访问后进入遗忘候选")
+    forget_after_days: int = Field(default=1, ge=1, description="多少天未访问后进入遗忘候选")
     forget_min_importance: float = Field(default=0.3, ge=0, le=1, description="遗忘的低重要性阈值")
 
 
@@ -77,13 +77,6 @@ class AgentConfig(BaseModel):
     skills: Dict[str, Any] = Field(default_factory=dict, description="该 Agent 专属 skills 配置")
     mcp_servers: List[Dict[str, Any]] = Field(default_factory=list, description="该 Agent 专属 MCP server 配置")
     config: Dict[str, Any] = Field(default_factory=dict, description="智能体私有配置")
-
-
-class PipelineConfig(BaseModel):
-    """管线配置。"""
-
-    max_iterations: int = Field(default=10, description="全局最大迭代次数")
-    default_timeout: float = Field(default=300.0, description="默认超时秒数")
 
 
 class WebSearchToolConfig(BaseModel):
@@ -135,7 +128,6 @@ class SystemConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     bus: BusConfig = Field(default_factory=BusConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
-    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     agents: List[AgentConfig] = Field(default_factory=list)
 
@@ -375,7 +367,7 @@ def load_config(
             "recall_score_threshold": 0.0,
             "fallback_to_memory_on_error": True,
             "consolidation_threshold": 0.3,
-            "forget_after_days": 30,
+            "forget_after_days": 1,
             "forget_min_importance": 0.3,
         },
         "tools": {

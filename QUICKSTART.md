@@ -75,9 +75,8 @@ npm run dev
 4. **最终输出** — Run 完成后展开最终输出，查看生成代码、运行命令、测试/验收说明
 5. **提交任务** — 也可以在 TaskPanel 手动描述需求，创建自定义 Agent Run
 6. **查看智能体** — 在 AgentPanel 查看各 Agent 的状态和能力
-7. **管线** — 在 PipelinePanel 选择预设模板执行代码生成任务（兼容旧流程）
-8. **记忆管理** — 在 MemoryPanel 查看/搜索/创建/删除记忆
-9. **系统监控** — 在 MonitorPanel 查看实时系统状态
+7. **记忆管理** — 在 MemoryPanel 查看、搜索、创建、删除记忆，并管理遗忘周期
+8. **系统监控** — 在 MonitorPanel 按 Agent 查看实时进展和事件流
 
 答辩材料图、讲稿和兜底方案见 `docs/demo/DEFENSE_MATERIALS.md`；Demo 验收步骤见 `docs/demo/DEMO_ACCEPTANCE_2026-05-11.md`.
 
@@ -126,7 +125,7 @@ $env:PYTHONIOENCODING='utf-8'
 
 - ✅ 4 个专业智能体 (Assistant / Planner / Coder / Reviewer)
 - ✅ 统一消息总线 (发布订阅 / 请求响应 / 广播 / 优先级队列)
-- ✅ Pipeline 编排 (顺序 / 并行 / 条件 / 超时 / YAML 模板)
+- ✅ Agent Run 调度 (多 Agent / 会话 / 工作区实例 + transcript 事件流)
 - ✅ 长期记忆系统 (情景/语义/程序记忆 + 多信号加权检索)
 - ✅ 能力插件 (代码解析 / 静态分析 / 测试运行)
 - ✅ 上下文管理 (全局/会话/智能体三层作用域)

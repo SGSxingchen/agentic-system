@@ -24,7 +24,7 @@
 ### 核心系统
 - [x] UnifiedBus 统一消息总线 (发布/订阅、请求/响应、广播、优先级队列)
 - [x] AgentRegistry + AgentLifecycleManager 智能体管理
-- [x] Pipeline 编排 (顺序/并行/条件/超时/YAML 模板)
+- [x] Agent Run 调度 (多 Agent/会话/工作区实例 + transcript 事件落盘)
 - [x] TaskRegistry + TranscriptWriter 任务状态和事件落盘
 - [x] ContextStore 上下文管理 (全局/会话/智能体三层)
 - [x] CapabilityRegistry 能力注册中心
@@ -47,13 +47,13 @@
 - [x] TestRunnerCapability (测试运行)
 
 ### 前端
-- [x] ChatPanel + AgentPanel + TaskPanel + PipelinePanel + EvolutionPanel
+- [x] ChatPanel + AgentPanel + TaskPanel + PersonaPanel + EvolutionPanel
 - [x] MemoryPanel + MonitorPanel + Settings + Sidebar
 - [x] WebSocket 实时通信
 - [x] 深色主题 UI
 
 ### 配置
-- [x] config/agents.yaml + pipelines.yaml + capabilities.yaml + system.yaml
+- [x] config/agents.yaml + capabilities.yaml + system.yaml
 - [x] load_yaml_configs() 动态加载 + fallback 机制
 - [x] 环境变量覆盖
 - [x] 前端热重载配置
@@ -76,7 +76,7 @@
 - **前端测试**: 无前端自动化测试
 
 ### 已知 Bug
-- Pipeline 执行的中间结果主要通过任务 transcript 和监控事件呈现，前端仍可继续增强步骤级实时详情展示
+- 监控页仍可继续增强跨会话筛选、长事件流归档和失败原因聚合展示
 
 ---
 
@@ -90,7 +90,7 @@
 ### 中优先级
 4. **统一能力实现**: 合并 `core/capability/native.py` 和 `capabilities/builtin/` 为一套
 5. **统一本地演示脚本**: 将答辩演示脚本固定到 `tests/api_live_test.py --suite infra/smoke`
-6. **前端实时 Pipeline 详情**: Pipeline 执行过程中展示步骤级输入、输出、耗时和错误
+6. **前端实时运行详情**: Agent Run 执行过程中展示输入、输出、工具调用、耗时和错误
 7. **前端自动化测试**: 为 9 个面板补 Vitest + React Testing Library 基础用例
 
 ### 低优先级
@@ -109,12 +109,12 @@
 | 要改的功能 | 需要看的文件 |
 |-----------|-------------|
 | 添加新 Agent | `core/agent/base.py` → `agents/*.py` → `config/agents.yaml` → `main.py._AGENT_CLASS_MAP` |
-| 修改 Pipeline 事件流 | `backend/src/core/pipeline/pipeline.py` → `backend/src/api/routes/tasks.py` → `frontend/src/components/MonitorPanel.tsx` |
+| 修改运行事件流 | `backend/src/api/routes/tasks.py` → `backend/src/api/websocket/handlers.py` → `frontend/src/components/MonitorPanel.tsx` |
 | 新增 API 端点 | `api/routes/*.py` → `api/schemas.py` → `api/routes/__init__.py` |
 | 修改前端面板 | `frontend/src/components/*.tsx` + `*.css` |
 | 配置变更 | `core/config.py` → `config/*.yaml` → `backend/src/config.yaml` |
 | 添加能力插件 | `core/capability/native.py` → `config/capabilities.yaml` → `main.py._CAPABILITY_CLASS_MAP` |
-| Pipeline 模板 | `config/pipelines.yaml` → `backend/src/core/pipeline/pipeline.py` → `backend/src/api/routes/pipelines.py` |
+| Agent Run 调度 | `backend/src/api/routes/tasks.py` → `backend/src/core/task/` → `frontend/src/components/TaskPanel.tsx` |
 | 记忆系统 | `core/memory/` (store.py / retriever.py / formation.py / types.py) |
 | 前端状态管理 | `frontend/src/store/appStore.tsx` → `frontend/src/types/index.ts` |
 | WebSocket | `api/websocket/handlers.py` → `frontend/src/hooks/useWebSocket.ts` |
@@ -189,7 +189,7 @@ export MEMORY_BACKEND=memory          # memory / chroma
 | 路径 | 说明 |
 |------|------|
 | `backend/src/config.yaml` | LLM 运行时配置 (API Key) |
-| `config/*.yaml` | 组件配置 (Agent/Pipeline/Capability/System) |
+| `config/*.yaml` | 组件配置 (Agent/Capability/System) |
 | `backend/src/api/main.py` | 应用入口 + 初始化流程 |
 | `backend/src/core/config.py` | 配置加载逻辑 |
 

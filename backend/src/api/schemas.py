@@ -31,21 +31,18 @@ class TaskStatus(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
-    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     KILLED = "killed"
 
 
 class TaskSubmitRequest(BaseModel):
-    """提交任务请求（兼容旧 /api/tasks）。
+    """提交任务请求。
 
-    默认 pipeline=auto 已迁移为自主 Agent Run；显式指定非 auto 的 pipeline
-    才走旧固定管线兼容路径。
+    /api/tasks 是 Agent Run 的便捷入口；固定 Pipeline 已移除。
     """
 
     requirement: str = Field(..., min_length=1, description="用户需求描述")
-    pipeline: str = Field(default="auto", description="兼容字段：auto=自主 Agent Run；其他值=旧管线模板")
     agent_name: str = Field(default="assistant", description="auto 模式下使用的 Agent")
     session_id: Optional[str] = Field(default=None, description="可选会话实例 ID")
     workspace_id: Optional[str] = Field(default=None, description="可选工作区实例 ID")
@@ -59,11 +56,11 @@ class AgentRunCreateRequest(BaseModel):
     agent_name: str = Field(default="assistant", description="负责本次运行的 Agent")
     session_id: Optional[str] = Field(default=None, description="会话实例 ID；仅作为上下文/溯源")
     workspace_id: Optional[str] = Field(default=None, description="工作区实例 ID；为空则自动创建 run- 前缀工作区")
-    mode: str = Field(default="continuous", description="运行语义：continuous/autonomous/interactive/compat")
-    strategy: str = Field(default="memory_guided_agent_loop", description="调度策略说明；不表达固定步骤")
-    max_iterations: int = Field(default=50, ge=1, le=500, description="持续工作最大迭代轮数")
-    completion_criteria: str = Field(default="", description="目标完成标准，传给 Agent 用于自检")
-    auto_memory: bool = Field(default=True, description="是否自动使用和沉淀运行记忆")
+    mode: str = Field(default="autonomous", description="运行语义：autonomous/interactive/compat")
+    strategy: str = Field(default="agent_decides", description="调度策略说明；不表达固定步骤")
+    max_iterations: int = Field(default=50, ge=1, le=500, description="最大迭代次数")
+    completion_criteria: str = Field(default="", description="运行完成标准说明")
+    auto_memory: bool = Field(default=True, description="是否自动使用记忆上下文")
     input: dict[str, Any] = Field(default_factory=dict, description="附加上下文输入")
     parent_id: Optional[str] = Field(default=None, description="可选父 run/task ID")
 
@@ -114,6 +111,67 @@ class MCPServerConfigRequest(BaseModel):
     transport: str = "stdio"
 
 
+class AgentToolMount(BaseModel):
+    """Resolved Tool/Agent mount shown on Agent configuration APIs."""
+
+    name: str
+    type: Literal["agent", "tool", "unknown"] | str = "unknown"
+    configured: bool = True
+    available: bool = False
+    description: str = ""
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentSkillMount(BaseModel):
+    """Normalized Agent-scoped Skill mount summary."""
+
+    configured: bool = False
+    enabled: bool = True
+    directories: list[str] = Field(default_factory=list)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    disabled: list[str] = Field(default_factory=list)
+    strategy: str = "metadata_and_instructions"
+    item_count: int = 0
+
+
+class AgentMCPMount(BaseModel):
+    """Normalized Agent-scoped MCP mount summary."""
+
+    name: str
+    enabled: bool = True
+    transport: str = "stdio"
+    command: str = ""
+    description: str = ""
+    status: Literal["configured_not_connected", "disabled", "config_error"] | str = "configured_not_connected"
+    errors: list[str] = Field(default_factory=list)
+
+
+class AgentWorkspaceBinding(BaseModel):
+    """Default workspace binding configured for an Agent."""
+
+    workspace_id: Optional[str] = None
+    workspace_root: Optional[str] = None
+    source: Literal["agent_config", "not_configured"] | str = "not_configured"
+
+
+class AgentLLMConfig(BaseModel):
+    """Agent-scoped model selection and generation options."""
+
+    provider: Optional[str] = Field(default=None, description="openai | anthropic；为空则继承全局配置")
+    api_key: Optional[str] = Field(default=None, description="可选：该 Agent 独立使用的模型服务密钥；响应不会明文返回")
+    api_key_set: Optional[bool] = Field(default=None, description="响应字段：是否已配置独立密钥")
+    model: Optional[str] = Field(default=None, description="该 Agent 使用的模型；为空则继承全局模型")
+    base_url: Optional[str] = Field(default=None, description="可选：该 Agent 的模型服务地址")
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    top_p: Optional[float] = Field(default=None, ge=0, le=1)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=200000)
+    stop_sequences: Optional[list[str]] = None
+    openai: dict[str, Any] = Field(default_factory=dict)
+    anthropic: dict[str, Any] = Field(default_factory=dict)
+    reasoning_effort: Optional[str] = None
+    source: Literal["agent_config", "global_default"] | str = "global_default"
+
+
 
 class AgentInfo(BaseModel):
     """Agent 信息"""
@@ -122,12 +180,23 @@ class AgentInfo(BaseModel):
     status: str
     capabilities: list[str]
     description: str = ""
+    registered: bool = True
     system_prompt: Optional[str] = None
+    model: Optional[str] = None
+    llm: Optional[AgentLLMConfig] = None
+    tools: list[str] = Field(default_factory=list)
+    runtime_tools: list[str] = Field(default_factory=list)
+    tool_mounts: list[AgentToolMount] = Field(default_factory=list)
     output_format: Optional[Literal["text", "json"]] = None
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
+    skill_mount: AgentSkillMount = Field(default_factory=AgentSkillMount)
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
-    default_workspace_id: Optional[str] = Field(default=None, description="Agent 默认绑定的工作区 ID")
+    mcp_mounts: list[AgentMCPMount] = Field(default_factory=list)
+    mcp_capability_status: Optional[dict[str, Any]] = None
+    default_workspace_id: Optional[str] = None
+    default_workspace_root: Optional[str] = None
+    workspace_binding: AgentWorkspaceBinding = Field(default_factory=AgentWorkspaceBinding)
 
 
 class AgentInvokeRequest(BaseModel):
@@ -148,29 +217,6 @@ class AgentInvokeRequest(BaseModel):
         if not isinstance(value, dict) or "data" in value:
             return value
         return {"data": dict(value)}
-
-
-# ========================
-# 管线（Pipeline）相关
-# ========================
-
-
-class PipelineExecuteRequest(BaseModel):
-    """执行管线请求"""
-
-    pipeline_type: str = Field(default="plan_code_review", description="管线类型")
-    template_name: Optional[str] = Field(default=None, description="YAML 管线模板名称（优先级高于 pipeline_type）")
-    requirement: str = Field(default="", description="需求描述")
-    input: Optional[str] = Field(default=None, description="输入（别名，等价于 requirement）")
-    options: dict[str, Any] = Field(default_factory=dict, description="额外选项")
-
-
-class PipelineTemplate(BaseModel):
-    """管线模板"""
-
-    name: str
-    description: str
-    steps: list[str]
 
 
 # ========================
@@ -214,6 +260,43 @@ class FileToolConfigRequest(BaseModel):
     """Workspace file tool config update request."""
 
     workspace_root: str = "./workspace"
+
+
+class WorkspaceFileEntry(BaseModel):
+    """Brief file entry returned by managed workspace detail APIs."""
+
+    path: str
+    kind: Literal["file", "directory"]
+    size: Optional[int] = None
+    modified_at: str
+
+
+class WorkspaceSummary(BaseModel):
+    """Managed workspace summary."""
+
+    id: str
+    name: str
+    kind: Literal["project", "agent", "session", "run"] | str
+    source: str
+    root_path: str
+    created_at: str
+    updated_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceDetail(WorkspaceSummary):
+    """Managed workspace detail with an optional shallow file listing."""
+
+    files: list[WorkspaceFileEntry] = Field(default_factory=list)
+    files_truncated: bool = False
+
+
+class WorkspaceFileContentUpdateRequest(BaseModel):
+    """Text file update request inside a managed workspace."""
+
+    path: str = Field(..., min_length=1, description="工作区内相对路径")
+    content: str = Field(default="", description="完整文本内容")
+    encoding: str = Field(default="utf-8", description="文本编码")
 
 
 class ShellToolConfigRequest(BaseModel):
@@ -288,9 +371,12 @@ class AgentCreateRequest(BaseModel):
     tools: list[str] = Field(default_factory=list, description="可用工具名称列表")
     output_format: Literal["text", "json"] = Field(default="text", description="输出格式: text | json")
     max_iterations: int = Field(default=10, ge=1, le=50, description="tool_use 最大循环次数")
+    model: Optional[str] = Field(default=None, description="可选：该 Agent 使用的模型名称")
+    llm: Optional[AgentLLMConfig] = None
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: list[MCPServerConfigRequest] = Field(default_factory=list)
-    default_workspace_id: Optional[str] = Field(default=None, description="默认绑定的工作区 ID")
+    default_workspace_id: Optional[str] = Field(default=None, description="Agent 默认工作区 ID")
+    default_workspace_root: Optional[str] = Field(default=None, description="Agent 默认工作区根路径")
 
 
 class AgentUpdateRequest(BaseModel):
@@ -301,43 +387,12 @@ class AgentUpdateRequest(BaseModel):
     tools: Optional[list[str]] = None
     output_format: Optional[Literal["text", "json"]] = None
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
+    model: Optional[str] = None
+    llm: Optional[AgentLLMConfig] = None
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
-    default_workspace_id: Optional[str] = Field(default=None, description="默认绑定的工作区 ID；空字符串表示清空")
-
-
-# ========================
-# 管线（Pipeline）CRUD
-# ========================
-
-
-class PipelineStepSchema(BaseModel):
-    """管线步骤"""
-
-    name: str = Field(..., min_length=1)
-    agent: str = Field(..., min_length=1)
-    input: Optional[dict[str, Any]] = None
-    output_key: Optional[str] = None
-    condition: Optional[str] = None
-    max_iterations: int = Field(default=1, ge=1)
-    timeout: Optional[float] = Field(default=None, gt=0, description="步骤超时秒数")
-
-
-class PipelineCreateRequest(BaseModel):
-    """创建管线请求"""
-
-    name: str = Field(..., min_length=1, description="管线名称（英文下划线格式）")
-    description: str = Field(default="", description="管线描述")
-    mode: str = Field(default="sequential", description="执行模式: sequential | parallel")
-    steps: list[PipelineStepSchema] = Field(default_factory=list, description="步骤列表")
-
-
-class PipelineUpdateRequest(BaseModel):
-    """更新管线请求（部分更新）"""
-
-    description: Optional[str] = None
-    mode: Optional[str] = None
-    steps: Optional[list[PipelineStepSchema]] = None
+    default_workspace_id: Optional[str] = None
+    default_workspace_root: Optional[str] = None
 
 
 # ========================
@@ -396,12 +451,14 @@ class MemorySettingsUpdateRequest(BaseModel):
 class ChatSessionCreateRequest(BaseModel):
     """创建聊天分页/会话请求"""
 
+    workspace_id: Optional[str] = Field(default=None, description="可选：绑定到该会话的工作区 ID")
     title: Optional[str] = Field(default=None, description="可选会话标题")
 
 
 class ChatSessionUpdateRequest(BaseModel):
     """更新聊天分页/会话请求"""
 
+    workspace_id: Optional[str] = Field(default=None, description="可选：更新会话工作区绑定")
     title: Optional[str] = Field(default=None, description="新的会话标题")
 
 

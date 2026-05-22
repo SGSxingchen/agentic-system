@@ -25,7 +25,6 @@ from api.dependencies import (
     get_memory_buffer,
     get_memory_retriever,
     get_memory_store,
-    get_pipeline,
     reload_agent_fn,
     set_agent_registry,
     set_bus,
@@ -36,11 +35,9 @@ from api.dependencies import (
     set_memory_buffer,
     set_memory_retriever,
     set_memory_store,
-    set_pipeline,
     set_reload_agent_fn,
 )
 from api.schemas import (
-    AgentRunCreateRequest,
     AgentInfo,
     AgentInvokeRequest,
     APIResponse,
@@ -54,10 +51,6 @@ from api.schemas import (
     TaskStatus,
     TaskSubmitRequest,
     ToolsConfigRequest,
-    PipelineExecuteRequest,
-    PipelineStepSchema,
-    PipelineTemplate,
-    RunControlRequest,
 )
 from api.websocket import handlers as ws_handlers
 from api.websocket.handlers import ConnectionManager
@@ -88,7 +81,7 @@ def reset_app_state():
     attrs = [
         "bus", "agent_registry", "current_llm_client",
         "memory_store", "memory_formation", "memory_retriever", "memory_buffer", "reload_agent",
-        "context_store", "capability_registry", "pipeline",
+        "context_store", "capability_registry",
     ]
     saved = {a: getattr(_state, a) for a in attrs}
     # 重置为 None
@@ -136,7 +129,6 @@ class TestDependencies:
         assert reload_agent_fn() is None
         assert get_context_store() is None
         assert get_capability_registry() is None
-        assert get_pipeline() is None
 
     def test_set_get_bus(self):
         sentinel = object()
@@ -147,11 +139,6 @@ class TestDependencies:
         sentinel = object()
         set_agent_registry(sentinel)
         assert get_agent_registry() is sentinel
-
-    def test_set_get_pipeline(self):
-        sentinel = object()
-        set_pipeline(sentinel)
-        assert get_pipeline() is sentinel
 
     def test_set_get_llm_client(self):
         sentinel = object()
@@ -251,7 +238,7 @@ class TestAPIResponse:
 
 class TestTaskStatus:
     def test_all_values(self):
-        expected = {"pending", "running", "paused", "completed", "failed", "killed"}
+        expected = {"pending", "running", "completed", "failed", "killed"}
         actual = {s.value for s in TaskStatus}
         assert actual == expected
 
@@ -267,11 +254,7 @@ class TestTaskSubmitRequest:
     def test_valid_request(self):
         r = TaskSubmitRequest(requirement="build a calculator")
         assert r.requirement == "build a calculator"
-        assert r.pipeline == "auto"
-
-    def test_custom_pipeline(self):
-        r = TaskSubmitRequest(requirement="x", pipeline="plan_code_review")
-        assert r.pipeline == "plan_code_review"
+        assert r.agent_name == "assistant"
 
     def test_empty_requirement_rejected(self):
         with pytest.raises(Exception):
@@ -280,40 +263,6 @@ class TestTaskSubmitRequest:
     def test_missing_requirement_rejected(self):
         with pytest.raises(Exception):
             TaskSubmitRequest()
-
-
-class TestAgentRunCreateRequest:
-    def test_defaults_to_continuous_memory_guided_run(self):
-        r = AgentRunCreateRequest(goal="持续优化 UI 直到可演示")
-
-        assert r.goal == "持续优化 UI 直到可演示"
-        assert r.mode == "continuous"
-        assert r.strategy == "memory_guided_agent_loop"
-        assert r.max_iterations == 50
-        assert r.completion_criteria == ""
-        assert r.auto_memory is True
-
-    def test_accepts_completion_criteria_and_iteration_budget(self):
-        r = AgentRunCreateRequest(
-            goal="完成目标工作台",
-            max_iterations=88,
-            completion_criteria="测试和前端构建通过",
-            auto_memory=False,
-        )
-
-        assert r.max_iterations == 88
-        assert r.completion_criteria == "测试和前端构建通过"
-        assert r.auto_memory is False
-
-
-class TestRunControlRequest:
-    @pytest.mark.parametrize("action", ["pause", "resume", "cancel"])
-    def test_accepts_supported_actions(self, action):
-        assert RunControlRequest(action=action).action == action
-
-    def test_rejects_unknown_action(self):
-        with pytest.raises(Exception):
-            RunControlRequest(action="restart")
 
 
 class TestTaskResponse:
@@ -369,44 +318,6 @@ class TestAgentInvokeRequest:
     def test_legacy_flat_payload_is_preserved_as_data(self):
         r = AgentInvokeRequest(input="hello", session_id="s1")
         assert r.data == {"input": "hello", "session_id": "s1"}
-
-
-class TestPipelineExecuteRequest:
-    def test_defaults(self):
-        r = PipelineExecuteRequest()
-        assert r.pipeline_type == "plan_code_review"
-        assert r.template_name is None
-        assert r.requirement == ""
-        assert r.input is None
-        assert r.options == {}
-
-    def test_custom_values(self):
-        r = PipelineExecuteRequest(
-            pipeline_type="custom",
-            template_name="full_pipeline",
-            requirement="build API",
-            input="alt input",
-            options={"retry": True},
-        )
-        assert r.template_name == "full_pipeline"
-        assert r.options["retry"] is True
-
-
-class TestPipelineStepSchema:
-    def test_accepts_timeout(self):
-        step = PipelineStepSchema(name="review", agent="reviewer", timeout=2.5)
-        assert step.timeout == 2.5
-
-    def test_rejects_non_positive_timeout(self):
-        with pytest.raises(Exception):
-            PipelineStepSchema(name="review", agent="reviewer", timeout=0)
-
-
-class TestPipelineTemplate:
-    def test_valid_template(self):
-        t = PipelineTemplate(name="basic", description="A basic flow", steps=["plan", "code"])
-        assert t.name == "basic"
-        assert len(t.steps) == 2
 
 
 class TestLLMConfigRequest:

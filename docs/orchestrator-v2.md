@@ -5,6 +5,9 @@
 **作者**: 项目维护者
 **状态**: 设计阶段，未实现
 
+> **历史说明（2026-05-12）**：本文记录的是编排层从 Workflow 演进到 Agent 工具循环的历史设计过程。
+> 文中 Pipeline / `/api/pipelines/*` / `config/pipelines.yaml` / `PipelinePanel` 相关内容均为历史阶段说明；当前现行系统已移除固定 Pipeline，默认任务模型为 Agent Run。
+>
 > 本文档面向后续实现者，描述编排层从 **YAML 静态 DAG** 到 **反应式 Agent 工具循环 + 子任务派生** 的范式转变。
 > 概念级，不出 Python 类签名；签名留给实现阶段补充。
 > 设计参考 Claude Code 2.1.x（`claudecode-source/restored-src/src/`）的 QueryEngine / Task / Tool / Coordinator 子系统。
@@ -481,7 +484,7 @@ LLM 输出 N 个 tool_use 块
 - EventEngine / TriggerRegistry / `core/event/*` 整体清理 → Phase B（与 workflow 一起删）
 - `backend/config/{capabilities,system,triggers,workflows}.yaml` 过期副本清理 → Phase B
 
-### Phase B：Task 抽象 + 进度 ✅ 已落地（2026-04-26）
+### Phase B：Task 抽象 + 进度 ✅ 历史阶段（2026-04-26，固定 Pipeline 现已移除）
 
 支柱 2 + 支柱 5 + 拆掉旧 workflow + Workflow→Pipeline 重命名。**已落地（2026-04-26）**：
 

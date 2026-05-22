@@ -23,7 +23,7 @@ class MemoryFormation:
         store: BaseMemoryStore,
         embedding_fn: Optional[Any] = None,
         consolidation_threshold: float = 0.3,
-        forget_after_days: int = 30,
+        forget_after_days: int = 1,
         forget_min_importance: float = 0.3,
     ):
         """
@@ -234,6 +234,12 @@ class MemoryFormation:
         Returns:
             被遗忘的记忆数量
         """
+        result = await self.forget_details()
+        return int(result["forgotten"])
+
+    async def forget_details(self) -> dict[str, Any]:
+        """执行一次手动遗忘周期，并返回可展示的周期信息。"""
+
         forgotten = 0
         cutoff = datetime.now() - timedelta(days=self.forget_after_days)
         all_memories = await self.store.get_all(limit=10000)
@@ -252,7 +258,11 @@ class MemoryFormation:
                 await self.store.delete(memory.id)
                 forgotten += 1
 
-        return forgotten
+        return {
+            "forgotten": forgotten,
+            "cycle_days": self.forget_after_days,
+            "cutoff": cutoff.isoformat(),
+        }
 
     async def get_stats(self) -> dict[str, Any]:
         """获取记忆系统统计信息"""

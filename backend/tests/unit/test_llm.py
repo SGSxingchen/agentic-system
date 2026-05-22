@@ -86,6 +86,35 @@ class TestOpenAIClient:
         from core.llm.openai_client import OpenAIClient
         client = OpenAIClient("sk-test", "gpt-4", base_url="http://proxy/v1")
         mock_openai_cls.assert_called_once_with(api_key="sk-test", base_url="http://proxy/v1")
+        assert client.base_url == "http://proxy/v1"
+
+    @patch("openai.AsyncOpenAI")
+    def test_init_normalizes_openai_base_url(self, mock_openai_cls):
+        from core.llm.openai_client import OpenAIClient
+
+        client = OpenAIClient(
+            "sk-test",
+            "gpt-4",
+            base_url="https://proxy.example.com/openai/v1/chat/completions",
+        )
+
+        mock_openai_cls.assert_called_once_with(
+            api_key="sk-test",
+            base_url="https://proxy.example.com/openai/v1",
+        )
+        assert client.base_url == "https://proxy.example.com/openai/v1"
+
+    @patch("openai.AsyncOpenAI")
+    def test_init_adds_v1_to_openai_compatible_base_url(self, mock_openai_cls):
+        from core.llm.openai_client import OpenAIClient
+
+        client = OpenAIClient("sk-test", "gpt-4", base_url="https://proxy.example.com")
+
+        mock_openai_cls.assert_called_once_with(
+            api_key="sk-test",
+            base_url="https://proxy.example.com/v1",
+        )
+        assert client.base_url == "https://proxy.example.com/v1"
 
     @patch("openai.AsyncOpenAI")
     async def test_chat_calls_api(self, mock_openai_cls):

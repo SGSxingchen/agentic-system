@@ -3,6 +3,7 @@ import type {
   AgentInfo,
   Memory,
   MemoryStats,
+  MemoryForgetResult,
   MemorySettings,
   HealthStatus,
   SystemConfig,
@@ -265,8 +266,8 @@ export async function consolidateMemories(): Promise<APIResponse<Record<string, 
   return post<Record<string, number>>('/api/memory/consolidate')
 }
 
-export async function forgetMemories(): Promise<APIResponse<{ forgotten: number }>> {
-  return post<{ forgotten: number }>('/api/memory/forget')
+export async function forgetMemories(): Promise<APIResponse<MemoryForgetResult>> {
+  return post<MemoryForgetResult>('/api/memory/forget')
 }
 
 // ===== 智能体 API =====
@@ -288,9 +289,12 @@ export async function createAgent(data: {
   tools?: string[]
   output_format?: string
   max_iterations?: number
+  model?: string | null
+  llm?: Record<string, unknown> | null
   skills?: Record<string, unknown> | null
   mcp_servers?: Array<Record<string, unknown>>
   default_workspace_id?: string
+  default_workspace_root?: string
 }): Promise<APIResponse<unknown>> {
   const response = await post('/api/agents', data)
   if (response.status === 'ok') invalidateGetCache('/api/agents')
@@ -305,9 +309,12 @@ export async function updateAgent(
     tools?: string[]
     output_format?: string
     max_iterations?: number
+    model?: string | null
+    llm?: Record<string, unknown> | null
     skills?: Record<string, unknown> | null
     mcp_servers?: Array<Record<string, unknown>>
-    default_workspace_id?: string
+    default_workspace_id?: string | null
+    default_workspace_root?: string | null
   }
 ): Promise<APIResponse<unknown>> {
   const response = await put(`/api/agents/${name}`, data)
@@ -373,7 +380,7 @@ export async function cancelRun(runId: string): Promise<APIResponse<Task>> {
 
 export async function controlRun(
   runId: string,
-  action: 'pause' | 'resume' | 'cancel'
+  action: 'cancel'
 ): Promise<APIResponse<Task>> {
   return post<Task>(`/api/runs/${runId}/control`, { action })
 }

@@ -1,6 +1,6 @@
 # 基于多智能体协作的自动化代码生成与审查系统 — 架构设计文档
 
-**版本**: v2.2 (Pipeline live validation 后)
+**版本**: v2.6 (Pipeline 移除后)
 **日期**: 2026-05-05
 **作者**: 黄宇鑫
 
@@ -24,10 +24,10 @@
 | 特性 | 实现状态 | 说明 |
 |------|----------|------|
 | 统一消息总线 (UnifiedBus) | ✅ 已实现 | 优先级队列、消息历史、运行指标、向后兼容 SimpleBus |
-| Pipeline 监控事件 | ✅ 已实现 | Pipeline 步骤事件通过 UnifiedBus 广播到前端监控 |
+| Agent Run 监控事件 | ✅ 已实现 | 运行进展通过 UnifiedBus 广播到前端监控 |
 | 4 个专业智能体 | ✅ 已实现 | Assistant / Planner / Coder / Reviewer |
 | 长期记忆系统 | ✅ 已实现 | 默认 ChromaDB 持久化，自动对话反思生成，检索注入，InMemory 降级 |
-| Pipeline 编排 | ✅ 已实现 | 顺序/并行执行，YAML 模板驱动 |
+| Agent Run 调度 | ✅ 已实现 | 多 Agent / 会话 / 工作区实例，transcript 事件流 |
 | 能力插件系统 | ✅ 已实现 | CodeParser + StaticAnalyzer + TestRunner |
 | YAML 配置体系 | ✅ 已实现 | config/ 目录主配置，动态加载，fallback 机制 |
 | 前后端分离 | ✅ 已实现 | FastAPI + React/TypeScript + WebSocket |
@@ -64,7 +64,6 @@ agentic-system/
 │
 ├── config/                             # ★ YAML 配置目录 (被 config.py 动态加载)
 │   ├── agents.yaml                     #   智能体定义
-│   ├── pipelines.yaml                  #   Pipeline 模板
 │   ├── capabilities.yaml               #   能力插件
 │   └── system.yaml                     #   全局系统配置 (LLM/Bus/Memory 等)
 │
@@ -83,7 +82,6 @@ agentic-system/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── agents.py           #     GET/POST /api/agents/*
 │   │   │   │   ├── tasks.py            #     GET/POST/DELETE /api/tasks/*
-│   │   │   │   ├── pipelines.py        #     GET/POST/PUT/DELETE /api/pipelines/*
 │   │   │   │   ├── memory.py           #     GET/POST/DELETE /api/memory/*
 │   │   │   │   └── config.py           #     GET/POST /api/config + /api/health
 │   │   │   └── websocket/
@@ -113,9 +111,7 @@ agentic-system/
 │   │   │   │   ├── native.py           #     ★ 内置能力 (3 个)
 │   │   │   │   └── registry.py         #     CapabilityRegistry
 │   │   │   ├── context/store.py        #   上下文管理 (三层作用域)
-│   │   │   ├── pipeline/               #   Pipeline 编排
-│   │   │   │   ├── pipeline.py         #     Pipeline 执行器
-│   │   │   │   └── types.py            #     Step/Pipeline 结果类型
+│   │   │   ├── task/                   #   Agent Run / 任务状态
 │   │   │   └── llm/                    #   LLM 客户端
 │   │   │       ├── base.py / factory.py
 │   │   │       ├── openai_client.py
@@ -167,7 +163,7 @@ agentic-system/
 消息总线层 (UnifiedBus — 系统神经中枢)
     │         │         │         │
     ▼         ▼         ▼         ▼
-Pipeline   记忆系统   上下文管理   能力注册中心
+Agent Run  记忆系统   上下文管理   能力注册中心
     │
     ▼
 智能体层 (4 个 Agent，通过 AgentRegistry 管理)
@@ -187,7 +183,7 @@ LLM 客户端层 (OpenAI / Anthropic)
 4. CapabilityRegistry           → 从 config/capabilities.yaml 加载能力
 5. init_memory_system()         → 初始化持久化记忆存储/检索/巩固/对话反思缓冲
 6. reload_agent()               → 从 config/agents.yaml 创建并注册 Agent
-7. Pipeline                     → 从 config/pipelines.yaml 加载模板
+7. TaskRegistry                 → 准备 Agent Run 调度与 transcript 存储
 ```
 
 **关键设计: 所有子系统都有 fallback 机制。** 如果 `config/*.yaml` 缺失或为空，回退到硬编码默认值。
@@ -216,9 +212,9 @@ LLM 客户端层 (OpenAI / Anthropic)
 
 **向后兼容:** 通过 `_subscribers` 字典兼容旧版 SimpleBus 接口。
 
-### 3.4 Pipeline 监控事件
+### 3.4 Agent Run 监控事件
 
-当前生产路径已从静态 EventEngine/TriggerRegistry 迁移到 Pipeline + Agent 工具循环。Pipeline 执行步骤时通过 UnifiedBus 广播 `step_started`、`step_completed`、`step_failed` 等事件，WebSocket 事件桥接会将这些监控事件推送到前端 MonitorPanel。
+当前生产路径已从静态 EventEngine/TriggerRegistry 和固定 Pipeline 迁移到 Agent Run + Agent 工具循环。运行过程通过 UnifiedBus 广播 `agent_progress`、`agent_done`、`agent_error` 等事件，WebSocket 事件桥接会将这些监控事件推送到前端 MonitorPanel。
 
 ### 3.4.1 Agent-scoped Skills 与 MCP 配置
 
@@ -275,8 +271,8 @@ Skills 与 MCP servers 必须属于具体 Agent 配置，不能作为全局散�
 **标准事件链:**
 ```
 user_message → WebSocket handler → Assistant capability → 定向返回当前连接
-pipeline step_started/step_completed → UnifiedBus → WebSocket 广播 → MonitorPanel
-POST /api/pipelines/execute → Pipeline → planner/coder/reviewer capabilities → step_results
+POST /api/tasks 或 POST /api/runs → Agent Run → transcript events → MonitorPanel
+agent_progress/agent_done/agent_error → UnifiedBus → WebSocket 广播
 ```
 
 ### 3.6 记忆系统
@@ -336,19 +332,13 @@ POST /api/pipelines/execute → Pipeline → planner/coder/reviewer capabilities
 
 > **注意:** `capabilities/builtin/` 下也有独立的完整实现。`core/capability/native.py` 是简化版，被 main.py 直接使用。
 
-### 3.8 Pipeline 编排
+### 3.8 Agent Run 调度
 
-`Pipeline` 支持:
-- 顺序执行
-- 并行执行
-- YAML 模板驱动 (从 `config/pipelines.yaml` 加载)
-- 步骤级超时控制 (`timeout` 字段，超时后标记失败并终止后续顺序步骤)
-- 嵌套变量解析 (支持 dict / list / tuple 中的 `${var}` 引用)
-
-预定义 Pipeline:
-1. `code_generation_and_review` — 规划 → 编码 → 审查 → 条件修复
-2. `task_decompose_and_execute` — 分解 → 编码
-3. `full_pipeline` — 规划 → 编码 → 审查 → 修复 → 再审查
+固定 Pipeline 已移除。当前运行模型是 Agent Run：
+- 每次运行都是独立实例，包含 `run_id/task_id`、`agent_name`、`session_id`、`workspace_id`、目标、状态、进度和输出。
+- 调度层负责创建实例、准备工作区、记录 transcript、广播监控事件和处理取消。
+- Agent 根据上下文和工具反馈自主决定下一步，不再依赖 YAML 模板步骤。
+- `/api/tasks` 是便捷入口，`/api/runs` 是显式多实例运行入口。
 
 ---
 
@@ -368,7 +358,6 @@ POST /api/pipelines/execute → Pipeline → planner/coder/reviewer capabilities
 | `system.yaml` | 直接合并到顶层 | 全局配置 (LLM/Bus/Memory/Server 等；Memory 默认 chroma + ./data/chroma) |
 | `agents.yaml` | `agents` (列表) | 4 个 Agent 定义 |
 | `capabilities.yaml` | `capabilities` (列表) | 2 个原生能力 (MCP/OpenAPI 预留) |
-| `pipelines.yaml` | `pipelines` (字典) | 3 个 Pipeline 模板 |
 
 ### 4.3 加载机制
 
@@ -399,7 +388,7 @@ memory:
   recall_score_threshold: 0.0
   fallback_to_memory_on_error: true
   consolidation_threshold: 0.3
-  forget_after_days: 30
+  forget_after_days: 1
   forget_min_importance: 0.3
 ```
 
@@ -465,11 +454,13 @@ _CAPABILITY_CLASS_MAP = {
 | GET | `/api/tasks` | 列出所有任务 |
 | GET | `/api/tasks/{task_id}` | 获取任务详情 |
 | DELETE | `/api/tasks/{task_id}` | 取消任务 |
-| GET | `/api/pipelines/templates` | 获取 Pipeline 模板 |
-| POST | `/api/pipelines/execute` | 执行 Pipeline |
-| POST | `/api/pipelines` | 创建 Pipeline 模板 |
-| PUT | `/api/pipelines/{name}` | 更新 Pipeline 模板 |
-| DELETE | `/api/pipelines/{name}` | 删除 Pipeline 模板 |
+| POST | `/api/runs` | 创建 Agent Run |
+| GET | `/api/runs` | 列出 Agent Run |
+| GET | `/api/runs/{run_id}` | 获取运行详情 |
+| GET | `/api/runs/{run_id}/events` | 读取运行事件流 |
+| POST | `/api/runs/{run_id}/control` | 控制运行 |
+| DELETE | `/api/runs/{run_id}` | 取消运行 |
+| GET | `/api/runs/workspaces` | 汇总运行工作区 |
 | GET | `/api/memory/stats` | 记忆统计 |
 | GET | `/api/memory/list` | 列出记忆 |
 | POST | `/api/memory/search` | 搜索记忆 |
@@ -501,9 +492,8 @@ _CAPABILITY_CLASS_MAP = {
 | `ChatPanel` | 聊天对话 (用户/AI 消息气泡，记忆使用指示) |
 | `AgentPanel` | Agent 状态查看、直接调用 |
 | `TaskPanel` | 任务提交、列表、状态跟踪 |
-| `PipelinePanel` | Pipeline 模板选择、执行 |
-| `MemoryPanel` | 记忆统计/列表/搜索/创建/删除 |
-| `MonitorPanel` | 系统监控 (连接状态、事件流) |
+| `MemoryPanel` | 记忆统计/列表/搜索/创建/删除/设置/遗忘周期 |
+| `MonitorPanel` | 系统监控 (连接状态、按 Agent 聚合的运行进展、事件流) |
 | `Settings` | LLM 配置面板 (热重载) |
 
 ---
@@ -546,12 +536,12 @@ _CAPABILITY_CLASS_MAP = {
 ### Phase 6: 高级特性 ✅
 - [x] 上下文管理 (三层作用域 ContextStore)
 - [x] 错误处理和重试
-- [x] Pipeline 监控事件
+- [x] Agent Run 监控事件
 - [x] 能力系统 + 注册中心
-- [x] Pipeline 编排 (顺序/并行/条件/超时)
+- [x] Agent Run 调度 (多实例 + transcript)
 - [x] UnifiedBus 替换 SimpleBus
 - [x] YAML 配置体系
-- [x] 前端 TaskPanel + PipelinePanel
+- [x] 前端 TaskPanel + MonitorPanel
 - [ ] MCP 客户端集成 (预留接口)
 - [ ] 消息持久化 (预留接口)
 
@@ -770,15 +760,15 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 ### 13.1 后端聚合接口
 
-- `GET /api/evolution/system-status` 聚合运行时状态：AgentRegistry、CapabilityRegistry、MemoryStore/Formation/Buffer、LLM 配置、Pipeline 模板、UnifiedBus 指标、config 文件和 Task 统计。
-- `POST /api/evolution/command` 接收 `goal`，基于当前状态生成一条明确进化指令，可提交给现有任务/管线系统执行。
+- `GET /api/evolution/system-status` 聚合运行时状态：AgentRegistry、CapabilityRegistry、MemoryStore/Formation/Buffer、LLM 配置、Agent Run、UnifiedBus 指标、config 文件和 Task 统计。
+- `POST /api/evolution/command` 接收 `goal`，基于当前状态生成一条明确进化指令，可提交给现有 Agent Run 执行。
 - 原有 `/api/evolution/graph`、动态 Tool、Tool prompt 和 reload API 保持兼容；它们是组件维护接口，不等同于进化页主叙事。
 
 ### 13.2 前端表达
 
-进化页按系统组成展示：Assistants/Agents、Tools、Skills/MCP Context、Memory/Reflection、Models/Providers、Runtime/Orchestration、Evolution/Reflection Pipeline、Observability/Config。每个部分必须展示真实已有数据；缺数据时显示明确 empty state，不使用硬编码假运行数据。
+进化页按系统组成展示：Assistants/Agents、Tools、Skills/MCP Context、Memory/Reflection、Models/Providers、Runtime/Agent Run、Evolution Loop、Observability/Config。每个部分必须展示真实已有数据；缺数据时显示明确 empty state，不使用硬编码假运行数据。
 
-Evolution Command 区域允许用户用一句目标生成系统级任务指令，并可提交为 Pipeline Task。指令必须强调：先审查架构状态、再设计最小可行改造、按文档实现、运行验证。
+Evolution Command 区域允许用户用一句目标生成系统级任务指令，并可提交为 Agent Run。指令必须强调：先审查架构状态、再设计最小可行改造、按文档实现、运行验证。
 
 ---
 
@@ -786,7 +776,7 @@ Evolution Command 区域允许用户用一句目标生成系统级任务指令�
 
 ### 14.1 为什么替代固定流水线
 
-旧 `Pipeline` 仍可作为兼容模板执行器存在，但不再是默认任务模型。固定 plan→code→review 步骤把“下一步”写死在调度层，无法表达多个 agent/session/workspace/task 并发实例，也无法让 Agent 根据工具反馈自主调整策略。
+固定 Pipeline 已从现行系统移除。固定 plan→code→review 步骤把“下一步”写死在调度层，无法表达多个 agent/session/workspace/task 并发实例，也无法让 Agent 根据工具反馈自主调整策略。
 
 新默认模型是 **Agent Run**：每次运行都是一个独立实例，拥有 `run_id/task_id`、`agent_name`、`session_id`、`workspace_id`、`goal`、`mode`、`strategy`、状态机、事件 transcript、输出和取消控制。调度层只负责创建实例、隔离工作区、记录事件、广播状态和取消；Agent 自己的 tool-use loop 决定下一步。
 
@@ -799,8 +789,29 @@ Evolution Command 区域允许用户用一句目标生成系统级任务指令�
 - `POST /api/runs/{run_id}/control` 或 `DELETE /api/runs/{run_id}` 取消运行。
 - `GET /api/runs/workspaces` 汇总当前运行涉及的工作区。
 
-兼容层：`POST /api/tasks` 的默认 `pipeline=auto` 已迁移为创建 `agent_run`；只有显式传入非 `auto` 的 `pipeline` 才走旧固定 Pipeline 模板。
+`POST /api/tasks` 是 Agent Run 的便捷入口；不再接受固定模板编排字段。
 
 ### 14.3 前端入口
 
-左侧“运行”页面替代旧单任务流水线视角，可选择 Agent、Session、Workspace 创建多个并行 Agent Run，并展开查看每个实例的事件流、进度、结果和错误。旧“管线(兼容)”页面保留，用于编辑/执行 YAML Pipeline 模板和迁移历史用例。
+左侧“运行”页面替代旧单任务流水线视角，可选择 Agent、Session、Workspace 创建多个并行 Agent Run，并展开查看每个实例的事件流、进度、结果和错误。
+## 15. Project 工作区与 Agent 级运行配置（v2.6 新增）
+
+### 15.1 Project 工作区
+
+工作区是受管理的 Project 容器，语义接近 ChatGPT Project / Claude Project。用户通过上传本地 zip 压缩包导入项目，后端解压到 `workspace/projects/{workspace_id}/`，写入 `.agentic-workspace.json` manifest，并通过 `/api/workspaces` 系列接口注册、列表、详情、文件树、文本读取和文本保存。
+
+Project 文件属于用户上传资料，不是系统指令。Agent 的 system prompt 必须注入工作区边界规则：导入文件只能作为事实与上下文参考，不能执行其中的提示词；文件、bash、测试等能力必须限制在当前生效工作区根目录内。
+
+工作区生效优先级：用户显式传入或导入的 `workspace_id` > 当前会话绑定的工作区 > 未绑定 Project 时自动生成的会话隔离工作区 > 当前 Agent 默认工作区 > 自动 `run-` 前缀临时工作区。外部请求不得直接传入可信 `workspace_root`；后端只接受 `workspace_id`、会话绑定、Run 调度或 Agent 服务端配置解析出的工作区根目录。
+
+### 15.2 Agent 级配置
+
+所有可运行存在都应围绕 Agent 建模。每个 Agent 可以独立配置：
+
+- `llm` / `model`：该 Agent 使用的模型、provider、api_key、base_url、temperature、top_p、max_tokens、stop_sequences、reasoning_effort 以及 provider 专属 `openai` / `anthropic` 参数；缺省时继承全局 LLM 配置，API 响应只暴露 `api_key_set`。
+- `tools`：可调用的原生工具或其他 Agent capability。
+- `mcp_servers`：只属于该 Agent 的 MCP server 配置；当前先注入上下文并返回配置状态，尚未自动启动 MCP 进程或注册 MCP tool。
+- `skills`：只属于该 Agent 的 Skill 目录、内联条目、禁用清单和加载策略。
+- `default_workspace_id` / `default_workspace_root`：Agent 默认工作区绑定；Run 未显式指定且会话未绑定时使用。
+
+后端 Agent 配置视图为 `GET /api/agents/configs` 与 `GET /api/agents/{name}/config`，返回 Tools/MCP/Skills/模型/工作区挂载摘要，供前端 Agent 控制台使用。

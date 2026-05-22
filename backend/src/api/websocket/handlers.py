@@ -8,7 +8,14 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from core.chat_history import ChatHistoryStore
 from core.memory import MemoryProcessor, should_reflect_early
+from core.workspace import (
+    WorkspaceNotFoundError,
+    WorkspaceStore,
+    session_workspace_id,
+    session_workspace_root,
+)
 
 from ..dependencies import (
     get_capability_registry,
@@ -19,11 +26,13 @@ from ..dependencies import (
 )
 
 _BRIDGED_EVENT_TYPES = (
-    "step_started",
-    "step_completed",
-    "step_failed",
-    "step_skipped",
     "agent_progress",
+    "agent_status_update",
+    "agent_run_started",
+    "agent_run_event",
+    "agent_run_completed",
+    "agent_run_failed",
+    "agent_run_cancelled",
     "tool_call_started",
     "tool_call_finished",
 )
@@ -32,6 +41,42 @@ _REGISTERED_BUS_IDS: set[int] = set()
 
 def _timestamp() -> str:
     return datetime.utcnow().isoformat()
+
+
+def _attach_workspace_context(
+    assistant_payload: dict[str, Any],
+    source_payload: dict[str, Any],
+) -> str | None:
+    """Attach trusted workspace context for websocket chat calls."""
+
+    workspace_id = str(source_payload.get("workspace_id") or "").strip()
+    if workspace_id:
+        try:
+            workspace = WorkspaceStore().get(workspace_id)
+        except WorkspaceNotFoundError:
+            return f"workspace not found: {workspace_id}"
+        assistant_payload["workspace_id"] = workspace.id
+        assistant_payload["_trusted_workspace_root"] = workspace.root_path
+        return None
+
+    session_id = str(source_payload.get("session_id") or source_payload.get("chat_session_id") or "").strip()
+    if not session_id:
+        return None
+
+    session = ChatHistoryStore().get_session(session_id)
+    bound_workspace_id = str((session or {}).get("workspace_id") or "").strip()
+    if bound_workspace_id:
+        try:
+            workspace = WorkspaceStore().get(bound_workspace_id)
+        except WorkspaceNotFoundError:
+            return f"workspace not found: {bound_workspace_id}"
+        assistant_payload["workspace_id"] = workspace.id
+        assistant_payload["_trusted_workspace_root"] = workspace.root_path
+        return None
+
+    assistant_payload["workspace_id"] = session_workspace_id(session_id)
+    assistant_payload["_trusted_workspace_root"] = str(session_workspace_root(session_id))
+    return None
 
 
 def _ws_message(
@@ -190,6 +235,16 @@ async def _handle_user_message(
         assistant_payload["session_id"] = str(session_id)
     if payload.get("persona_id"):
         assistant_payload["persona_id"] = str(payload.get("persona_id"))
+    workspace_error = _attach_workspace_context(assistant_payload, payload)
+    if workspace_error:
+        await manager.send_personal_message(
+            websocket,
+            _ws_message(
+                "assistant_response",
+                {"response": workspace_error, "error": workspace_error},
+            ),
+        )
+        return
     if memory_context:
         assistant_payload["memory_context"] = memory_context
 
@@ -237,6 +292,15 @@ async def _handle_user_message(
                 event_type="agent_progress",
             ),
         )
+        await broadcast_monitor_event(
+            "agent_progress",
+            {
+                "agent": "assistant",
+                "activity": "planning",
+                "status": "running",
+                "message": "Preparing context and contacting LLM",
+            },
+        )
         async for event in stream_fn(**assistant_payload):
             etype = event.get("type")
 
@@ -267,6 +331,7 @@ async def _handle_user_message(
                     websocket,
                     _ws_message("event", progress_data, event_type="agent_progress"),
                 )
+                await broadcast_monitor_event("agent_progress", progress_data)
                 await manager.send_to(
                     websocket,
                     _ws_message(
@@ -313,6 +378,7 @@ async def _handle_user_message(
                     websocket,
                     _ws_message("event", progress_data, event_type="agent_progress"),
                 )
+                await broadcast_monitor_event("agent_progress", progress_data)
                 await manager.send_to(
                     websocket,
                     _ws_message(
@@ -370,6 +436,15 @@ async def _handle_user_message(
                         },
                         event_type="agent_progress",
                     ),
+                )
+                await broadcast_monitor_event(
+                    "agent_progress",
+                    {
+                        "agent": "assistant",
+                        "activity": "completed",
+                        "status": "completed",
+                        "elapsed_ms": event.get("elapsed_ms"),
+                    },
                 )
                 # 兼容现有前端：仍然下发 assistant_response 携带最终文本
                 await manager.send_to(
@@ -550,7 +625,7 @@ def schedule_memory_reflection(
 
 
 def register_bus_event_bridge(bus: Any) -> None:
-    """Broadcast safe pipeline events to every connected monitor client."""
+    """Broadcast safe runtime events to every connected monitor client."""
 
     bus_id = id(bus)
     if bus_id in _REGISTERED_BUS_IDS:

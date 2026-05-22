@@ -349,13 +349,16 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 ### POST /api/tasks
 
-提交新任务。默认 `pipeline=auto` 会创建一个 Agent Run；只有显式传入非 `auto` 的 Pipeline 模板名时才走旧兼容管线路径。
+提交新任务，作为 Agent Run 的便捷入口异步执行。固定模板编排已移除，任务运行由指定 Agent 根据上下文与工具反馈自主推进。
 
 **请求体:**
 ```json
 {
   "requirement": "实现一个用户登录功能",
-  "pipeline": "code_generation_and_review"
+  "agent_name": "assistant",
+  "session_id": "chat-001",
+  "workspace_id": "login-api",
+  "input": {}
 }
 ```
 
@@ -366,7 +369,10 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
   "message": "任务已提交",
   "data": {
     "task_id": "uuid-xxx",
-    "status": "planning"
+    "status": "pending",
+    "type": "agent_run",
+    "agent_name": "assistant",
+    "workspace_id": "login-api"
   }
 }
 ```
@@ -393,7 +399,7 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 ### GET /api/tasks/{task_id}
 
-获取任务详情 (包含 plan/code/review 结果)。
+获取任务详情（包含状态、进度、最终输出、错误和 transcript 文件路径等运行信息）。
 
 **路径参数:** `task_id` — 任务 UUID
 
@@ -403,123 +409,73 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 ---
 
-## Pipeline
+## Agent Run
 
-### GET /api/pipelines/templates
+### POST /api/runs
 
-获取预定义 Pipeline 模板。
-
-**响应:**
-```json
-{
-  "status": "ok",
-  "data": [
-    {
-      "name": "code_generation_and_review",
-      "description": "代码生成与审查流水线",
-      "mode": "sequential",
-      "steps": [
-        {
-          "name": "plan",
-          "agent": "planner",
-          "capability": "planner",
-          "output_key": "plan"
-        }
-      ]
-    },
-    {
-      "name": "full_pipeline",
-      "description": "完整开发流水线：规划 → 编码 → 审查 → 修复",
-      "mode": "sequential",
-      "steps": []
-    }
-  ]
-}
-```
-
-### POST /api/pipelines/execute
-
-执行 Pipeline。
+创建自主 Agent Run 实例。
 
 **请求体:**
 ```json
 {
-  "requirement": "实现排序算法",
-  "template_name": "code_generation_and_review",
-  "options": {}
+  "goal": "实现排序算法并给出测试说明",
+  "agent_name": "assistant",
+  "session_id": "chat-001",
+  "workspace_id": "algo-demo",
+  "mode": "autonomous",
+  "strategy": "agent_decides",
+  "input": {}
 }
 ```
 
 说明:
-- `template_name` 优先级高于 `pipeline_type`
-- `input` 是 `requirement` 的别名
-- 执行器会把 `requirement` 同时注入为 `user_requirement` / `requirement` / `message`
-- 若模板步骤声明 `timeout`，超时会在对应 `step_results` 中返回失败信息
-
-Pipeline CRUD 中单个步骤支持以下字段:
-- `name`
-- `agent`
-- `input`
-- `output_key`
-- `condition`
-- `max_iterations`
-- `timeout`
+- `agent_name` 默认 `assistant`。
+- `workspace_id` 为空时系统会自动创建 `run-` 前缀工作区。
+- `strategy=agent_decides` 表示调度层不假定固定步骤，由 Agent 自主决定工具调用和下一步动作。
 
 **响应:**
 ```json
 {
   "status": "ok",
-  "message": "管线 'code_generation_and_review' 执行完成",
+  "message": "运行已创建",
   "data": {
-    "status": "completed",
-    "context": {
-      "user_requirement": "实现排序算法"
-    },
-    "step_results": [
-      {
-        "step_name": "plan",
-        "status": "completed",
-        "output": {},
-        "error": null,
-        "duration_ms": 12.5
-      }
-    ],
-    "duration_ms": 35.1
+    "run_id": "uuid-xxx",
+    "task_id": "uuid-xxx",
+    "type": "agent_run",
+    "status": "pending",
+    "agent_name": "assistant",
+    "workspace_id": "algo-demo"
   }
 }
 ```
 
-### POST /api/pipelines
+### GET /api/runs
 
-创建新的 Pipeline 模板，写入 `config/pipelines.yaml`。
+列出 Agent Run，可按 `agent_name`、`workspace_id`、`session_id`、`status` 过滤。
 
-**请求体:**
+### GET /api/runs/{run_id}
+
+获取单个运行实例详情。
+
+### GET /api/runs/{run_id}/events
+
+读取运行 transcript 事件流，支持 `offset` 查询参数。
+
+### POST /api/runs/{run_id}/control
+
+控制运行。当前支持:
+
 ```json
-{
-  "name": "quick_plan",
-  "description": "只做需求规划",
-  "mode": "sequential",
-  "steps": [
-    {
-      "name": "plan",
-      "agent": "planner",
-      "input": {
-        "requirement": "${user_requirement}"
-      },
-      "output_key": "plan",
-      "max_iterations": 1
-    }
-  ]
-}
+{ "action": "cancel" }
 ```
 
-### PUT /api/pipelines/{name}
+### DELETE /api/runs/{run_id}
 
-更新已有 Pipeline 模板。请求体字段均可选：`description`、`mode`、`steps`。
+取消运行快捷入口。
 
-### DELETE /api/pipelines/{name}
+### GET /api/runs/workspaces
 
-删除已有 Pipeline 模板。
+按工作区汇总运行数量、活跃运行数、最近更新时间和相关 Agent。
 
 ---
 
@@ -671,7 +627,7 @@ Pipeline CRUD 中单个步骤支持以下字段:
 
 ### GET /api/evolution/system-status
 
-获取当前 Agentic System Architecture / System State 聚合状态。该接口复用运行时 registry、memory store、pipeline、bus 和配置文件状态，用于进化页展示系统级架构，而不是把 assistant 或 tool 管理误认为进化本身。
+获取当前 Agentic System Architecture / System State 聚合状态。该接口复用运行时 registry、memory store、Agent Run、bus 和配置文件状态，用于进化页展示系统级架构，而不是把 assistant 或 tool 管理误认为进化本身。
 
 **响应片段:**
 ```json
@@ -683,7 +639,7 @@ Pipeline CRUD 中单个步骤支持以下字段:
       "readiness": "ready",
       "agent_count": 6,
       "tool_count": 14,
-      "pipeline_count": 3,
+      "run_count": 3,
       "model": "openai / gpt-3.5-turbo"
     },
     "components": [
@@ -703,7 +659,7 @@ Pipeline CRUD 中单个步骤支持以下字段:
 
 ### POST /api/evolution/command
 
-根据用户输入的进化目标和当前系统状态生成一条可提交给 Agentic Pipeline 的明确进化指令。生成结果会强调“先审查架构状态，再设计最小可行改造，最后测试验证”，避免把新增 Agent/Tool CRUD 当成进化本身。
+根据用户输入的进化目标和当前系统状态生成一条可提交给 Agent Run 的明确进化指令。生成结果会强调“先审查架构状态，再设计最小可行改造，最后测试验证”，避免把新增 Agent/Tool CRUD 当成进化本身。
 
 **请求体:**
 ```json
@@ -905,7 +861,7 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 
 ## Agent Run API（v2.5 默认任务模型）
 
-固定 Workflow 已废弃，Pipeline 已降级为兼容层。新任务应优先使用 Agent Run：一个 run 对应一个可多开的 agent/session/workspace/task 实例，调度层不假定固定步骤，Agent 根据上下文与工具反馈自主决定下一步。
+固定 Pipeline 已移除。当前默认任务模型是 Agent Run：一个 run 对应一个可多开的 agent/session/workspace/task 实例，调度层不假定固定步骤，Agent 根据上下文与工具反馈自主决定下一步。
 
 ### 创建运行
 
@@ -913,15 +869,12 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 
 ```json
 {
-  "goal": "优化这个项目的 UI 与实际使用体验",
+  "goal": "实现一个可测试的用户登录 API",
   "agent_name": "assistant",
-  "session_id": "session-a",
-  "workspace_id": "workspace-a",
-  "mode": "continuous",
-  "strategy": "memory_guided_agent_loop",
-  "max_iterations": 50,
-  "completion_criteria": "前端构建通过，目标工作台能展示记忆上下文和暂停/继续控制。",
-  "auto_memory": true,
+  "session_id": "chat-001",
+  "workspace_id": "login-api",
+  "mode": "autonomous",
+  "strategy": "agent_decides",
   "input": {}
 }
 ```
@@ -930,14 +883,33 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 
 ### 查询与控制
 
-- `GET /api/runs?agent_name=&workspace_id=&session_id=&status=`：列出运行实例；`status` 可为 `pending` / `running` / `paused` / `completed` / `failed` / `killed`。
+- `GET /api/runs?agent_name=&workspace_id=&session_id=&status=`：列出运行实例。
 - `GET /api/runs/{run_id}`：查看单个运行。
 - `GET /api/runs/{run_id}/events?offset=0`：读取 transcript 事件流。
-- `GET /api/runs/{run_id}/memory-context`：查看该目标召回的长期记忆、检索分数和完成标准。
-- `POST /api/runs/{run_id}/control`，body `{"action":"pause"}` / `{"action":"resume"}` / `{"action":"cancel"}`：暂停、继续或取消运行。
+- `POST /api/runs/{run_id}/control`，body `{"action":"cancel"}`：请求取消。
 - `DELETE /api/runs/{run_id}`：取消运行快捷方式。
 - `GET /api/runs/workspaces`：按工作区汇总运行。
 
-### `/api/tasks` 迁移兼容
+### `/api/tasks` 便捷入口
 
-`POST /api/tasks` 保留，但默认 `pipeline=auto` 会创建 Agent Run，不再执行固定 plan→code→review。只有显式指定 `pipeline` 为某个模板名称时，才走旧 Pipeline 兼容路径。
+`POST /api/tasks` 保留为 Agent Run 的便捷入口。请求体使用 `requirement`、`agent_name`、`session_id`、`workspace_id` 和 `input`，不再接受固定模板编排字段。
+## Project 工作区与 Agent 级配置补充（v2.6）
+
+### 工作区
+
+- `GET /api/workspaces`：列出已导入的 Project 工作区。
+- `POST /api/workspaces/import`：multipart 上传 zip，字段 `file` 必填，`name`、`description` 可选。
+- `GET /api/workspaces/{workspace_id}`：获取工作区详情，可通过 `include_files`、`depth`、`limit` 控制文件摘要。
+- `GET /api/workspaces/{workspace_id}/files?path=`：列出工作区内相对路径下的文件。
+- `GET /api/workspaces/{workspace_id}/files/content?path=`：读取工作区内文本文件。
+- `PUT /api/workspaces/{workspace_id}/files/content`：保存工作区内文本文件，body 为 `path`、`content`、`encoding`。
+
+所有工作区文件路径都是相对路径，后端会拒绝 zip-slip、绝对路径、`..`、Windows 保留名、二进制/过大文本编辑等不安全输入。外部 API 不接受 raw `workspace_root` 作为信任边界；聊天和 Agent 调用只会根据 `workspace_id`、会话绑定或服务端 Agent 配置解析可信工作区根目录。未绑定 Project 的会话会自动获得独立的 `workspace/sessions/{session_id}/` 目录。
+
+### Agent 配置
+
+- `GET /api/agents/configs`：返回所有 Agent 的配置视图，包括模型、Tools、MCP、Skills、默认工作区。
+- `GET /api/agents/{name}/config`：返回单个 Agent 配置视图。
+- `POST /api/agents` 与 `PUT /api/agents/{name}` 支持 `llm`、`model`、`tools`、`mcp_servers`、`skills`、`default_workspace_id`、`default_workspace_root`。
+
+`llm` 支持字段：`provider`、`api_key`、`model`、`base_url`、`temperature`、`top_p`、`max_tokens`、`stop_sequences`、`reasoning_effort`、`openai`、`anthropic`。未配置时继承全局 LLM；配置后该 Agent 启动时使用独立 LLM client。响应只返回 `api_key_set`，不会明文返回 Agent 独立密钥。

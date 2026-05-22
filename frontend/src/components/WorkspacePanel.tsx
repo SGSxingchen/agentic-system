@@ -11,8 +11,11 @@ import { useAppStore } from '../store/appStore'
 import type {
   ManagedWorkspace,
   WorkspaceFileContent,
-  WorkspaceFileEntry,
 } from '../types'
+import {
+  normalizeWorkspaceFileContent,
+  normalizeWorkspaceFileEntry,
+} from '../utils/workspaceContract'
 import './WorkspacePanel.css'
 
 function formatBytes(value?: number | null) {
@@ -132,13 +135,7 @@ export function WorkspacePanel() {
       if (cancelled) return
       if (res.status === 'ok' && res.data) {
         setDetail(res.data)
-        const rootChildren = (res.data.files || []).map((file) => ({
-          path: file.path,
-          name: file.name,
-          type: file.type === 'directory' ? 'directory' : 'file',
-          size: file.size,
-          updated_at: file.updated_at,
-        })) as TreeNode[]
+        const rootChildren = (res.data.files || []).map(normalizeWorkspaceFileEntry) as TreeNode[]
         setTree({
           [ROOT_PATH]: {
             loaded: true,
@@ -168,13 +165,7 @@ export function WorkspacePanel() {
       }))
       const res = await api.listWorkspaceFiles(workspaceId, dirPath)
       if (res.status === 'ok' && res.data) {
-        const children = (res.data.files || []).map((file: WorkspaceFileEntry) => ({
-          path: file.path,
-          name: file.name,
-          type: file.type === 'directory' ? 'directory' : 'file',
-          size: file.size,
-          updated_at: file.updated_at,
-        })) as TreeNode[]
+        const children = (res.data.files || []).map(normalizeWorkspaceFileEntry) as TreeNode[]
         setTree((prev) => ({
           ...prev,
           [dirPath]: { loaded: true, loading: false, expanded: true, children },
@@ -216,9 +207,10 @@ export function WorkspacePanel() {
     const res = await api.getWorkspaceFileContent(selectedId, filePath)
     setFileLoading(false)
     if (res.status === 'ok' && res.data) {
-      setFileContent(res.data)
-      setEditing(res.data.content || '')
-      setOriginalContent(res.data.content || '')
+      const normalized = normalizeWorkspaceFileContent(res.data)
+      setFileContent(normalized)
+      setEditing(normalized.content || '')
+      setOriginalContent(normalized.content || '')
     } else {
       setError(res.message || '读取文件失败')
     }
@@ -397,7 +389,7 @@ export function WorkspacePanel() {
                     {workspace.metadata?.file_count ?? '—'}
                   </span>
                   <span className="workspace-row__meta">
-                    {workspace.kind === 'managed' ? '受管理项目' : workspace.kind} ·
+                    {workspace.kind === 'project' ? '受管理项目' : workspace.kind} ·
                     {' '}
                     {formatDateTime(workspace.updated_at)}
                   </span>

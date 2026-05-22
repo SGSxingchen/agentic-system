@@ -27,7 +27,6 @@ from ..dependencies import (
     get_memory_buffer,
     get_memory_formation,
     get_memory_store,
-    get_pipeline,
     get_bus,
     reload_agent_fn,
 )
@@ -148,7 +147,7 @@ def _build_evolution_graph_payload() -> Dict[str, Any]:
             "Evolve by changing architecture deliberately, not by treating Agent/Tool CRUD as evolution itself",
             "Create or update Agents in config/agents.yaml or through /api/agents when a new role is justified",
             "Create deterministic dynamic Tools through /api/evolution/dynamic-tools only for safe template/checklist/regex_extract behavior",
-            "Use Pipeline/Task execution to validate architecture changes with tests and review",
+            "Use Agent Run and Task execution to validate architecture changes with tests and review",
         ],
     }
 
@@ -156,14 +155,6 @@ def _build_evolution_graph_payload() -> Dict[str, Any]:
 def _configured_agents() -> List[Dict[str, Any]]:
     agents = load_single_yaml("agents.yaml").get("agents", [])
     return agents if isinstance(agents, list) else []
-
-
-def _configured_pipelines() -> Dict[str, Any]:
-    data = load_single_yaml("pipelines.yaml")
-    pipelines = data.get("pipelines")
-    if isinstance(pipelines, dict):
-        return pipelines
-    return data if isinstance(data, dict) else {}
 
 
 def _skill_items() -> List[Dict[str, Any]]:
@@ -236,7 +227,7 @@ async def _memory_component(config: Dict[str, Any]) -> Dict[str, Any]:
     auto_reflection = bool(memory_config.get("auto_reflection_enabled", True))
     return {
         "id": "memory",
-        "title": "Memory / Reflection",
+        "title": "长期记忆与反思",
         "status": _safe_status(store is not None, disabled=not auto_reflection and not store),
         "summary": (
             f"{type(store).__name__ if store else 'No MemoryStore'}；"
@@ -261,7 +252,7 @@ def _agent_component(graph: Dict[str, Any]) -> Dict[str, Any]:
     agent_nodes = [node for node in graph["nodes"] if node.get("type") == "agent"]
     return {
         "id": "agents",
-        "title": "Assistants / Agents",
+        "title": "助手与智能体",
         "status": _safe_status(bool(agent_nodes), empty=not bool(agent_nodes)),
         "summary": "assistant 是协作入口之一；planner/coder/reviewer/creator 等 Agent 共同构成运行时。",
         "metrics": {
@@ -287,9 +278,9 @@ def _tool_component(graph: Dict[str, Any]) -> Dict[str, Any]:
     dynamic = [node for node in tool_nodes if node.get("type") == "dynamic_tool"]
     return {
         "id": "tools",
-        "title": "Tools / Capabilities",
+        "title": "工具与能力",
         "status": _safe_status(bool(tool_nodes), empty=not bool(tool_nodes)),
-        "summary": "Tools 是 Agent 可调用的受限能力；它们是系统组件，不等同于系统进化。",
+        "summary": "工具能力是智能体可调用的受限能力；它们是系统组件，不等同于系统进化。",
         "metrics": {"total": len(tool_nodes), "dynamic": len(dynamic), "native": len(tool_nodes) - len(dynamic)},
         "items": [
             {
@@ -300,41 +291,39 @@ def _tool_component(graph: Dict[str, Any]) -> Dict[str, Any]:
             }
             for node in sorted(tool_nodes, key=lambda item: (item.get("type", ""), item.get("id", "")))[:24]
         ],
-        "empty_state": "尚未发现 Tool；Agent 只能做纯 LLM 推理。",
+        "empty_state": "尚未发现工具能力；智能体只能进行纯模型推理。",
     }
 
 
 def _runtime_component() -> Dict[str, Any]:
     bus = get_bus()
-    pipeline = get_pipeline()
     bus_stats = bus.get_stats() if bus else {}
-    runtime_templates = pipeline.list_templates() if pipeline else {}
-    if not runtime_templates:
-        runtime_templates = _configured_pipelines()
-    template_items = []
-    for name, template in runtime_templates.items():
-        if isinstance(template, dict):
-            template_items.append(
-                {
-                    "name": name,
-                    "mode": template.get("mode", "sequential"),
-                    "description": _truncate(template.get("description", "")),
-                    "steps": len(template.get("steps", [])) if isinstance(template.get("steps"), list) else 0,
-                }
-            )
+    task_counts: Dict[str, int] = {}
+    active_runs = 0
+    try:
+        from .tasks import get_task_registry
+
+        for task in get_task_registry().list():
+            status = getattr(task.status, "value", str(task.status))
+            task_counts[status] = task_counts.get(status, 0) + 1
+            if getattr(task, "type", None) and getattr(task.type, "value", "") == "agent_run" and status not in {"completed", "failed", "killed"}:
+                active_runs += 1
+    except Exception:
+        task_counts = {}
     return {
         "id": "runtime",
-        "title": "Runtime / Orchestration",
-        "status": _safe_status(bool(bus_stats.get("running")) and pipeline is not None, empty=not bool(template_items)),
-        "summary": "UnifiedBus + Pipeline 将 Agent 与 Tool 组织为可观测的执行流。",
+        "title": "运行时与智能体运行",
+        "status": _safe_status(bool(bus_stats.get("running"))),
+        "summary": "UnifiedBus 与智能体运行将智能体和工具能力组织为可观测的执行流。",
         "metrics": {
             "bus_running": bool(bus_stats.get("running")),
             "queue_size": bus_stats.get("queue_size", 0),
             "history_size": bus_stats.get("history_size", 0),
-            "templates": len(template_items),
+            "tasks": sum(task_counts.values()),
+            "active_runs": active_runs,
         },
-        "items": template_items,
-        "empty_state": "暂无 Pipeline 模板；仍可直接调用 Agent，但缺少自动化编排。",
+        "items": [{"label": "task_status", "value": task_counts}],
+        "empty_state": "暂无运行实例；可从运行页创建智能体运行。",
     }
 
 
@@ -342,9 +331,9 @@ def _model_component(config: Dict[str, Any]) -> Dict[str, Any]:
     llm = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
     return {
         "id": "models",
-        "title": "Models / Providers",
+        "title": "模型与服务提供方",
         "status": _safe_status(bool(llm.get("model"))),
-        "summary": f"{llm.get('provider', 'openai')} / {llm.get('model') or 'model not configured'}",
+        "summary": f"{llm.get('provider', 'openai')} / {llm.get('model') or '模型未配置'}",
         "metrics": {
             "api_key_set": bool(llm.get("api_key")),
             "max_tokens": llm.get("max_tokens", 4096),
@@ -356,7 +345,7 @@ def _model_component(config: Dict[str, Any]) -> Dict[str, Any]:
             {"label": "base_url", "value": llm.get("base_url", "") or "SDK default"},
             {"label": "api_key", "value": "configured" if llm.get("api_key") else "missing"},
         ],
-        "empty_state": "模型未配置；请到设置页配置 provider/model/api key。",
+        "empty_state": "模型未配置；请到设置页配置服务提供方、模型和 API Key。",
     }
 
 
@@ -366,24 +355,24 @@ def _skills_component() -> Dict[str, Any]:
     loaded_total = sum(int(item.get("loaded_count") or 0) for item in skills)
     return {
         "id": "skills",
-        "title": "Skills / MCP Context",
+        "title": "技能与 MCP 上下文",
         "status": _safe_status(True, empty=not bool(configured)),
-        "summary": "Skills/MCP server 配置按 Agent 作用域注入，只提供上下文，不自动扩大权限。",
+        "summary": "技能与 MCP server 配置按智能体作用域注入，只提供上下文，不自动扩大权限。",
         "metrics": {
             "agents_with_skills": len(configured),
             "loaded_skills": loaded_total,
             "mcp_bindings": len(_mcp_items()),
         },
         "items": configured if configured else [],
-        "empty_state": "当前没有 Agent-scoped Skill；系统仍可通过 Tool 与 Agent 协作。",
+        "empty_state": "当前没有智能体专属技能；系统仍可通过工具能力与智能体协作。",
     }
 
 
-def _evolution_pipeline_component(graph: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+def _evolution_loop_component(graph: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     memory_config = config.get("memory", {}) if isinstance(config.get("memory"), dict) else {}
     return {
-        "id": "evolution_pipeline",
-        "title": "Evolution / Reflection Pipeline",
+        "id": "evolution_loop",
+        "title": "进化与反思闭环",
         "status": "healthy",
         "summary": "进化闭环 = 观测当前架构 → 描述目标 → 生成任务 → 修改配置/代码 → 测试验证 → 反思沉淀。",
         "metrics": {
@@ -392,7 +381,7 @@ def _evolution_pipeline_component(graph: Dict[str, Any], config: Dict[str, Any])
             "auto_reflection": bool(memory_config.get("auto_reflection_enabled", True)),
         },
         "items": [
-            {"label": "command_entry", "value": "Evolution Command"},
+            {"label": "command_entry", "value": "进化指令"},
             {"label": "safe_dynamic_modes", "value": ", ".join(graph.get("supported_dynamic_modes", []))},
             {"label": "reflection_window", "value": memory_config.get("reflection_max_messages", 12)},
         ],
@@ -404,7 +393,7 @@ def _observability_component(config: Dict[str, Any]) -> Dict[str, Any]:
     bus = get_bus()
     bus_stats = bus.get_stats() if bus else {}
     config_files = []
-    for filename in ("system.yaml", "agents.yaml", "capabilities.yaml", "pipelines.yaml"):
+    for filename in ("system.yaml", "agents.yaml", "capabilities.yaml"):
         path = PROJECT_ROOT / "config" / filename
         config_files.append({"name": filename, "exists": path.exists()})
     task_counts: Dict[str, int] = {}
@@ -418,7 +407,7 @@ def _observability_component(config: Dict[str, Any]) -> Dict[str, Any]:
         task_counts = {}
     return {
         "id": "observability",
-        "title": "Observability / Config",
+        "title": "观测与配置",
         "status": _safe_status(bool(bus_stats.get("running"))),
         "summary": "配置文件、Bus 指标和 Task 状态用于判断系统是否可安全进化。",
         "metrics": {
@@ -449,20 +438,20 @@ async def _build_system_status_payload() -> Dict[str, Any]:
         await _memory_component(config),
         _model_component(config),
         _runtime_component(),
-        _evolution_pipeline_component(graph, config),
+        _evolution_loop_component(graph, config),
         _observability_component(config),
     ]
     warning_count = sum(1 for component in components if component.get("status") in {"warning", "empty"})
     overview = {
-        "system_name": system_config.get("name", "Multi-Agent Code System"),
+        "system_name": system_config.get("name", "多智能体代码协作系统"),
         "version": system_config.get("version", "unknown"),
         "generated_at": datetime.now().isoformat(),
         "readiness": "attention_needed" if warning_count else "ready",
-        "architecture": "Agentic runtime with Agents, Tools, Memory, Skills, Models, Pipeline orchestration and Observability",
+        "architecture": "由智能体、工具能力、长期记忆、技能、模型、运行实例和观测能力组成的 Agentic 运行时",
         "agent_count": graph["summary"].get("agents", 0),
         "tool_count": graph["summary"].get("tools", 0),
         "dynamic_tool_count": graph["summary"].get("dynamic_tools", 0),
-        "pipeline_count": _runtime_component()["metrics"].get("templates", 0),
+        "run_count": _runtime_component()["metrics"].get("tasks", 0),
         "model": _model_component(config)["summary"],
     }
     return {
@@ -487,7 +476,7 @@ def _target_components(goal: str) -> List[str]:
         ("memory", ["记忆", "memory", "recall", "reflection", "反思"]),
         ("agents", ["agent", "assistant", "planner", "coder", "reviewer", "智能体"]),
         ("tools", ["tool", "capability", "工具", "能力"]),
-        ("runtime", ["pipeline", "workflow", "orchestration", "管线", "编排"]),
+        ("runtime", ["run", "task", "orchestration", "运行", "任务", "编排"]),
         ("models", ["model", "provider", "llm", "模型"]),
         ("observability", ["monitor", "observability", "config", "监控", "配置"]),
         ("skills", ["skill", "mcp", "技能"]),
@@ -501,11 +490,11 @@ def _build_command_text(goal: str, status_payload: Dict[str, Any]) -> str:
     targets = _target_components(goal)
     snapshot = "\n".join(_component_snapshot(status_payload))
     return (
-        "请作为 Agentic System Evolution 任务执行，而不是进行单纯 Agent/Tool CRUD。\n\n"
+        "请作为系统级进化任务执行，而不是进行单纯智能体/工具 CRUD。\n\n"
         f"目标：{goal.strip()}\n\n"
         "当前系统架构快照：\n"
         f"- system={overview.get('system_name')} version={overview.get('version')} readiness={overview.get('readiness')}\n"
-        f"- model={overview.get('model')} agents={overview.get('agent_count')} tools={overview.get('tool_count')} dynamic_tools={overview.get('dynamic_tool_count')} pipelines={overview.get('pipeline_count')}\n"
+        f"- 模型={overview.get('model')} 智能体={overview.get('agent_count')} 工具={overview.get('tool_count')} 动态工具={overview.get('dynamic_tool_count')} 运行实例={overview.get('run_count')}\n"
         f"{snapshot}\n\n"
         "请按以下进化流程工作：\n"
         "1. 先审查现状：确认目标涉及的系统组件、已有配置/API/页面和测试，不要假设 assistant 等于整个系统。\n"
@@ -514,7 +503,7 @@ def _build_command_text(goal: str, status_payload: Dict[str, Any]) -> str:
         "4. 按项目规范先更新相关文档，再实现代码；优先复用现有 manager/service/registry 状态，不硬编码假数据。\n"
         "5. 实现后运行必要验证：前端 build/typecheck，后端 pytest 或 compileall；记录失败与修复。\n"
         "6. 输出变更摘要、涉及文件、测试结果和后续可选演进。\n\n"
-        "验收标准：用户能从系统层面理解这次进化；Agent、Tool、Memory、Model、Pipeline、Observability 的边界保持清晰；没有破损状态或伪造运行数据。"
+        "验收标准：用户能从系统层面理解这次进化；智能体、工具、记忆、模型、运行实例和观测能力的边界保持清晰；没有破损状态或伪造运行数据。"
     )
 
 

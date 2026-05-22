@@ -1,18 +1,14 @@
 # 系统架构
 
-> 最后更新: 2026-05-09 | 与 AGENTS.md 保持一致
+> 最后更新: 2026-04-26 | 与 CLAUDE.md 保持一致
 >
-> ✅ **编排层 v2 Phase A + B + C 已落地（2026-04-26）**：Agent 反应式工具循环底盘 +
-> Task 抽象 + Pipeline 替换 Workflow + 非阻塞子 Agent 派生 + `<task-notification>` 回注 +
-> 工具元数据驱动并发 / 权限 / 预算闸门 + 可选 git worktree 隔离。
-> 详见 [`./orchestrator-v2.md`](./orchestrator-v2.md) §11；CLAUDE.md §3.5 / §3.8 / §3.9 是当前实现的权威描述。
-> 本文档的"编排"和"数据流"章节描述的是历史 v1 视角，整体重写待 Phase D 后一并处理。
+> ✅ **编排层已迁移到 Agent Run**：固定 Pipeline / YAML 模板编排已移除，当前生产路径以
+> Agent 反应式工具循环 + Task/Run 抽象 + transcript 事件流 + 可选 git worktree 隔离为核心。
+> `docs/orchestrator-v2.md` 中与 Pipeline 相关内容仅作为历史演进记录保留。
 >
 > 🧠 **记忆层 v2 设计中**：私人助理式全局长期记忆方案见
 > [`./superpowers/specs/2026-04-26-private-assistant-memory-lite-design.md`](./superpowers/specs/2026-04-26-private-assistant-memory-lite-design.md)。
 > 该方案不做 session/persona 隔离，重点补齐自动形成、结构化摘要、可解释召回和遗忘巩固。
->
-> ✅ **目标工作台 v2.6 已落地（2026-05-09）**：Workflow 已废弃，Pipeline 仅保留兼容层；默认任务模型是 `Agent Run` 的 `continuous` 模式，支持完成标准、最大迭代、暂停/继续/终止和目标级记忆上下文查询。
 
 ## 架构总览
 
@@ -21,13 +17,13 @@
 │                 前端 (React / TypeScript)             │
 │                                                       │
 │  ChatPanel │ TaskPanel │ AgentPanel │ MemoryPanel     │
-│  PipelinePanel │ MonitorPanel │ Settings │ Sidebar    │
+│  PersonaPanel │ MonitorPanel │ Settings │ Sidebar     │
 └──────────────────────┬────────────────────────────────┘
                        │ HTTP REST / WebSocket
 ┌──────────────────────▼────────────────────────────────┐
 │               FastAPI 服务层 (Port 8001)               │
 │                                                        │
-│  Routes: tasks │ agents │ pipelines │ memory │ config  │
+│  Routes: tasks/runs │ agents │ memory │ config         │
 │  WebSocket Handler │ Dependencies (DI)                 │
 │  Pydantic Schemas │ CORS Middleware                    │
 └──────────────────────┬─────────────────────────────────┘
@@ -42,9 +38,9 @@
     │          │          │          │
     ▼          ▼          ▼          ▼
 ┌────────┐ ┌────────┐ ┌────────┐ ┌──────────────┐
-│Pipeline│ │ Memory │ │Context │ │ Capability   │
-│ Engine │ │ System │ │ Store  │ │ Registry     │
-│(编排)  │ │(记忆)  │ │(上下文)│ │(能力插件)    │
+│Run/Task│ │ Memory │ │Context │ │ Capability   │
+│Manager │ │ System │ │ Store  │ │ Registry     │
+│(调度)  │ │(记忆)  │ │(上下文)│ │(能力插件)    │
 └───┬────┘ └────────┘ └────────┘ └──────────────┘
     │
     ▼
@@ -92,9 +88,9 @@
 
 内部由 EventChannel、RequestChannel、BroadcastChannel、MessageRouter 四个子组件协作。使用 asyncio.PriorityQueue 实现优先级消息处理。
 
-### Pipeline 编排（兼容层）
+### Agent Run 调度
 
-`core.pipeline.Pipeline` 是旧多步骤模板执行器。它从 `config/pipelines.yaml` 读取模板，通过 `CapabilityRegistry` 调用 Agent 或 Tool，并把步骤开始、完成、失败、跳过等事件发到 UnifiedBus，供 WebSocket 和监控面板消费。它不再是默认任务模型，只服务历史演示、迁移和显式指定的兼容管线。
+当前多步骤执行入口已经收敛为 Agent Run。`routes/tasks.py` 创建运行实例并写入 `TaskRegistry`，运行过程通过 transcript JSONL 记录 created、started、thinking、tool_call、tool_result、done/error 等事件，并通过 UnifiedBus / WebSocket 推送给运行页和监控页。
 
 ### 智能体系统
 
@@ -151,14 +147,13 @@ Tool 提示词覆盖层只修改 `CapabilitySchema.description`，也就是模�
 
 联网工具 (`web_fetch` / `web_search`) 只允许访问公网 HTTP(S) 目标。请求前和重定向后都要拒绝 loopback、内网、link-local、保留地址和未指定地址，避免 Agent 通过工具访问本机服务、局域网或云 metadata 地址。网络 I/O 必须放到线程或异步 HTTP 客户端中执行，不能阻塞 FastAPI 的事件循环。
 
-### Pipeline 执行保障（兼容层）
+### Agent Run 执行保障
 
-Pipeline 模板在 `config/pipelines.yaml` 中定义。
-
-当前执行器具备两项关键运行时保障:
-- 支持步骤级 `timeout`，单步超时后会返回失败状态，避免管线无限卡住。
-- 支持递归变量解析，`input` 中的 dict / list / tuple 都可以安全引用 `${upstream_output}`。
-- 当前主执行入口是 Agent Run；历史 `WorkflowOrchestrator` 已废弃，`Pipeline` 仅在显式兼容路径中使用。调度当前通用 Agent 时必须通过 Agent/Capability 兼容层执行，不能依赖已移除的旧 `process()` 子类实现。
+当前运行器具备以下关键运行时保障:
+- 每个 Run 有独立 `run_id/task_id`、`agent_name`、`session_id`、`workspace_id`、状态、进度和输出。
+- 运行 transcript 落盘到工作区，可由 `/api/runs/{run_id}/events` 增量读取。
+- 支持取消控制，终态会记录为 completed / failed / killed。
+- 调度层不读取固定步骤，不再维护 YAML 模板执行器。
 
 ### 配置管理
 
@@ -179,7 +174,7 @@ lifespan() 初始化顺序:
 4. CapabilityRegistry     → 能力系统
 5. init_memory_system()   → 记忆系统
 6. reload_agent()         → Agent 创建 + 注册
-7. Pipeline               → 从 `config/pipelines.yaml` 加载模板
+7. Task/Run registry      → 准备 Agent Run 调度与 transcript 存储
 ```
 
 所有子系统都有 fallback 机制：config/ 缺失时回退到硬编码默认值。
@@ -191,11 +186,11 @@ lifespan() 初始化顺序:
 用户消息 → WebSocket Handler → assistant capability
 → 仅向当前连接返回 assistant_response
 
-Pipeline 执行 → bus.publish(step_started / step_completed)
-→ WebSocket 事件桥接 → 广播到监控面板
+Agent Run 执行 → bus.publish(agent_progress / agent_done / agent_error)
+→ WebSocket 事件桥接 → 广播到运行页和监控面板
 ```
 
-### 任务流水线
+### 任务运行
 ```
 提交任务 → POST /api/tasks → bus.publish(plan_request)
 → PlannerAgent → bus.publish(plan_created)
@@ -205,15 +200,15 @@ Pipeline 执行 → bus.publish(step_started / step_completed)
 
 ## 进化中心：系统架构仪表盘
 
-进化页面的产品定位是 **Agentic System Architecture Dashboard + Evolution Command Center**。它不再把 assistant、Agent CRUD 或 Tool CRUD 作为“进化”本身，而是先聚合展示当前系统状态：Agents、Tools、Skills/MCP、Memory/Reflection、Models/Providers、Runtime/Pipeline、Evolution Pipeline 和 Observability/Config。
+进化页面的产品定位是 **Agentic System Architecture Dashboard + Evolution Command Center**。它不再把 assistant、Agent CRUD 或 Tool CRUD 作为“进化”本身，而是先聚合展示当前系统状态：Agents、Tools、Skills/MCP、Memory/Reflection、Models/Providers、Runtime/Agent Run、Evolution Loop 和 Observability/Config。
 
-后端通过 `GET /api/evolution/system-status` 复用运行时注册中心、配置、记忆、管线和总线指标生成状态摘要；通过 `POST /api/evolution/command` 将用户目标与当前状态快照合成为可提交给任务管线的进化指令。原有动态 Tool 和 Tool prompt 接口继续作为组件维护能力保留。
+后端通过 `GET /api/evolution/system-status` 复用运行时注册中心、配置、记忆、运行实例和总线指标生成状态摘要；通过 `POST /api/evolution/command` 将用户目标与当前状态快照合成为可提交给 Agent Run 的进化指令。原有动态 Tool 和 Tool prompt 接口继续作为组件维护能力保留。
 
 ---
 
 ## v2.5 Agent Run 调度架构
 
-系统默认编排从固定 Pipeline 迁移为 Agent Run。Pipeline 的问题是把步骤顺序写在模板里，适合演示固定 plan/code/review，却不适合多 agent、多 session、多 workspace 并发工作，也不适合让 Agent 根据工具结果自主改变策略。
+系统默认编排已从固定 Pipeline 迁移为 Agent Run。旧固定模板的问题是把步骤顺序写在调度层，适合演示固定 plan/code/review，却不适合多 agent、多 session、多 workspace 并发工作，也不适合让 Agent 根据工具结果自主改变策略。
 
 Agent Run 的核心抽象：
 
@@ -224,12 +219,8 @@ RunInstance = {
   session_id,
   workspace_id,
   goal,
-  mode: continuous,
-  strategy: memory_guided_agent_loop,
-  max_iterations,
-  completion_criteria,
-  auto_memory,
-  iteration,
+  mode: autonomous,
+  strategy: agent_decides,
   status,
   progress,
   transcript,
@@ -237,16 +228,10 @@ RunInstance = {
 }
 ```
 
-调度层职责收敛为：创建实例、分配隔离 workspace、设置 contextvars、启动 Agent tool-use loop、落盘 transcript、广播 monitor 事件、支持暂停/继续/取消。它不读取固定步骤、不推断 plan/code/review 顺序，也不把 tool 调用伪装成流水线步骤。
+调度层职责收敛为：创建实例、分配隔离 workspace、设置 contextvars、启动 Agent tool-use loop、落盘 transcript、广播 monitor 事件、支持取消。它不读取固定步骤、不推断 plan/code/review 顺序，也不把 tool 调用伪装成流水线步骤。
 
-兼容边界：
+移除边界：
 
-- `core.pipeline.Pipeline`、`/api/pipelines/*` 和 YAML pipeline 模板保留，用于旧演示与迁移。
-- `/api/tasks` 默认 `pipeline=auto` 已映射到 Agent Run；显式 `pipeline=<template>` 才进入旧 Pipeline。
-- 前端“目标工作台”展示多个并行 Agent Run、完成标准、迭代状态、控制动作和目标级记忆上下文；“兼容管线”页面只服务历史模板。
-
-## v2.6 目标工作台与持续工作
-
-Agent Run 默认进入 `continuous` 模式，策略标记为 `memory_guided_agent_loop`。创建运行时可传 `completion_criteria`、`max_iterations` 和 `auto_memory`。`TaskState` 记录当前 `iteration`，状态机新增 `paused`；暂停/继续通过 `POST /api/runs/{run_id}/control` 完成。
-
-`GET /api/runs/{run_id}/memory-context` 使用 `MemoryRetriever.retrieve_with_scores()` 返回本目标相关长期记忆及检索解释，供前端目标工作台展示“记忆如何参与当前目标”。Pipeline/Workflow 不再作为主线体验。
+- 固定 Pipeline、`/api/pipelines/*`、`config/pipelines.yaml` 和前端 PipelinePanel 已从现行系统移除。
+- `/api/tasks` 是 Agent Run 的便捷入口，不再接受模板编排字段。
+- 前端“运行”页面展示多个并行 Agent Run；监控页按唯一 Agent 聚合展示运行进展。

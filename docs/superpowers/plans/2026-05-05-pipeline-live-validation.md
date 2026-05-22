@@ -1,5 +1,7 @@
 # Pipeline Live Validation Implementation Plan
 
+> 历史记录（2026-05-12）：本文是 2026-05-05 的旧 Pipeline 验收计划。当前现行系统已移除固定 Pipeline、`/api/pipelines/*`、`config/pipelines.yaml` 和 `PipelinePanel`，默认任务模型为 Agent Run。以下内容仅作为历史演进记录保留。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Synchronize live validation and public project docs with the current Pipeline API.

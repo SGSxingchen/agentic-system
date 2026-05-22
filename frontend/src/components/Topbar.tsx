@@ -96,7 +96,7 @@ export function Topbar({ pageTitle }: TopbarProps) {
             >
               <strong>{workspace.name}</strong>
               <span>
-                {workspace.kind === 'managed' ? '受管理项目' : workspace.kind}
+                {workspace.kind === 'project' ? '受管理项目' : workspace.kind}
                 {workspace.metadata?.file_count != null
                   ? ` · ${workspace.metadata.file_count} 个文件`
                   : ''}

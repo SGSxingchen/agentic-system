@@ -180,7 +180,7 @@ export function RunsPanel() {
     }
   }
 
-  const handleControl = async (runId: string, action: 'pause' | 'resume' | 'cancel') => {
+  const handleControl = async (runId: string, action: 'cancel') => {
     const res = await api.controlRun(runId, action)
     if (res.status !== 'ok') {
       setError(res.message || '操作失败')
@@ -392,25 +392,6 @@ export function RunsPanel() {
                 <span className="console-card__title">运行详情</span>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {selectedRun.status === 'running' && (
-                    <button
-                      type="button"
-                      className="btn-sm"
-                      onClick={() => handleControl(selectedRun.id, 'pause')}
-                    >
-                      暂停
-                    </button>
-                  )}
-                  {selectedRun.status === 'paused' && (
-                    <button
-                      type="button"
-                      className="btn-sm"
-                      onClick={() => handleControl(selectedRun.id, 'resume')}
-                    >
-                      恢复
-                    </button>
-                  )}
-                  {(selectedRun.status === 'running' ||
-                    selectedRun.status === 'paused') && (
                     <button
                       type="button"
                       className="btn-danger btn-sm"

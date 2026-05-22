@@ -104,7 +104,7 @@ class TestScenario1Chat:
         """通过 /api/tasks 提交任务，验证任务创建成功"""
         resp = api_post(
             "/api/tasks",
-            {"requirement": "解释 Python 的装饰器", "pipeline": "auto"},
+            {"requirement": "解释 Python 的装饰器"},
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -255,63 +255,6 @@ class Stack:
             f"severity: {data['severity']}, "
             f"issues: {len(data.get('issues', []))}, "
             f"suggestions: {len(data.get('suggestions', []))}"
-        )
-
-
-# ─── 场景五：完整 Pipeline ────────────────────────────────
-
-
-class TestScenario5Pipeline:
-    """场景五：完整 Pipeline — 代码生成→审查流水线"""
-
-    def test_pipeline_execute(self):
-        """执行 code_generation_and_review Pipeline，验证完整流水线"""
-        resp = api_post(
-            "/api/pipelines/execute",
-            {
-                "template_name": "code_generation_and_review",
-                "input": "实现一个 Python 的 LRU Cache，使用 OrderedDict，支持 get 和 put 操作，容量限制为构造参数",
-            },
-            timeout=300,  # Pipeline 涉及多次 LLM 调用
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "ok"
-
-        data = body["data"]
-        assert data.get("status") == "completed", f"Pipeline 未完成: {data.get('status')}"
-
-        step_results = data.get("step_results", [])
-        assert len(step_results) >= 3, f"Pipeline 步骤不足 ({len(step_results)})"
-
-        # 验证各步骤
-        step_names = [tr["step_name"] for tr in step_results]
-        assert "plan" in step_names, "缺少 plan 步骤"
-        assert "code" in step_names, "缺少 code 步骤"
-        assert "review" in step_names, "缺少 review 步骤"
-
-        # 验证 plan 步骤完成
-        plan_step = next(tr for tr in step_results if tr["step_name"] == "plan")
-        assert plan_step["status"] == "completed", f"plan 步骤失败: {plan_step.get('error')}"
-
-        # 验证 code 步骤完成
-        code_step = next(tr for tr in step_results if tr["step_name"] == "code")
-        assert code_step["status"] == "completed", f"code 步骤失败: {code_step.get('error')}"
-        assert code_step.get("output", {}).get("code"), "code 步骤未生成代码"
-
-        # 验证 review 步骤完成
-        review_step = next(tr for tr in step_results if tr["step_name"] == "review")
-        assert review_step["status"] == "completed", f"review 步骤失败: {review_step.get('error')}"
-
-        # fix 步骤可能被跳过（如果审查通过）
-        fix_step = next((tr for tr in step_results if tr["step_name"] == "fix"), None)
-        if fix_step:
-            assert fix_step["status"] in ("completed", "skipped"), f"fix 步骤异常: {fix_step['status']}"
-
-        durations = {tr["step_name"]: tr["duration_ms"] for tr in step_results}
-        print(
-            f"✅ 场景五通过 — 步骤: {step_names}, "
-            f"总耗时: {data.get('duration_ms', 0):.0f}ms"
         )
 
 
@@ -477,7 +420,6 @@ def run_all_scenarios():
         ("场景二：任务规划", TestScenario2Planner, "test_planner_invoke"),
         ("场景三：代码生成", TestScenario3Coder, "test_coder_invoke"),
         ("场景四：代码审查", TestScenario4Reviewer, "test_reviewer_invoke"),
-        ("场景五：完整 Pipeline", TestScenario5Pipeline, "test_pipeline_execute"),
         ("场景六：记忆系统", TestScenario6Memory, "test_memory_create_and_search"),
         ("场景七：WebSocket", TestScenario7WebSocket, "test_websocket_connection"),
         ("场景八：健康检查", TestScenario8HealthAndAgents, "test_health"),

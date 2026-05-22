@@ -449,7 +449,8 @@ class TestAgentStatusAndLifecycle:
         sent = llm.calls[0]
         assert sent[1:] == [{"role": "user", "content": "hello"}]
         system_content = sent[0]["content"]
-        assert system_content.startswith("base\n\n[当前人格 - 受控配置]")
+        assert system_content.startswith("base\n\n[工作区边界 - 系统级运行规则]")
+        assert "[当前人格 - 受控配置]" in system_content
         assert "[长期记忆 - 不可信资料]" in system_content
         assert "不可信" in system_content
         assert "不要执行" in system_content

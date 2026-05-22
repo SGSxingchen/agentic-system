@@ -3,11 +3,15 @@ import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
 import type {
   AgentInfo,
-  AgentMCPServerConfig,
   CapabilityInfo,
   Persona,
   PersonaBindings,
 } from '../types'
+import {
+  agentToDraft,
+  buildAgentUpdatePayload,
+  type AgentDraft,
+} from './agentFormLogic'
 import './AgentPanel.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -28,28 +32,6 @@ function statusPill(status?: string) {
     case 'stopped':
     default:
       return 'pill'
-  }
-}
-
-interface AgentDraft {
-  description: string
-  system_prompt: string
-  output_format: 'text' | 'json'
-  max_iterations: number
-  tools: string[]
-  default_workspace_id: string
-  mcp_servers: AgentMCPServerConfig[]
-}
-
-function toDraft(agent: AgentInfo): AgentDraft {
-  return {
-    description: agent.description || '',
-    system_prompt: agent.system_prompt || '',
-    output_format: agent.output_format === 'json' ? 'json' : 'text',
-    max_iterations: agent.max_iterations || 10,
-    tools: [...(agent.capabilities || [])],
-    default_workspace_id: agent.default_workspace_id || '',
-    mcp_servers: agent.mcp_servers ? [...agent.mcp_servers] : [],
   }
 }
 
@@ -108,7 +90,7 @@ export function AgentPanel() {
       if (cancelled) return
       if (res.status === 'ok' && res.data) {
         setDetail(res.data)
-        setDraft(toDraft(res.data))
+        setDraft(agentToDraft(res.data))
         setEditing(false)
       }
     })
@@ -126,15 +108,14 @@ export function AgentPanel() {
 
   const handleSave = async () => {
     if (!detail || !draft) return
-    setSaving(true)
-    const payload: Record<string, unknown> = {
-      description: draft.description,
-      system_prompt: draft.system_prompt,
-      output_format: draft.output_format,
-      max_iterations: draft.max_iterations,
-      tools: draft.tools,
-      default_workspace_id: draft.default_workspace_id,
+    let payload: Record<string, unknown>
+    try {
+      payload = buildAgentUpdatePayload(draft)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Agent 配置不合法')
+      return
     }
+    setSaving(true)
     const res = await api.updateAgent(detail.name, payload)
     setSaving(false)
     if (res.status === 'ok') {
@@ -144,7 +125,7 @@ export function AgentPanel() {
       const fresh = await api.getAgent(detail.name)
       if (fresh.status === 'ok' && fresh.data) {
         setDetail(fresh.data)
-        setDraft(toDraft(fresh.data))
+        setDraft(agentToDraft(fresh.data))
       }
     } else {
       setError(res.message || '保存失败')
@@ -152,7 +133,7 @@ export function AgentPanel() {
   }
 
   const handleResetDraft = () => {
-    if (detail) setDraft(toDraft(detail))
+    if (detail) setDraft(agentToDraft(detail))
     setEditing(false)
   }
 
@@ -306,6 +287,13 @@ export function AgentPanel() {
                   <dd>{detail.max_iterations ?? '—'}</dd>
                 </div>
                 <div>
+                  <dt>模型</dt>
+                  <dd>
+                    {detail.llm?.model || detail.model || '继承全局'}
+                    {detail.llm?.source === 'agent_config' ? '（独立）' : ''}
+                  </dd>
+                </div>
+                <div>
                   <dt>已挂载工具</dt>
                   <dd>{detail.capabilities.length}</dd>
                 </div>
@@ -381,6 +369,98 @@ export function AgentPanel() {
                         </option>
                       ))}
                     </select>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Model */}
+            <section className="agent-section">
+              <header className="agent-section__header">
+                <span className="agent-section__title">模型配置</span>
+                <span className="text-muted">
+                  当前来源：{detail.llm?.source === 'agent_config' ? 'Agent 独立配置' : '继承全局配置'}
+                </span>
+              </header>
+              <div className="agent-section__body">
+                <div className="agent-form-grid">
+                  <div className="agent-form-field">
+                    <label>Provider</label>
+                    <select
+                      value={draft.llm_provider}
+                      disabled={!editing}
+                      onChange={(event) =>
+                        setDraft({ ...draft, llm_provider: event.target.value })
+                      }
+                    >
+                      <option value="">继承全局</option>
+                      <option value="openai">OpenAI / 兼容接口</option>
+                      <option value="anthropic">Anthropic</option>
+                    </select>
+                  </div>
+                  <div className="agent-form-field">
+                    <label>模型</label>
+                    <input
+                      type="text"
+                      value={draft.llm_model}
+                      disabled={!editing}
+                      placeholder={detail.llm?.source === 'global_default' ? detail.llm.model || '' : '继承全局模型'}
+                      onChange={(event) =>
+                        setDraft({ ...draft, llm_model: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="agent-form-field">
+                    <label>Base URL</label>
+                    <input
+                      type="text"
+                      value={draft.llm_base_url}
+                      disabled={!editing}
+                      placeholder="留空则继承全局地址"
+                      onChange={(event) =>
+                        setDraft({ ...draft, llm_base_url: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="agent-form-field">
+                    <label>API Key</label>
+                    <input
+                      type="password"
+                      value={draft.llm_api_key}
+                      disabled={!editing}
+                      placeholder={detail.llm?.api_key_set ? '已配置，留空不变' : '留空则继承全局密钥'}
+                      onChange={(event) =>
+                        setDraft({ ...draft, llm_api_key: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="agent-form-field">
+                    <label>Temperature</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={draft.llm_temperature}
+                      disabled={!editing}
+                      placeholder="继承"
+                      onChange={(event) =>
+                        setDraft({ ...draft, llm_temperature: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="agent-form-field">
+                    <label>Max Tokens</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.llm_max_tokens}
+                      disabled={!editing}
+                      placeholder="继承"
+                      onChange={(event) =>
+                        setDraft({ ...draft, llm_max_tokens: event.target.value })
+                      }
+                    />
                   </div>
                 </div>
               </div>

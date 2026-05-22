@@ -4,7 +4,7 @@
 
 ## 项目简介
 
-本系统采用**统一消息总线 + Pipeline 编排的多智能体协作架构**，实现从需求分析到代码生成再到自动审查的全流程自动化。系统包含助手、规划、编码、审查等核心智能体，通过统一能力注册表互相协作，支持 YAML 配置驱动的 Pipeline 编排，并配备长期记忆系统（情景/语义/程序三种记忆类型）。
+本系统采用**统一消息总线 + Agent Run 多实例调度的多智能体协作架构**，实现从需求分析到代码生成再到自动审查的全流程自动化。系统包含助手、规划、编码、审查等核心智能体，通过统一能力注册表互相协作，支持按 Agent、会话、工作区维度创建独立运行实例，并配备长期记忆系统（情景/语义/程序三种记忆类型）。
 
 前后端分离设计：后端基于 FastAPI + Python asyncio，前端基于 React + TypeScript + Vite，通过 REST API 和 WebSocket 实时通信。
 
@@ -13,7 +13,7 @@
 本项目的差异化定位不是单个固定聊天机器人，而是一个**可进化的私人助理运行时**：
 
 - **主 Agent 调度子 Agent**：`assistant` 是主控 Agent，`planner`、`coder`、`reviewer` 等子 Agent 会被包装成标准 Tool，主 Agent 可按需委派任务。
-- **Agent 即能力**：系统通过 `AgentCapability` 将任意 Agent 注册到统一能力注册表，因此 Pipeline 和其他 Agent 不需要区分“工具”还是“智能体”。
+- **Agent 即能力**：系统通过 `AgentCapability` 将任意 Agent 注册到统一能力注册表，因此主 Agent 可以把其他 Agent 当作标准能力委派。
 - **运行时装载新 Tool**：新增 `DynamicToolCapability`，支持 `template`、`checklist`、`regex_extract` 三种安全动态工具，可通过 API/前端创建，无需写 Python 插件。
 - **能力热挂载**：动态 Tool 创建后可立即挂载到 `assistant` 或其他 Agent，并触发 Agent 热重载。
 - **Tool 提示词可视化配置**：网页可直接修改暴露给 LLM 的 Tool 提示词，JSON Schema 只读，避免误改工具入参协议。
@@ -44,7 +44,7 @@
 
 ```
 agentic-system/
-├── config/                         # YAML 配置 (agents/pipelines/capabilities/system)
+├── config/                         # YAML 配置 (agents/capabilities/system)
 ├── backend/
 │   ├── src/
 │   │   ├── agents/                 # 4 个智能体 (assistant/planner/coder/reviewer)
@@ -53,7 +53,7 @@ agentic-system/
 │   │   │   ├── bus/                #   统一消息总线 (UnifiedBus)
 │   │   │   ├── memory/             #   长期记忆系统
 │   │   │   ├── capability/         #   能力插件系统
-│   │   │   ├── pipeline/           #   Pipeline 编排器
+│   │   │   ├── task/               #   Agent Run / 任务运行状态
 │   │   │   ├── context/            #   上下文管理
 │   │   │   ├── llm/                #   LLM 客户端 (OpenAI/Anthropic)
 │   │   │   └── config.py           #   配置管理
@@ -63,7 +63,7 @@ agentic-system/
 │   └── requirements.txt
 ├── frontend/
 │   └── src/
-│       ├── components/             # 9 个面板 (Chat/Agent/Task/Pipeline/Memory/Monitor/Evolution/Settings/Sidebar)
+│       ├── components/             # 9 个面板 (Chat/Agent/Task/Memory/Monitor/Evolution/Persona/Settings/Sidebar)
 │       ├── hooks/                  # WebSocket Hook
 │       ├── store/                  # 全局状态管理
 │       └── api/                    # API 客户端
@@ -85,10 +85,10 @@ agentic-system/
 - **ReviewerAgent** — 代码审查，六维度评估（正确性/安全性/可维护性/性能/最佳实践/错误处理）
 - **Agent-as-Tool** — 任意 Agent 可被包装成 Capability，供主 Agent 或其他 Agent 调用
 
-### 📡 消息总线 & Pipeline 监控
+### 📡 消息总线 & 运行监控
 - **UnifiedBus** — 统一消息总线，支持发布/订阅、请求/响应、广播、点对点
 - 优先级队列、消息历史、运行指标统计
-- Pipeline 执行过程可通过总线广播 step_started / step_completed 等监控事件
+- Agent Run 执行过程会广播 agent_progress、agent_done、agent_error 等监控事件
 
 ### 🧠 长期记忆系统
 - 三种记忆类型：情景记忆 / 语义记忆 / 程序性记忆
@@ -106,23 +106,23 @@ agentic-system/
 - 动态能力：通过配置/API 创建 `template`、`checklist`、`regex_extract` Tool，并热挂载到 Agent
 - Tool 提示词管理：可编辑 LLM-facing prompt，JSON Schema 只读
 
-### 🔄 Pipeline 编排
-- 顺序执行、并行执行、YAML 配置驱动
-- 预定义 Pipeline 模板（规划→编码→审查→修复）
-- 分层上下文存储（全局/会话/智能体三层）
+### 🔄 Agent Run 调度
+- 每次运行都是独立实例，包含 agent、session、workspace、目标、状态、进度和 transcript
+- 调度层只负责创建实例、隔离工作区、记录事件、广播状态和取消
+- Agent 根据上下文与工具反馈自主决定下一步，不再依赖固定模板步骤
 
 ### 🌐 WebSocket 实时通信
 - 对话响应只回发到当前连接，避免不同浏览器会话互相串消息
-- Pipeline 监控事件单独广播到监控面板，不混入聊天回复
+- Agent Run 监控事件单独广播到监控面板，不混入聊天回复
 - 所有推送消息统一附带时间戳，便于前端事件流展示
 
 ### 🖥️ 前端界面 (9 个面板)
 - **ChatPanel** — 聊天气泡界面，显示记忆使用指示
 - **AgentPanel** — 智能体状态查看与直接调用
-- **TaskPanel** — 任务提交与状态跟踪
-- **PipelinePanel** — 管线模板选择与执行
-- **MemoryPanel** — 记忆统计/列表/搜索/创建/删除
-- **MonitorPanel** — 系统状态可视化
+- **TaskPanel** — Agent Run 创建、列表、状态跟踪与 transcript 查看
+- **MemoryPanel** — 记忆统计、列表、搜索、创建、删除、设置与遗忘周期推进
+- **MonitorPanel** — 按 Agent 聚合的运行进展与实时事件流
+- **PersonaPanel** — 人格定义、版本、绑定与审核式迭代
 - **Settings** — LLM 配置面板（支持热重载）
 - **Sidebar** — 侧边栏导航
 - **EvolutionPanel** — 进化中心：能力网络可视化、动态 Tool 创建、子 Agent 创建
@@ -283,7 +283,6 @@ python scripts/verify_memory_persistence.py
 | 文件 | 用途 |
 |------|------|
 | `config/agents.yaml` | 智能体定义 (名称/类型/能力) |
-| `config/pipelines.yaml` | Pipeline 模板 |
 | `config/capabilities.yaml` | 能力插件 |
 | `config/system.yaml` | 全局系统配置 |
 
@@ -330,7 +329,6 @@ python3 -m pytest backend/tests/ -v --tb=short
 | 配置管理 | `test_config.py` | 配置加载 / 环境变量 / YAML 合并 |
 | 上下文 | `test_context.py` | 分层存储 |
 | 记忆系统 | `test_memory.py` | 存储 / 检索 / 巩固 / 遗忘 |
-| Pipeline | `test_pipeline.py` | 顺序 / 并行 / 条件 / 超时执行 |
 | 任务注册 | `test_task_registry.py` | 任务状态、排序、取消 |
 | Transcript | `test_transcript_writer.py` | 任务事件落盘 |
 | Live 脚本契约 | `test_api_live_script.py` | 本地验收脚本端点契约 |
@@ -357,15 +355,17 @@ python3 -m pytest backend/tests/ -v --tb=short
 | GET | `/api/tasks/{task_id}` | 获取任务详情 |
 | DELETE | `/api/tasks/{task_id}` | 取消/删除任务 |
 
-### Pipeline
+### Agent Run
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/pipelines/templates` | 获取预定义 Pipeline 模板 |
-| POST | `/api/pipelines/execute` | 执行 Pipeline |
-| POST | `/api/pipelines` | 创建 Pipeline 模板 |
-| PUT | `/api/pipelines/{name}` | 更新 Pipeline 模板 |
-| DELETE | `/api/pipelines/{name}` | 删除 Pipeline 模板 |
+| POST | `/api/runs` | 创建自主运行实例 |
+| GET | `/api/runs` | 按 agent/session/workspace/status 查询运行 |
+| GET | `/api/runs/{run_id}` | 获取运行详情 |
+| GET | `/api/runs/{run_id}/events` | 读取 transcript 事件流 |
+| POST | `/api/runs/{run_id}/control` | 控制运行（当前支持 cancel） |
+| DELETE | `/api/runs/{run_id}` | 取消运行 |
+| GET | `/api/runs/workspaces` | 按工作区汇总运行 |
 
 ### 记忆系统
 
@@ -401,10 +401,9 @@ python3 -m pytest backend/tests/ -v --tb=short
 |------|----------|
 | **聊天面板** | 用户与 AI 的对话界面，显示聊天气泡，支持记忆使用指示 |
 | **智能体面板** | 列出所有已注册的智能体，查看状态和能力列表，可直接调用 |
-| **任务面板** | 提交开发需求，触发 规划→编码→审查 流水线，跟踪任务状态 |
-| **管线面板** | 选择预设 Pipeline 模板 (如完整流水线)，配置参数后执行 |
-| **记忆面板** | 查看记忆统计 (三种类型分布)，列表浏览，搜索，手动创建/删除 |
-| **监控面板** | 系统实时状态，WebSocket 连接状态，事件流日志 |
+| **任务面板** | 创建并跟踪 Agent Run，查看状态、进度、最终输出和 transcript |
+| **记忆面板** | 查看记忆统计、列表、搜索、设置、手动创建/删除和遗忘周期推进 |
+| **监控面板** | 系统实时状态，按 Agent 聚合运行进展，查看事件流日志 |
 | **设置面板** | LLM 提供商切换，API Key 配置，模型选择，自定义 base_url |
 
 ---

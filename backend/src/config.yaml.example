@@ -62,7 +62,7 @@ memory:
   recall_score_threshold: 0.0
   fallback_to_memory_on_error: true
   consolidation_threshold: 0.3
-  forget_after_days: 30
+  forget_after_days: 1
   forget_min_importance: 0.3
 
 # 消息总线配置
@@ -73,11 +73,6 @@ bus:
 # 上下文管理配置
 context:
   persist_dir: "./data/context"
-
-# 管线配置
-pipeline:
-  max_iterations: 10
-  default_timeout: 300.0
 
 # 智能体配置
 agents:
