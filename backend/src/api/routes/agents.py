@@ -49,6 +49,7 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 PROTECTED_AGENT_NAMES = {
     *DEFAULT_BINDABLE_AGENT_ROLES,
+    "agent_manager",
     "persona_evolution",
 }
 MASKED_SECRET_VALUES = {"********", "••••••••"}

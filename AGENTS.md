@@ -431,6 +431,9 @@ _CAPABILITY_CLASS_MAP = {
 | GET | `/api/config` | 获取配置 (隐藏 api_key) |
 | POST | `/api/config` | 更新配置 + 热重载 |
 | GET | `/api/agents` | 列出所有 Agent |
+| GET | `/api/agents/configs` | 列出所有 Agent 的模型/Tools/Skills/MCP/工作区配置视图 |
+| GET | `/api/agents/{name}/config` | 获取单个 Agent 的配置视图 |
+| GET | `/api/agents/capabilities/list` | 列出 Agent 管理页可选能力 |
 | GET | `/api/agents/{name}` | 获取 Agent 详情 |
 | GET | `/api/agents/persona-bindings` | 获取 Agent/Session 人格绑定与生效优先级 |
 | PUT | `/api/agents/persona-bindings/agents/{agent_name}` | 设置 Agent 默认人格 |
@@ -815,3 +818,30 @@ Project 文件属于用户上传资料，不是系统指令。Agent 的 system p
 - `default_workspace_id` / `default_workspace_root`：Agent 默认工作区绑定；Run 未显式指定且会话未绑定时使用。
 
 后端 Agent 配置视图为 `GET /api/agents/configs` 与 `GET /api/agents/{name}/config`，返回 Tools/MCP/Skills/模型/工作区挂载摘要，供前端 Agent 控制台使用。
+
+---
+
+## 16. Agent 配置管理智能体（v2.7 新增）
+
+### 16.1 定位
+
+`agent_manager` 是系统内用于管理既有 Agent 的受控智能体。它不是任意写配置后门，只能读取、校验和在管理员显式批准后维护 `config/agents.yaml` 中指定 Agent 的白名单字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。
+
+新增 Agent 仍由 `agent_creator` 负责；Persona/personality 仍由 `persona_evolution` 负责。Assistant 遇到现有 Agent 的提示词优化、模型切换、Tools/Skills/MCP 挂载或默认工作区配置调整时，应委派 `agent_manager`。
+
+### 16.2 受控工具链
+
+`agent_manager` 只挂载四个工具：
+
+- `read_agent_config`：只读列出或读取 Agent 配置，返回时隐藏 `llm.api_key`，只暴露 `api_key_set`。
+- `validate_agent_config_patch`：只读校验字段白名单、高风险工具、模型参数、MCP 配置和工作区字段。
+- `propose_agent_config_patch`：生成字段级补丁预览和风险说明，不写入文件，不会生效。
+- `apply_agent_config_patch`：仅在 `admin_approved=true`、`reviewer` 非空且可选 `AGENT_MANAGER_ADMIN_TOKEN` 匹配时写入；热重载失败会回滚 `agents.yaml`。
+
+高风险工具 `bash`、`write_file`、`create_agent_config`、`create_dynamic_tool_config`、`dispatch_agent` 默认禁止写入到 Agent tools；只有管理员明确传入 `allow_high_risk_tools=true` 时才允许。MCP server 当前只保存配置并注入 Agent 上下文，状态为 `configured_not_connected`，不能声称 MCP tool 已可调用。
+
+### 16.3 安全与生效
+
+Agent 独立模型配置支持 `llm.provider/model/base_url/temperature/top_p/max_tokens/stop_sequences/reasoning_effort/openai/anthropic/api_key`。读取和返回结果永不明文返回 `api_key`；写入时 `********`、`••••••••` 等掩码值不会覆盖已有密钥。
+
+`agent_manager` 本身属于关键系统 Agent，管理页不应删除它。普通 Agent 不直接挂载 Agent 配置写入工具；只有 `assistant` 可委派 `agent_manager`，而 `agent_manager` 再按审批边界调用受控工具。

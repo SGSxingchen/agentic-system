@@ -145,6 +145,14 @@ v2 方向: 记忆系统将升级为私人助理式全局长期记忆层。所有
 Tool 提示词覆盖层只修改 `CapabilitySchema.description`，也就是模型看到的 Tool 说明；`parameters` JSON Schema 只读展示，不通过网页修改，避免破坏工具调用协议。
 覆盖层必须保留原 Tool 的执行契约，包括只读标记、并发安全标记、结果大小限制和权限校验钩子。
 
+### Agent 配置管理智能体
+
+`agent_manager` 是系统内的受控配置管理员，负责维护既有 Agent 的提示词、模型、Tools、Skills、MCP 和默认工作区配置。Assistant 遇到现有 Agent 配置维护需求时委派 `agent_manager`；新增 Agent 仍由 `agent_creator` 负责，Persona/personality 仍由 `persona_evolution` 负责。
+
+`agent_manager` 不持有 Shell、文件写入或任意 YAML 写入能力，只挂载 `read_agent_config`、`validate_agent_config_patch`、`propose_agent_config_patch`、`apply_agent_config_patch`。写入工具只允许修改 `config/agents.yaml` 中的白名单字段，并要求 `admin_approved=true` 与非空 `reviewer`；若设置 `AGENT_MANAGER_ADMIN_TOKEN`，还必须提供匹配 token。热重载失败时必须回滚本次 YAML 写入。
+
+Agent 配置补丁默认拒绝挂载高风险工具：`bash`、`write_file`、`create_agent_config`、`create_dynamic_tool_config`、`dispatch_agent`。只有管理员明确传入 `allow_high_risk_tools=true` 时才允许写入。Agent 独立 `llm.api_key` 只允许写入，不允许在读取、提案或应用结果中明文返回；掩码值不会覆盖已有密钥。MCP server 配置当前仅保存并注入上下文，状态为 `configured_not_connected`，不会自动注册成可调用 tool。
+
 联网工具 (`web_fetch` / `web_search`) 只允许访问公网 HTTP(S) 目标。请求前和重定向后都要拒绝 loopback、内网、link-local、保留地址和未指定地址，避免 Agent 通过工具访问本机服务、局域网或云 metadata 地址。网络 I/O 必须放到线程或异步 HTTP 客户端中执行，不能阻塞 FastAPI 的事件循环。
 
 ### Agent Run 执行保障

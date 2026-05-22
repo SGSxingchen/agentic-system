@@ -201,7 +201,7 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 获取特定智能体详情。
 
-**路径参数:** `name` — 智能体名称。当前内置关键 Agent 为 `assistant`、`tool_creator`、`agent_creator`、`planner`、`coder`、`reviewer`、`persona_evolution`。
+**路径参数:** `name` — 智能体名称。当前内置关键 Agent 为 `assistant`、`tool_creator`、`agent_creator`、`agent_manager`、`planner`、`coder`、`reviewer`、`persona_evolution`。
 
 **响应:**
 ```json
@@ -236,6 +236,14 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 }
 ```
 
+### GET /api/agents/configs
+
+列出所有 Agent 的配置视图，包括模型、Tools、MCP、Skills、默认工作区和运行时挂载状态。
+
+### GET /api/agents/{name}/config
+
+返回单个 Agent 配置视图。响应会对 `llm.api_key` 脱敏，只返回 `api_key_set`。
+
 ### POST /api/agents
 
 创建配置化 Agent，写入 `config/agents.yaml` 并热重载。`name` 只能使用字母、数字、下划线且不能以数字开头；`output_format` 仅支持 `text` / `json`。如果热重载失败，后端会回滚本次 YAML 写入并返回明确错误。
@@ -266,7 +274,7 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 ### DELETE /api/agents/{name}
 
-删除配置化 Agent 并热重载。为避免误删答辩演示核心角色，内置关键 Agent（`assistant`、`tool_creator`、`agent_creator`、`planner`、`coder`、`reviewer`、`persona_evolution`）会返回 `status: "error"`，不能从管理页删除。
+删除配置化 Agent 并热重载。为避免误删答辩演示核心角色，内置关键 Agent（`assistant`、`tool_creator`、`agent_creator`、`agent_manager`、`planner`、`coder`、`reviewer`、`persona_evolution`）会返回 `status: "error"`，不能从管理页删除。
 
 
 ### GET /api/agents/persona-bindings
@@ -913,3 +921,14 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 - `POST /api/agents` 与 `PUT /api/agents/{name}` 支持 `llm`、`model`、`tools`、`mcp_servers`、`skills`、`default_workspace_id`、`default_workspace_root`。
 
 `llm` 支持字段：`provider`、`api_key`、`model`、`base_url`、`temperature`、`top_p`、`max_tokens`、`stop_sequences`、`reasoning_effort`、`openai`、`anthropic`。未配置时继承全局 LLM；配置后该 Agent 启动时使用独立 LLM client。响应只返回 `api_key_set`，不会明文返回 Agent 独立密钥。
+
+## Agent 配置管理工具（v2.7）
+
+`agent_manager` 是用于维护既有 Agent 的受控智能体。它只挂载以下工具，不持有 Shell、任意文件写入或任意 YAML 写入能力：
+
+- `read_agent_config`：读取 Agent 配置，密钥只返回 `api_key_set`。
+- `validate_agent_config_patch`：校验字段白名单、高风险工具、MCP、模型和工作区字段，不写入。
+- `propose_agent_config_patch`：生成字段级补丁预览和风险说明，不写入、不生效。
+- `apply_agent_config_patch`：要求 `admin_approved=true`、`reviewer` 非空；若配置 `AGENT_MANAGER_ADMIN_TOKEN`，还要求 `admin_token` 匹配。热重载失败会回滚。
+
+允许修改的字段仅限：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。高风险工具 `bash`、`write_file`、`create_agent_config`、`create_dynamic_tool_config`、`dispatch_agent` 默认拒绝写入，除非显式传入 `allow_high_risk_tools=true`。MCP 配置保存后状态仍为 `configured_not_connected`，不会自动变成可调用工具。
