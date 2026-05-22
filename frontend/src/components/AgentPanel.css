@@ -261,6 +261,28 @@
   font-weight: 650;
 }
 
+.agent-runtime-status {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 9px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-runtime-status strong {
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.agent-runtime-status small {
+  color: var(--color-danger);
+}
+
 .agent-tools-section {
   position: relative;
 }

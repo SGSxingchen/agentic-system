@@ -45,7 +45,7 @@ flowchart TB
   RunManager --> Workspace[Workspace / Artifacts]
 
   Memory --> Store[ChromaDB 或 InMemory]
-  Config --> YAML[agents / capabilities / pipelines / system]
+  Config --> YAML[agents / capabilities / system]
 
   Assistant --> CapabilityRegistry
   Assistant --> Memory
@@ -163,7 +163,7 @@ flowchart TB
 | 工具能力扩展 | Capability Registry 统一管理内置工具、动态 Tool、Agent-as-Tool | 说明 Tool 不是写死在 prompt 中，而是可注册、可挂载、可热重载 | 工具/能力扩展图、Evolution/Agent 页面 |
 | 长期记忆 | 对话/任务上下文经反思形成记忆，检索后以不可信资料注入 Agent | 说明系统能记住偏好和项目背景，同时保留安全边界 | 记忆系统流程图、Memory 页面 |
 | 运行轨迹可观测 | 每个 Run 生成 transcript JSONL，前端整理为时间线 | 展示 created、started、流式生成片段、tool_call、done、error 等事件 | Run 时间线、示例 transcript |
-| 动态配置/热重载 | agents/capabilities/pipelines/system 等 YAML 配置，支持运行时加载 | 说明新增 Agent/Tool 不必大改主流程 | 系统总体架构图、配置文件片段 |
+| 动态配置/热重载 | agents/capabilities/system 等 YAML 配置，支持运行时加载 | 说明新增 Agent/Tool 不必大改主流程 | 系统总体架构图、配置文件片段 |
 | 人格/Agent 管理 | Persona 与 Agent 绑定，Agent 配置可在页面管理 | 说明系统可从固定机器人扩展到可配置私人助理 | Agent/Persona 页面截图或演示 |
 
 ## 11. 答辩兜底方案

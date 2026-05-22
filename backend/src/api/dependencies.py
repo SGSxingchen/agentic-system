@@ -24,7 +24,6 @@ class _AppState:
         self.reload_agent: Optional[Callable[[], Coroutine]] = None
         self.context_store = None          # ContextStore 实例
         self.capability_registry = None    # CapabilityRegistry 实例
-        self.pipeline = None               # Pipeline 实例
 
 
 _state = _AppState()
@@ -72,10 +71,6 @@ def set_capability_registry(registry) -> None:
     _state.capability_registry = registry
 
 
-def set_pipeline(pipeline) -> None:
-    _state.pipeline = pipeline
-
-
 # ─── Getter（由路由调用） ─────────────────────────────────
 
 def get_bus():
@@ -116,7 +111,3 @@ def get_context_store():
 
 def get_capability_registry():
     return _state.capability_registry
-
-
-def get_pipeline():
-    return _state.pipeline

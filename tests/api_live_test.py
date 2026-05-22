@@ -197,32 +197,17 @@ def run_smoke_tests(t: TestRunner):
     )
 
     t.request(
-        "执行管线 (task_decompose_and_execute)",
-        "POST", "/api/pipelines/execute",
+        "创建 Agent Run",
+        "POST", "/api/runs",
         json_body={
-            "template_name": "task_decompose_and_execute",
-            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
-            "options": {},
+            "goal": "Write a tiny Python function add(a, b) that returns their sum.",
+            "agent_name": "assistant",
+            "workspace_id": "live-smoke",
         },
         expect_status=200,
         expect_json_field="status",
         expect_json_value="ok",
-        request_timeout=300,
-        retries=1,
-    )
-
-    t.request(
-        "执行管线 (code_generation_and_review)",
-        "POST", "/api/pipelines/execute",
-        json_body={
-            "template_name": "code_generation_and_review",
-            "requirement": "Write a tiny Python function add(a, b) that returns their sum.",
-            "options": {},
-        },
-        expect_status=200,
-        expect_json_field="status",
-        expect_json_value="ok",
-        request_timeout=360,
+        request_timeout=180,
         retries=1,
     )
 
@@ -254,24 +239,11 @@ def run_infra_tests(t: TestRunner):
     )
 
     t.request(
-        "获取管线模板",
-        "GET", "/api/pipelines/templates",
+        "列出 Agent Runs",
+        "GET", "/api/runs",
         expect_status=200,
         expect_json_field="status",
         expect_json_value="ok",
-    )
-
-    t.request(
-        "执行管线 (无效类型)",
-        "POST", "/api/pipelines/execute",
-        json_body={
-            "pipeline_type": "nonexistent_pipeline",
-            "requirement": "test",
-            "options": {},
-        },
-        expect_status=200,
-        expect_json_field="status",
-        expect_json_value="error",
     )
 
 
@@ -350,7 +322,7 @@ def run_all_tests(t: TestRunner):
     t.request(
         "创建任务",
         "POST", "/api/tasks",
-        json_body={"requirement": "Write a hello world program", "pipeline": "auto"},
+        json_body={"requirement": "Write a hello world program"},
         expect_status=200,
         store_field="data.task_id",
         store_key="task_id",
@@ -393,7 +365,7 @@ def run_all_tests(t: TestRunner):
     t.request(
         "创建任务 (空 requirement, 422)",
         "POST", "/api/tasks",
-        json_body={"requirement": "", "pipeline": "auto"},
+        json_body={"requirement": ""},
         expect_status=422,
     )
 
@@ -495,32 +467,20 @@ def run_all_tests(t: TestRunner):
     )
 
     # ═══════════════════════════════════════════════════════
-    # 4. 管线错误路径
+    # 4. 已移除的 Pipeline 路径
     # ═══════════════════════════════════════════════════════
 
     t.request(
-        "执行管线 (无效类型)",
-        "POST", "/api/pipelines/execute",
-        json_body={
-            "pipeline_type": "nonexistent_pipeline",
-            "requirement": "test",
-            "options": {},
-        },
-        expect_status=200,
-        expect_json_field="status",
-        expect_json_value="error",
+        "Pipeline 模板路径已移除",
+        "GET", "/api/pipelines/templates",
+        expect_status=404,
     )
 
     t.request(
-        "执行管线 (空 requirement)",
+        "Pipeline 执行路径已移除",
         "POST", "/api/pipelines/execute",
-        json_body={
-            "pipeline_type": "code_generation_and_review",
-            "requirement": "",
-        },
-        expect_status=200,
-        expect_json_field="status",
-        expect_json_value="error",
+        json_body={"requirement": "test"},
+        expect_status=404,
     )
 
 

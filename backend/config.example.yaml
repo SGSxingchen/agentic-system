@@ -25,11 +25,6 @@ bus:
 context:
   persist_dir: "./data/context"  # 项目上下文持久化目录
 
-# 工作流配置
-pipeline:
-  max_iterations: 10         # 全局最大迭代次数
-  default_timeout: 300.0     # 默认超时（秒）
-
 # 智能体配置
 agents:
   - name: "planner"

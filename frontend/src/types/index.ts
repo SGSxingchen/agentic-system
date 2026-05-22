@@ -124,6 +124,20 @@ export interface AgentMCPServerConfig {
   transport?: string
 }
 
+export interface AgentMCPCapabilityStatus {
+  state:
+    | 'not_configured'
+    | 'disabled'
+    | 'configured_not_connected'
+    | 'config_error'
+    | string
+  configured_servers: number
+  enabled_servers: number
+  connected_tools: number
+  errors?: string[]
+  message: string
+}
+
 export interface AgentInfo {
   name: string
   status: 'idle' | 'busy' | 'error' | 'stopped'
@@ -134,6 +148,7 @@ export interface AgentInfo {
   max_iterations?: number
   skills?: AgentSkillConfig | null
   mcp_servers?: AgentMCPServerConfig[]
+  mcp_capability_status?: AgentMCPCapabilityStatus
 }
 
 // ===== 记忆 =====
@@ -187,7 +202,13 @@ export interface MemorySettings {
   }
 }
 
-// ===== 任务和管线 =====
+export interface MemoryForgetResult {
+  forgotten: number
+  cycle_days: number
+  cutoff: string
+}
+
+// ===== 任务和运行 =====
 
 // v2 Phase B 起规范状态：pending | running | completed | failed | killed
 // planning/coding/reviewing 是旧 routes/tasks.py 残留，保留为 union 项以容忍升级前的旧后端响应。
@@ -216,9 +237,8 @@ export interface Task {
   status: TaskStatus
   requirement?: string
   agent?: string
-  pipeline?: string
   goal?: string
-  type?: 'agent_run' | 'pipeline' | 'sub_agent' | string
+  type?: 'agent_run' | 'sub_agent' | string
   run_id?: string | null
   agent_name?: string | null
   session_id?: string | null
@@ -398,7 +418,7 @@ export interface EvolutionSystemStatus {
     agent_count: number
     tool_count: number
     dynamic_tool_count: number
-    pipeline_count: number
+    run_count: number
     model: string
     [key: string]: any
   }
@@ -430,9 +450,7 @@ export type PanelType =
   | 'tasks'
   | 'agents'
   | 'memory'
-  | 'memory-settings'
   | 'monitor'
-  | 'pipeline'
   | 'evolution'
   | 'personas'
 

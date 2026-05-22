@@ -7,7 +7,6 @@ import { AgentPanel } from './components/AgentPanel'
 import { MemoryPanel } from './components/MemoryPanel'
 import { MonitorPanel } from './components/MonitorPanel'
 import { TaskPanel } from './components/TaskPanel'
-import { PipelinePanel } from './components/PipelinePanel'
 import { EvolutionPanel } from './components/EvolutionPanel'
 import { PersonaPanel } from './components/PersonaPanel'
 import { Settings } from './components/Settings'
@@ -84,16 +83,12 @@ function AppContent() {
         return <TaskPanel />
       case 'agents':
         return <AgentPanel />
-      case 'pipeline':
-        return <PipelinePanel />
       case 'evolution':
         return <EvolutionPanel />
       case 'personas':
         return <PersonaPanel />
       case 'memory':
         return <MemoryPanel initialTab="memories" />
-      case 'memory-settings':
-        return <MemoryPanel initialTab="settings" />
       case 'monitor':
         return <MonitorPanel />
       default:

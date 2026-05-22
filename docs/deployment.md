@@ -125,7 +125,6 @@ uvicorn api.main:app --host 127.0.0.1 --port 8001 --workers 1
 |------|------|------|
 | `config.yaml` | `backend/src/` | LLM API Key、模型等运行时配置 |
 | `agents.yaml` | `config/` | 智能体定义 |
-| `pipelines.yaml` | `config/` | Pipeline 模板 |
 | `capabilities.yaml` | `config/` | 能力插件定义 |
 | `system.yaml` | `config/` | 全局系统配置 |
 

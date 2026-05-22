@@ -3,6 +3,7 @@ import type {
   AgentInfo,
   Memory,
   MemoryStats,
+  MemoryForgetResult,
   MemorySettings,
   HealthStatus,
   SystemConfig,
@@ -244,8 +245,8 @@ export async function consolidateMemories(): Promise<APIResponse<Record<string, 
   return post<Record<string, number>>('/api/memory/consolidate')
 }
 
-export async function forgetMemories(): Promise<APIResponse<{ forgotten: number }>> {
-  return post<{ forgotten: number }>('/api/memory/forget')
+export async function forgetMemories(): Promise<APIResponse<MemoryForgetResult>> {
+  return post<MemoryForgetResult>('/api/memory/forget')
 }
 
 // ===== 智能体 API =====
@@ -499,96 +500,6 @@ export async function invokeAgent(
       input,
     },
   })
-}
-
-// ===== 管线（Pipeline）API =====
-
-export interface PipelineTemplate {
-  id: string
-  name: string
-  description: string
-  steps: PipelineStep[]
-}
-
-export interface PipelineStep {
-  name: string
-  agent?: string
-  description?: string
-  order: number
-}
-
-export interface PipelineExecution {
-  id: string
-  template_id: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  current_step: number
-  total_steps: number
-  input: any
-  output?: any
-  started_at?: string
-  completed_at?: string
-  steps_status: StepStatus[]
-}
-
-export interface StepStatus {
-  name: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
-  output?: any
-}
-
-export async function getPipelineTemplates(): Promise<APIResponse<PipelineTemplate[]>> {
-  return get<PipelineTemplate[]>('/api/pipelines/templates')
-}
-
-export async function executePipeline(
-  templateId: string,
-  input: Record<string, unknown>
-): Promise<APIResponse<PipelineExecution>> {
-  return post<PipelineExecution>('/api/pipelines/execute', {
-    template_name: templateId,
-    requirement: input.user_requirement || input.requirement || '',
-    options: input,
-  })
-}
-
-export async function createPipeline(data: {
-  name: string
-  description?: string
-  mode?: string
-  steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number; timeout?: number }[]
-}): Promise<APIResponse<unknown>> {
-  const response = await post('/api/pipelines', data)
-  if (response.status === 'ok') invalidateGetCache('/api/pipelines/templates')
-  return response
-}
-
-export async function updatePipeline(
-  name: string,
-  data: {
-    description?: string
-    mode?: string
-    steps?: { name: string; agent: string; input?: Record<string, unknown>; output_key?: string; condition?: string; max_iterations?: number; timeout?: number }[]
-  }
-): Promise<APIResponse<unknown>> {
-  const response = await put(`/api/pipelines/${name}`, data)
-  if (response.status === 'ok') invalidateGetCache('/api/pipelines/templates')
-  return response
-}
-
-export async function deletePipeline(name: string): Promise<APIResponse<void>> {
-  const response = await del<void>(`/api/pipelines/${name}`)
-  if (response.status === 'ok') invalidateGetCache('/api/pipelines/templates')
-  return response
-}
-
-export async function getPipelineExecution(
-  executionId: string
-): Promise<APIResponse<PipelineExecution>> {
-  return get<PipelineExecution>(`/api/pipelines/executions/${executionId}`)
-}
-
-export async function getPipelineExecutions(): Promise<APIResponse<PipelineExecution[]>> {
-  return get<PipelineExecution[]>('/api/pipelines/executions')
 }
 
 // ===== 人格系统 API =====

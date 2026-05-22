@@ -46,7 +46,7 @@ MEMORY_DEFAULTS: Dict[str, Any] = {
     "recall_score_threshold": 0.0,
     "fallback_to_memory_on_error": True,
     "consolidation_threshold": 0.3,
-    "forget_after_days": 30,
+    "forget_after_days": 1,
     "forget_min_importance": 0.3,
 }
 
@@ -126,7 +126,7 @@ def _apply_runtime_settings(settings: Dict[str, Any]) -> None:
     formation = get_memory_formation()
     if formation:
         formation.consolidation_threshold = float(settings.get("consolidation_threshold", 0.3))
-        formation.forget_after_days = int(settings.get("forget_after_days", 30))
+        formation.forget_after_days = int(settings.get("forget_after_days", 1))
         formation.forget_min_importance = float(settings.get("forget_min_importance", 0.3))
 
 
@@ -310,5 +310,5 @@ async def memory_forget():
     if not formation:
         return APIResponse(status="error", message="记忆系统未初始化")
 
-    forgotten = await formation.forget()
-    return APIResponse(status="ok", data={"forgotten": forgotten})
+    result = await formation.forget_details()
+    return APIResponse(status="ok", data=result)

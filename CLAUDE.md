@@ -1,7 +1,7 @@
 # 基于多智能体协作的自动化代码生成与审查系统 — 架构设计文档
 
-**版本**: v2.0 (arch-fix 后)
-**日期**: 2026-03-25
+**版本**: v2.6 (Pipeline 移除后)
+**日期**: 2026-05-12
 **作者**: 项目维护者
 
 > 本文档面向后续 AI 和开发者，完整描述系统架构、模块关系和开发规范。
@@ -24,12 +24,12 @@
 | 特性 | 实现状态 | 说明 |
 |------|----------|------|
 | 统一消息总线 (UnifiedBus) | ✅ 已实现 | 优先级队列、消息历史、运行指标、向后兼容 SimpleBus |
-| 事件引擎 + 扳机系统 | ✅ 已实现 | ECA 规则引擎，条件评估，优先级调度 |
+| Agent Run 监控事件 | ✅ 已实现 | 运行进展通过 UnifiedBus 广播到前端监控 |
 | 4 个专业智能体 | ✅ 已实现 | Assistant / Planner / Coder / Reviewer |
 | 长期记忆系统 | ✅ 已实现 | 情景/语义/程序记忆，InMemory + ChromaDB 双后端 |
-| 工作流编排 | ✅ 已实现 | 顺序/并行执行，YAML 模板驱动 |
+| Agent Run 调度 | ✅ 已实现 | 多 Agent / 会话 / 工作区实例，transcript 事件流 |
 | 能力插件系统 | ✅ 已实现 | CodeParser + StaticAnalyzer + TestRunner |
-| YAML 配置体系 | ✅ 已实现 | config/ 目录 5 个 YAML，动态加载，fallback 机制 |
+| YAML 配置体系 | ✅ 已实现 | config/ 目录主配置，动态加载，fallback 机制 |
 | 前后端分离 | ✅ 已实现 | FastAPI + React/TypeScript + WebSocket |
 | MCP 集成 | ❌ 预留接口 | CapabilityRegistry 预留了 MCP 类型支持 |
 | 消息持久化 | ❌ 预留接口 | 当前仅内存队列 |
@@ -43,9 +43,9 @@
 | 前端 CSS 文件 | 11 个 |
 | 后端代码行数 | ~8,300 行 |
 | 前端代码行数 | ~5,100 行 (TS+CSS) |
-| 测试用例 | 550 个 (16 个测试文件) |
+| 测试用例 | ~605 个 |
 | 测试代码行数 | ~4,900 行 |
-| YAML 配置文件 | 5 个 (config/) + 1 个 (src/config.yaml) |
+| YAML 配置文件 | 3 个主配置 (config/) + 1 个运行时配置 (src/config.yaml) |
 
 ---
 
@@ -64,16 +64,12 @@ agentic-system/
 │
 ├── config/                             # ★ YAML 配置目录 (被 config.py 动态加载)
 │   ├── agents.yaml                     #   智能体定义
-│   ├── triggers.yaml                   #   扳机规则
-│   ├── pipelines.yaml                  #   Pipeline 模板
 │   ├── capabilities.yaml               #   能力插件
 │   └── system.yaml                     #   全局系统配置 (LLM/Bus/Memory 等)
 │
 ├── backend/
 │   ├── requirements.txt                # Python 依赖清单
 │   ├── config.example.yaml             # config.yaml 模板
-│   ├── config/                         # 旧版配置副本 (主配置已在根目录 config/)
-│   │   └── *.yaml
 │   ├── src/
 │   │   ├── config.yaml                 # ★ 运行时 LLM 配置 (api_key 等)
 │   │   ├── config.yaml.example         # config.yaml 模板
@@ -93,7 +89,6 @@ agentic-system/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── agents.py           #     GET/POST /api/agents/*
 │   │   │   │   ├── tasks.py            #     GET/POST/DELETE /api/tasks/*
-│   │   │   │   ├── pipelines.py        #     GET/POST/PUT/DELETE /api/pipelines/*
 │   │   │   │   ├── memory.py           #     GET/POST/DELETE /api/memory/*
 │   │   │   │   └── config.py           #     GET/POST /api/config + /api/health
 │   │   │   └── websocket/
@@ -125,9 +120,7 @@ agentic-system/
 │   │   │   │   ├── prompt_override.py  #     ★ Tool 提示词覆盖
 │   │   │   │   └── registry.py         #     CapabilityRegistry
 │   │   │   ├── context/store.py        #   上下文管理 (三层作用域)
-│   │   │   ├── pipeline/               #   Pipeline 编排
-│   │   │   │   ├── pipeline.py         #     Pipeline 执行器
-│   │   │   │   └── types.py            #     Step/Pipeline 结果类型
+│   │   │   ├── task/                   #   Agent Run / 任务状态
 │   │   │   └── llm/                    #   LLM 客户端
 │   │   │       ├── base.py / factory.py
 │   │   │       ├── openai_client.py
@@ -140,7 +133,7 @@ agentic-system/
 │   │   │
 │   │   └── utils/                     # 工具 (logger.py + tracer.py)
 │   │
-│   └── tests/                         # 测试 (16 个文件, 548 用例)
+│   └── tests/                         # 测试 (unit + integration)
 │       ├── unit/ (10 个)
 │       └── integration/ (2 个)
 │
@@ -167,8 +160,8 @@ agentic-system/
 
 ## 3. 核心架构
 
-> ✅ **编排层 v2 Phase A + B + C 已落地**（2026-04-26）：Agent 反应式工具循环底盘 + Task 抽象 + Pipeline 编排（替换原 Workflow） + 非阻塞子 Agent 派生 + `<task-notification>` 回注。
-> §3.5 含 v2 Phase A 的 Agent 流式工具循环说明；§3.8 Pipeline 编排是当前唯一的多步骤编排引擎；§3.9 是 v2 Phase B/C 新增的 Task 抽象 + 子 Agent 派生层。
+> ✅ **编排层已迁移到 Agent Run**：Agent 反应式工具循环底盘 + Task/Run 抽象 + 非阻塞子 Agent 派生 + `<task-notification>` 回注是当前生产路径。
+> 固定 Pipeline、`/api/pipelines/*`、`config/pipelines.yaml` 与 `PipelinePanel` 已移除；历史设计记录见 `docs/orchestrator-v2.md`。
 > 仍未落地的 Phase D（snip 压缩 / stop hooks / 边际收益 / Worktree GC）见 [`docs/orchestrator-v2.md`](docs/orchestrator-v2.md) §11。
 
 ### 3.1 系统分层
@@ -203,7 +196,7 @@ LLM 客户端层 (OpenAI / Anthropic)
 4. CapabilityRegistry           → 从 config/capabilities.yaml 加载能力
 5. init_memory_system()         → 初始化记忆存储/检索/巩固
 6. reload_agent()               → 从 config/agents.yaml 创建并注册 Agent
-7. Pipeline                     → 从 config/pipelines.yaml 加载模板
+7. TaskRegistry                 → 准备 Agent Run 调度与 transcript 存储
 ```
 
 **关键设计: 所有子系统都有 fallback 机制。** 如果 `config/*.yaml` 缺失或为空，回退到硬编码默认值。
@@ -232,9 +225,9 @@ LLM 客户端层 (OpenAI / Anthropic)
 
 **向后兼容:** 通过 `_subscribers` 字典兼容旧版 SimpleBus 接口。
 
-### 3.4 Pipeline 监控事件
+### 3.4 Agent Run 监控事件
 
-当前生产路径已从静态 EventEngine/TriggerRegistry 迁移到 Pipeline + Agent 工具循环。Pipeline 执行步骤时通过 UnifiedBus 广播 `step_started`、`step_completed`、`step_failed` 等事件，WebSocket 事件桥接会将这些监控事件推送到前端 MonitorPanel。
+当前生产路径已从静态 EventEngine/TriggerRegistry 和固定 Pipeline 迁移到 Agent Run + Agent 工具循环。运行过程通过 UnifiedBus 广播 `agent_progress`、`agent_done`、`agent_error` 等事件，WebSocket 事件桥接会将这些监控事件推送到前端 MonitorPanel。
 
 ### 3.5 Agent 系统
 
@@ -317,19 +310,13 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - Python 运行时拼接片段在 `core/prompts.py`，包括长期记忆不可信注入、token 预算 nudge、对话反思 prompt、内置 Tool 描述。
 - 内置 Tool 的 `CapabilitySchema.description` 应通过 `core.prompts.TOOL_DESCRIPTIONS` 获取；`config/capabilities.yaml` 的 `description` 与其保持同风格，`prompt` 仅用于显式覆盖。
 
-### 3.8 Pipeline 编排（v2 Phase B 起为唯一编排引擎）
+### 3.8 Agent Run 调度
 
-> ✅ **v2 Phase B 已落地（2026-04-26）**：旧 `core/workflow/` 模块、`core/event/`、`config/triggers.yaml`、`backend/config/` 已删除；`config/workflows.yaml` 改名 `config/pipelines.yaml`，`/api/workflows/*` 改名 `/api/pipelines/*`，前端 `WorkflowPanel` 改名 `PipelinePanel`。
-
-`core.pipeline.Pipeline` 是当前唯一的多步骤编排引擎：
-- 通过 CapabilityRegistry 统一调度 Agent 与 Tool（不区分两者）
-- 顺序 / 并行执行模式；支持 `${var}` 变量替换、条件表达式、`max_retries`、`timeout`
-- 新增 `on_step_event` 回调钩子：每步骤 started/completed/failed/skipped 时触发；`routes/tasks.py` 用它把进度写入 TaskState 与磁盘 transcript
-
-预定义模板（`config/pipelines.yaml`）:
-1. `code_generation_and_review` — 规划 → 编码 → 审查 → 条件修复
-2. `task_decompose_and_execute` — 分解 → 编码
-3. `full_pipeline` — 规划 → 编码 → 审查 → 修复 → 再审查
+固定 Pipeline 已移除。当前运行模型是 Agent Run：
+- 每次运行都是独立实例，包含 `run_id/task_id`、`agent_name`、`session_id`、`workspace_id`、目标、状态、进度和输出。
+- 调度层负责创建实例、准备工作区、记录 transcript、广播监控事件和处理取消。
+- Agent 根据上下文和工具反馈自主决定下一步，不再依赖 YAML 模板步骤。
+- `/api/tasks` 是便捷入口，`/api/runs` 是显式多实例运行入口。
 
 ### 3.9 Task 抽象（v2 Phase B 新增）
 
@@ -337,15 +324,15 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 | 组件 | 职责 |
 |------|------|
-| `TaskState` | 单任务的状态快照：id/type/status/requirement/pipeline_name/progress/plan/code/review/output/output_file/timestamps |
+| `TaskState` | 单任务的状态快照：id/type/status/requirement/agent_name/workspace_id/progress/output/output_file/timestamps |
 | `TaskStatus` 枚举 | `pending → running → {completed | failed | killed}` |
-| `TaskType` 枚举 | 当前仅 `pipeline`；预留 `sub_agent` / `shell`（Phase C/D） |
+| `TaskType` 枚举 | 当前核心类型为 `agent_run` / `sub_agent` |
 | `AgentProgress` | 增量进度：tool_count（累加）/ total_tokens（累加）/ activity / last_tool / current_step |
 | `TaskRegistry` | 进程级单例：create / attach asyncio.Task / get / list / set_progress / mark_done / kill |
 | `TranscriptWriter` + `read_transcript` | 每任务一份 JSONL 文件（`workspace/tasks/{task_id}.jsonl`），写 created/started/step_*/done/killed/error |
 
 **API**:
-- `POST /api/tasks { requirement, pipeline }` — 提交任务，返回 task_id（v1 字段 `workflow` 重命名为 `pipeline`）
+- `POST /api/tasks { requirement, agent_name, session_id, workspace_id, input }` — 提交 Agent Run，返回 task_id
 - `GET /api/tasks` — 按 created_at 倒序列出
 - `GET /api/tasks/{id}` — 详情含 progress
 - `GET /api/tasks/{id}/transcript` — 读取 JSONL 事件流（数组返回）
@@ -358,7 +345,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 新工具 `dispatch_agent`（已自动注册到 CapabilityRegistry，`planner` / `coder` 默认拥有）支持非阻塞地派发已注册的子 Agent：
 
 - 入参：`subagent_type` (必填) / `prompt` (必填) / `worktree` (默认 false) / `description` (可选)
-- 行为：立即创建 `TaskType.SUB_AGENT` 子 task（`parent_id` 指向当前 Pipeline task）+ 后台 `asyncio.create_task` 跑子 Agent；返回 `{task_id, status="dispatched"}`
+- 行为：立即创建 `TaskType.SUB_AGENT` 子 task（`parent_id` 指向当前 Agent Run）+ 后台 `asyncio.create_task` 跑子 Agent；返回 `{task_id, status="dispatched"}`
 - 子 Agent 完成时把结果以 `<task-notification>` user 消息追加到当前 Agent 的对话历史；父 Agent 在下一轮采样前 drain
 - 嵌套保护：`max_depth=1`（被派发的子 Agent 不能再调 dispatch_agent）
 - 父 task 取消时所有 SUB_AGENT 子 task 级联 KILLED（TaskRegistry.kill 递归）
@@ -383,9 +370,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 |------|--------|------|
 | `system.yaml` | 直接合并到顶层 | 全局配置 (LLM/Bus/Memory/Server 等) |
 | `agents.yaml` | `agents` (列表) | 4 个 Agent 定义 |
-| `triggers.yaml` | `triggers` (列表) | 5 个事件扳机规则 |
 | `capabilities.yaml` | `capabilities` (列表) | 2 个原生能力 (MCP/OpenAPI 预留) |
-| `pipelines.yaml` | `pipelines` (字典) | 3 个 Pipeline 模板 |
 
 ### 4.3 加载机制
 
@@ -435,11 +420,13 @@ _CAPABILITY_CLASS_MAP = {
 | GET | `/api/tasks` | 列出所有任务 |
 | GET | `/api/tasks/{task_id}` | 获取任务详情 |
 | DELETE | `/api/tasks/{task_id}` | 取消任务 |
-| GET | `/api/pipelines/templates` | 获取 Pipeline 模板 |
-| POST | `/api/pipelines/execute` | 执行 Pipeline |
-| POST | `/api/pipelines` | 创建 Pipeline 模板 |
-| PUT | `/api/pipelines/{name}` | 更新 Pipeline 模板 |
-| DELETE | `/api/pipelines/{name}` | 删除 Pipeline 模板 |
+| POST | `/api/runs` | 创建 Agent Run |
+| GET | `/api/runs` | 列出 Agent Run |
+| GET | `/api/runs/{run_id}` | 获取运行详情 |
+| GET | `/api/runs/{run_id}/events` | 读取运行事件流 |
+| POST | `/api/runs/{run_id}/control` | 控制运行 |
+| DELETE | `/api/runs/{run_id}` | 取消运行 |
+| GET | `/api/runs/workspaces` | 汇总运行工作区 |
 | GET | `/api/memory/stats` | 记忆统计 |
 | GET | `/api/memory/list` | 列出记忆 |
 | POST | `/api/memory/search` | 搜索记忆 |
@@ -468,8 +455,7 @@ _CAPABILITY_CLASS_MAP = {
 | `ChatPanel` | 聊天对话 (用户/AI 消息气泡，记忆使用指示) |
 | `AgentPanel` | Agent 状态查看、直接调用 |
 | `TaskPanel` | 任务提交、列表、状态跟踪 |
-| `PipelinePanel` | Pipeline 模板选择、执行 |
-| `MemoryPanel` | 记忆统计/列表/搜索/创建/删除 |
+| `MemoryPanel` | 记忆统计/列表/搜索/创建/删除/设置/遗忘周期 |
 | `EvolutionPanel` | 进化中心 (Agent-Tool 能力网络、动态 Tool、子 Agent 创建) |
 | `MonitorPanel` | 系统监控 (连接状态、事件流) |
 | `Settings` | LLM 配置面板 (热重载) |
@@ -514,12 +500,12 @@ _CAPABILITY_CLASS_MAP = {
 ### Phase 6: 高级特性 ✅
 - [x] 上下文管理 (三层作用域 ContextStore)
 - [x] 错误处理和重试
-- [x] 事件引擎 + 扳机系统
+- [x] Agent Run 监控事件
 - [x] 能力系统 + 注册中心
-- [x] 工作流编排 (顺序/并行/条件/重试)
+- [x] Agent Run 调度 (多实例 + transcript)
 - [x] UnifiedBus 替换 SimpleBus
-- [x] YAML 配置体系 (5 个配置文件)
-- [x] 前端 TaskPanel + PipelinePanel
+- [x] YAML 配置体系
+- [x] 前端 TaskPanel + MonitorPanel
 - [ ] MCP 客户端集成 (预留接口)
 - [ ] 消息持久化 (预留接口)
 

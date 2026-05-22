@@ -28,31 +28,12 @@ const Icons = {
       <path d="M20 21a8 8 0 1 0-16 0" />
     </svg>
   ),
-  pipeline: (
-    <svg viewBox="0 0 24 24">
-      <polyline points="16 3 21 3 21 8" />
-      <line x1="4" y1="20" x2="21" y2="3" />
-      <polyline points="21 16 21 21 16 21" />
-      <line x1="15" y1="15" x2="21" y2="21" />
-      <line x1="4" y1="4" x2="9" y2="9" />
-    </svg>
-  ),
   memory: (
     <svg viewBox="0 0 24 24">
       <path d="M4 7a8 8 0 0 1 16 0v10a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V7z" />
       <path d="M8 8h8" />
       <path d="M8 12h5" />
       <path d="M8 16h7" />
-    </svg>
-  ),
-  memorySettings: (
-    <svg viewBox="0 0 24 24">
-      <path d="M4 7a8 8 0 0 1 16 0v9a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V7z" />
-      <circle cx="12" cy="12" r="2.3" />
-      <path d="M12 6.8v1.4" />
-      <path d="M12 15.8v1.4" />
-      <path d="M7.5 12h1.4" />
-      <path d="M15.1 12h1.4" />
     </svg>
   ),
   monitor: (
@@ -92,15 +73,14 @@ const Icons = {
 
 const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
   {
-    label: 'Workspace',
+    label: '工作区',
     items: [
       { key: 'chat', icon: Icons.chat, label: '对话', hint: '会话与协作' },
-      { key: 'tasks', icon: Icons.tasks, label: '运行', hint: '多 Agent Run' },
-      { key: 'pipeline', icon: Icons.pipeline, label: '管线(兼容)', hint: '旧模板迁移' },
+      { key: 'tasks', icon: Icons.tasks, label: '任务运行', hint: '自主智能体运行' },
     ],
   },
   {
-    label: 'Agents',
+    label: '智能体',
     items: [
       { key: 'agents', icon: Icons.agents, label: '智能体', hint: '角色与状态' },
       { key: 'evolution', icon: Icons.evolution, label: '进化', hint: '架构状态' },
@@ -108,16 +88,15 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
     ],
   },
   {
-    label: 'Memory',
+    label: '长期记忆',
     items: [
-      { key: 'memory', icon: Icons.memory, label: '记忆管理', hint: '长期资料' },
-      { key: 'memory-settings', icon: Icons.memorySettings, label: '记忆设置', hint: '召回策略' },
+      { key: 'memory', icon: Icons.memory, label: '记忆中心', hint: '管理、召回与设置' },
     ],
   },
   {
-    label: 'System',
+    label: '系统',
     items: [
-      { key: 'monitor', icon: Icons.monitor, label: '监控', hint: '事件流' },
+      { key: 'monitor', icon: Icons.monitor, label: '运行监控', hint: '智能体进展' },
     ],
   },
 ]
@@ -135,8 +114,8 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
       <div className="sidebar-header">
         <div className="sidebar-logo">M</div>
         <div className="sidebar-title">
-          <h1>Multi-Agent</h1>
-          <span>System</span>
+          <h1>多智能体</h1>
+          <span>协作系统</span>
         </div>
       </div>
 

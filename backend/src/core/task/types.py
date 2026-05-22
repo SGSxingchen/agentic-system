@@ -2,9 +2,9 @@
 
 TaskState 是异步工作的统一表示：包含状态机、进度、结果、磁盘 transcript 引用。
 
-历史上这里主要承载固定 Pipeline 执行；v2.3 起默认语义迁移为 Agent Run：
+这里承载 Agent Run 与非阻塞子 Agent 的运行状态：
 一个可多开的 agent/session/workspace/task 实例，拥有自己的目标、事件流、
-运行控制与结果记录。PIPELINE 仍保留为兼容类型，但不再是默认调度模型。
+运行控制与结果记录。
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ class TaskType(str, Enum):
     """Task 类型枚举"""
 
     AGENT_RUN = "agent_run"
-    PIPELINE = "pipeline"  # 兼容旧固定流水线
     SUB_AGENT = "sub_agent"
     # 预留：未来 Phase D 实装
     # SHELL = "shell"
@@ -41,7 +40,7 @@ class TaskStatus(str, Enum):
 class AgentProgress:
     """Task 运行时增量进度
 
-    由编排层（Pipeline / Agent loop）增量上报，
+    由 Agent loop 增量上报，
     供 TaskRegistry 累计 + WebSocket / API 暴露给前端。
     """
 
@@ -69,7 +68,6 @@ class TaskState:
     id: str
     type: TaskType
     requirement: str
-    pipeline_name: str = ""  # 兼容旧字段；Agent Run 可为空
     agent_name: Optional[str] = None
     session_id: Optional[str] = None
     workspace_id: Optional[str] = None
@@ -107,7 +105,6 @@ class TaskState:
             "status": self.status.value,
             "requirement": self.requirement,
             "goal": self.requirement,
-            "pipeline": self.pipeline_name,
             "agent": self.agent_name,
             "agent_name": self.agent_name,
             "session_id": self.session_id,

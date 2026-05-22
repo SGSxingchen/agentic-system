@@ -106,9 +106,9 @@ function eventTitle(type: string) {
     done: 'Agent 完成输出',
     error: '运行错误',
     killed: '运行已取消',
-    step_started: '管线步骤开始',
-    step_completed: '管线步骤完成',
-    step_failed: '管线步骤失败',
+    step_started: '步骤开始',
+    step_completed: '步骤完成',
+    step_failed: '步骤失败',
   }
   return labels[type] || type
 }
@@ -322,8 +322,8 @@ export function TaskPanel() {
     <div className="task-panel run-workspace-panel">
       <div className="panel-header">
         <div>
-          <h2>Agent Run 答辩演示台</h2>
-          <p className="panel-subtitle">用一个清晰任务现场展示：主 Agent 理解需求，按需调用工具/子 Agent，事件 transcript 全程落盘，可观测、可追踪、可复盘。</p>
+          <h2>智能体运行演示台</h2>
+          <p className="panel-subtitle">用一个清晰任务现场展示：主智能体理解需求，按需调用工具或子智能体，事件记录全程落盘，可观测、可追踪、可复盘。</p>
         </div>
         <button className="refresh-btn" onClick={fetchRuns}>刷新</button>
       </div>
@@ -332,7 +332,7 @@ export function TaskPanel() {
         <div className="demo-launchpad__intro">
           <span className="demo-kicker">Defense Demo</span>
           <h3>一键预设任务</h3>
-          <p>老师现场只需点一个任务，就能看到 Run 创建、Agent 执行、流式生成、工具调用、最终输出和 transcript 时间线。</p>
+          <p>现场只需点一个任务，即可看到运行实例创建、智能体执行、流式生成、工具调用、最终输出和事件时间线。</p>
         </div>
         <div className="demo-preset-grid">
           {DEMO_PRESETS.map((preset) => (
@@ -344,7 +344,7 @@ export function TaskPanel() {
               <p>{preset.why}</p>
               <div className="demo-preset-card__meta">
                 <span>Agent: {preset.agent}</span>
-                <span>Workspace: {preset.workspaceId}</span>
+              <span>工作区：{preset.workspaceId}</span>
               </div>
               <div className="demo-preset-card__actions">
                 <button type="button" className="btn-secondary-sm" onClick={() => applyDemoPreset(preset)}>
@@ -378,20 +378,20 @@ export function TaskPanel() {
             <input value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="可选，例如 chat-001" />
           </label>
           <label>
-            <span>Workspace</span>
+            <span>工作区</span>
             <input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="留空自动创建隔离工作区" />
           </label>
         </div>
         <textarea
           className="task-input"
-          placeholder="描述本次 Agent Run 的目标。Agent 会根据上下文和工具反馈自主选择下一步，而不是被固定管线驱动。"
+          placeholder="描述本次 Agent Run 的目标。Agent 会根据上下文和工具反馈自主选择下一步。"
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={4}
         />
         <div className="task-submit-footer">
-          <span className="task-hint">Ctrl+Enter 创建运行 · 旧 /api/tasks?pipeline=auto 已迁移到同一模型</span>
+            <span className="task-hint">Ctrl+Enter 创建运行 · /api/tasks 与 /api/runs 使用同一运行模型</span>
           <button className="task-submit-btn" onClick={handleSubmit} disabled={submitting || !goal.trim()}>
             {submitting ? '创建中...' : '创建 Agent Run'}
           </button>
@@ -405,7 +405,7 @@ export function TaskPanel() {
       ) : runs.length === 0 ? (
         <div className="task-empty">
           <div className="placeholder-icon">◎</div>
-          <h3>还没有演示 Run</h3>
+              <h3>还没有演示运行</h3>
           <p>{apiAvailable ? '从上方选择一个答辩预设，现场展示多智能体协作、长期记忆注入、工具调用和可观测 transcript。' : '无法连接到后端服务。请确保后端已启动后刷新。'}</p>
           <div className="task-empty-points">
             <span>多智能体：assistant 可委派 planner/coder/reviewer</span>
@@ -440,10 +440,10 @@ export function TaskPanel() {
                 </div>
 
                 <div className="run-chips">
-                  <span>Run ID: {runId}</span>
+            <span>运行 ID：{runId}</span>
                   <span>Agent: {run.agent_name || run.agent || 'unknown'}</span>
                   <span>Status: {run.status}</span>
-                  <span>Workspace: {run.workspace_id || 'auto'}</span>
+            <span>工作区：{run.workspace_id || '自动分配'}</span>
                   <span>耗时: {formatDuration(elapsed)}</span>
                   {run.session_id && <span>Session: {run.session_id}</span>}
                   <span>Strategy: {run.strategy || 'agent_decides'}</span>

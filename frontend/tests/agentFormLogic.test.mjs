@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from 'typescript'
 
-const repoRoot = resolve(dirname(new URL(import.meta.url).pathname), '..')
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sourcePath = resolve(repoRoot, 'src/components/agentFormLogic.ts')
 const outPath = resolve(tmpdir(), `agentFormLogic-${process.pid}.mjs`)
 const source = await readFile(sourcePath, 'utf8')
@@ -19,7 +20,7 @@ const transpiled = ts.transpileModule(source, {
 await mkdir(dirname(outPath), { recursive: true })
 await writeFile(outPath, transpiled.outputText, 'utf8')
 
-const { submitAgentForm, parseAgentRuntimeConfig } = await import(outPath + `?cache=${Date.now()}`)
+const { submitAgentForm, parseAgentRuntimeConfig } = await import(pathToFileURL(outPath).href + `?cache=${Date.now()}`)
 
 const baseForm = {
   name: 'writer_agent',

@@ -56,7 +56,6 @@ from api.dependencies import (
     set_memory_formation,
     set_memory_retriever,
     set_reload_agent_fn,
-    set_pipeline,
     set_capability_registry,
 )
 
@@ -77,7 +76,6 @@ def _create_test_app():
         runs_router,
         agents_router,
         chat_sessions_router,
-        pipelines_router,
         memory_router,
         config_router,
         evolution_router,
@@ -101,7 +99,6 @@ def _create_test_app():
     test_app.include_router(tasks_router)
     test_app.include_router(runs_router)
     test_app.include_router(agents_router)
-    test_app.include_router(pipelines_router)
     test_app.include_router(memory_router)
     test_app.include_router(config_router)
     test_app.include_router(evolution_router)
@@ -134,13 +131,8 @@ async def setup_deps():
         )
     )
 
-    # 创建一个 mock Pipeline
-    mock_pipeline = MagicMock()
-    mock_pipeline.run = AsyncMock(return_value={"status": "completed"})
-
     set_bus(bus)
     set_agent_registry(registry)
-    set_pipeline(mock_pipeline)
     set_capability_registry(cap_registry)
     set_memory_store(store)
     set_memory_formation(formation)
@@ -153,7 +145,6 @@ async def setup_deps():
         "store": store,
         "formation": formation,
         "retriever": retriever,
-        "pipeline": mock_pipeline,
         "cap_registry": cap_registry,
     }
 
@@ -161,7 +152,6 @@ async def setup_deps():
     await bus.stop()
     set_bus(None)
     set_agent_registry(None)
-    set_pipeline(None)
     set_capability_registry(None)
     set_memory_store(None)
     set_memory_formation(None)
@@ -488,6 +478,16 @@ class TestRunsAPI:
 
 
 class TestTasksAPI:
+    async def test_pipeline_api_is_removed(self, client):
+        resp = await client.get("/api/pipelines/templates")
+        assert resp.status_code == 404
+
+        resp = await client.post(
+            "/api/pipelines/execute",
+            json={"requirement": "不应存在", "template_name": "full_pipeline"},
+        )
+        assert resp.status_code == 404
+
     async def test_list_tasks_empty(self, client):
         resp = await client.get("/api/tasks")
         assert resp.status_code == 200
@@ -827,6 +827,12 @@ class TestConfigAPI:
         )
         monkeypatch.setattr(config_route, "_runtime_config_path", lambda: config_file)
         monkeypatch.setattr(core_config, "_default_runtime_config_path", lambda: config_file)
+        for env_name in (
+            "LLM_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "OPENAI_API_KEY",
+        ):
+            monkeypatch.delenv(env_name, raising=False)
 
         fetch_mock = AsyncMock(return_value=[{"id": "gpt-test"}])
         monkeypatch.setattr(config_route, "_fetch_openai_models", fetch_mock)
@@ -917,7 +923,7 @@ class TestEvolutionAPI:
         data = body["data"]
         assert data["overview"]["agent_count"] >= 0
         component_ids = {component["id"] for component in data["components"]}
-        assert {"agents", "tools", "memory", "runtime", "evolution_pipeline"}.issubset(component_ids)
+        assert {"agents", "tools", "memory", "runtime", "evolution_loop"}.issubset(component_ids)
         assert data["graph"]["summary"]["dynamic_tools"] == 1
 
     async def test_evolution_command(self, client):
@@ -928,5 +934,5 @@ class TestEvolutionAPI:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "ok"
-        assert "Agentic System Evolution" in body["data"]["command"]
+        assert "系统级进化任务" in body["data"]["command"]
         assert "memory" in body["data"]["target_components"]

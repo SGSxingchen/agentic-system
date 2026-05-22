@@ -35,7 +35,7 @@
 
 本轮只增强前端展示，不破坏现有后端接口：
 
-- `POST /api/tasks`：旧任务入口仍可用，默认 `pipeline=auto` 会进入 Agent Run 兼容模式。
+- `POST /api/tasks`：任务入口仍可用，会创建 Agent Run。
 - `GET /api/tasks/{id}`：仍返回任务详情、状态、进度和输出。
 - `GET /api/tasks/{id}/transcript`：仍读取落盘 JSONL transcript。
 - 前端 Run 页面当前使用 `GET /api/runs/{id}/events` 读取同一 transcript 数据源。

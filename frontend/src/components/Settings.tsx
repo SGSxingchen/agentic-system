@@ -313,7 +313,7 @@ export function Settings({ onClose }: SettingsProps) {
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <div>
-            <p className="settings-eyebrow">System controls</p>
+            <p className="settings-eyebrow">系统控制</p>
             <h2>设置中心</h2>
             <p className="settings-subtitle">
               优先配置常用模型和搜索能力；高级参数已收纳到折叠区。
@@ -361,7 +361,7 @@ export function Settings({ onClose }: SettingsProps) {
 
               <div className="settings-grid settings-grid--comfortable">
                 <div className="form-group">
-                  <label>LLM 提供商</label>
+                <label>模型服务提供方</label>
                   <select
                     value={provider}
                     onChange={(e) => setProvider(e.target.value)}
@@ -631,19 +631,19 @@ export function Settings({ onClose }: SettingsProps) {
 
               <div className="settings-grid settings-grid--comfortable">
                 <div className="form-group">
-                  <label>Web Search Provider</label>
+                <label>网页搜索服务</label>
                   <select
                     value={webSearchProvider}
                     onChange={(e) => setWebSearchProvider(e.target.value)}
                   >
                     <option value="duckduckgo">DuckDuckGo（无需 Key）</option>
-                    <option value="brave">Brave Search API</option>
-                    <option value="serper">Serper Google Search API</option>
+                  <option value="brave">Brave 搜索 API</option>
+                  <option value="serper">Serper Google 搜索 API</option>
                   </select>
                 </div>
 
                 <div className="form-group">
-                  <label>Web Search API Key</label>
+                <label>网页搜索 API Key</label>
                   <input
                     type="password"
                     value={webSearchApiKey}

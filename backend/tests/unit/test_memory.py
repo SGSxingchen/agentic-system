@@ -148,6 +148,11 @@ class TestInMemoryStore:
 class TestMemoryFormation:
     """记忆形成测试"""
 
+    def test_default_forget_cycle_is_one_day(self, store):
+        formation = MemoryFormation(store=store)
+
+        assert formation.forget_after_days == 1
+
     async def test_create_episodic(self, formation):
         memory = await formation.create_episodic(
             event_description="用户要求生成登录功能",
@@ -209,6 +214,55 @@ class TestMemoryFormation:
         forgotten = await formation.forget()
         assert forgotten == 1
         assert await store.count() == 1
+
+    async def test_forget_details_reports_cycle_and_cutoff(self, store):
+        from datetime import datetime, timedelta
+
+        formation = MemoryFormation(store=store, forget_after_days=1, forget_min_importance=0.3)
+        await store.save(
+            Memory(
+                content="temporary low value memory",
+                importance=0.1,
+                last_accessed=datetime.now() - timedelta(days=2),
+                created_at=datetime.now() - timedelta(days=2),
+            )
+        )
+
+        result = await formation.forget_details()
+
+        assert result["cycle_days"] == 1
+        assert result["forgotten"] == 1
+        assert isinstance(result["cutoff"], str)
+        assert await store.count() == 0
+
+    async def test_forget_keeps_todo_and_high_quality_memories(self, store):
+        from datetime import datetime, timedelta
+
+        formation = MemoryFormation(store=store, forget_after_days=1, forget_min_importance=0.3)
+        old_time = datetime.now() - timedelta(days=3)
+        await store.save(
+            Memory(
+                content="todo should stay",
+                importance=0.1,
+                last_accessed=old_time,
+                created_at=old_time,
+                metadata={"memory_kind": "todo"},
+            )
+        )
+        await store.save(
+            Memory(
+                content="high quality should stay",
+                importance=0.1,
+                last_accessed=old_time,
+                created_at=old_time,
+                metadata={"summary_quality": 0.95},
+            )
+        )
+
+        result = await formation.forget_details()
+
+        assert result["forgotten"] == 0
+        assert await store.count() == 2
 
     async def test_get_stats(self, formation):
         await formation.create_episodic("事件1")

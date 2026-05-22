@@ -1,7 +1,7 @@
-"""任务管理路由（v2 Phase B）
+"""任务与 Agent Run 管理路由。
 
 端点:
-- POST   /api/tasks                       — 提交新任务（异步执行 Pipeline）
+- POST   /api/tasks                       — 提交新任务（创建 Agent Run）
 - GET    /api/tasks                       — 列出所有任务
 - GET    /api/tasks/{task_id}             — 获取任务详情（含 progress）
 - GET    /api/tasks/{task_id}/transcript  — 读取磁盘 transcript（JSONL 事件流）
@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import APIResponse, AgentRunCreateRequest, RunControlRequest, TaskSubmitRequest
-from ..dependencies import get_capability_registry, get_pipeline
+from ..dependencies import get_capability_registry
 from ..websocket.handlers import broadcast_monitor_event
 from core.task import (
     TaskRegistry,
@@ -176,211 +176,19 @@ async def _create_agent_run(req: AgentRunCreateRequest, *, compat_task: bool = F
 
 @router.post("", response_model=APIResponse)
 async def submit_task(req: TaskSubmitRequest):
-    """提交新任务。
-
-    兼容迁移策略：
-    - pipeline=auto（默认）→ 创建新的自主 Agent Run，不再套固定流水线；
-    - pipeline!=auto → 保留旧 Pipeline 模板执行路径，给已有客户端迁移窗口。
-    """
-    if req.pipeline == "auto":
-        return await _create_agent_run(
-            AgentRunCreateRequest(
-                goal=req.requirement,
-                agent_name=req.agent_name or "assistant",
-                session_id=req.session_id,
-                workspace_id=req.workspace_id,
-                mode="autonomous",
-                strategy="agent_decides",
-                input=req.input or {},
-            ),
-            compat_task=True,
-        )
-
-    pipeline = get_pipeline()
-    cap_registry = get_capability_registry()
-
-    template_name = req.pipeline
-
-    state = _registry.create(
-        task_type=TaskType.PIPELINE,
-        requirement=req.requirement,
-        pipeline_name=template_name,
-        mode="compat_pipeline",
-        strategy="fixed_template",
+    """提交新任务，始终创建 Agent Run。"""
+    return await _create_agent_run(
+        AgentRunCreateRequest(
+            goal=req.requirement,
+            agent_name=req.agent_name or "assistant",
+            session_id=req.session_id,
+            workspace_id=req.workspace_id,
+            mode="autonomous",
+            strategy="agent_decides",
+            input=req.input or {},
+        ),
+        compat_task=True,
     )
-    state.output_file = str(transcript_path(state.id))
-    writer = TranscriptWriter(state.id)
-    writer.write("created", {"requirement": req.requirement, "pipeline": template_name})
-
-    if pipeline is None:
-        _registry.mark_done(state.id, TaskStatus.FAILED, error="Pipeline 未初始化")
-        writer.write("error", {"error": "Pipeline 未初始化"})
-        return APIResponse(
-            status="ok",
-            message="任务已记录，但管线未初始化",
-            data=state.to_dict(),
-        )
-
-    config = pipeline.get_template(template_name)
-    if config is None:
-        # fallback: 没匹配模板时直接调 planner（兼容旧行为）
-        if cap_registry is not None and "planner" in cap_registry:
-            asyncio_task = asyncio.create_task(
-                _run_single_agent_fallback(state.id, cap_registry, req.requirement, writer)
-            )
-            _registry.update(state.id, status=TaskStatus.RUNNING)
-            _registry.attach(state.id, asyncio_task)
-            return APIResponse(
-                status="ok",
-                message="任务已提交（fallback: 单 Agent 模式）",
-                data=state.to_dict(),
-            )
-
-        _registry.mark_done(
-            state.id,
-            TaskStatus.FAILED,
-            error=f"未找到管线模板: {template_name}",
-        )
-        writer.write("error", {"error": f"未找到管线模板: {template_name}"})
-        return APIResponse(
-            status="error",
-            message=f"未找到管线模板: {template_name}",
-            data=state.to_dict(),
-        )
-
-    asyncio_task = asyncio.create_task(
-        _run_pipeline_task(state.id, pipeline, config, req.requirement, writer)
-    )
-    _registry.update(state.id, status=TaskStatus.RUNNING)
-    _registry.attach(state.id, asyncio_task)
-
-    return APIResponse(
-        status="ok",
-        message="任务已提交（旧 Pipeline 兼容模式）",
-        data=state.to_dict(),
-    )
-
-
-# ─── 后台执行：Pipeline 路径 ──────────────────────────
-
-
-async def _run_pipeline_task(
-    task_id: str,
-    pipeline,
-    config,
-    requirement: str,
-    writer: TranscriptWriter,
-) -> None:
-    """异步执行 Pipeline 并把进度事件落到 TaskState + transcript。"""
-
-    async def on_step_event(event: Dict[str, Any]) -> None:
-        # 写 transcript
-        writer.write(str(event.get("type", "step")), event)
-
-        # 更新 progress
-        ev_type = event.get("type")
-        if ev_type == "step_started":
-            _registry.set_progress(
-                task_id,
-                current_step=event.get("step"),
-                activity=f"running step '{event.get('step')}'",
-            )
-            await broadcast_monitor_event(
-                "agent_progress",
-                {
-                    "task_id": task_id,
-                    "agent": event.get("capability") or event.get("agent"),
-                    "activity": "planning" if event.get("step") == "plan" else "running",
-                    "status": "running",
-                    "current_step": event.get("step"),
-                },
-            )
-        elif ev_type in ("step_completed", "step_failed", "step_skipped"):
-            # 把中间结果填到 plan / code / review 字段（兼容旧前端）
-            step_name = event.get("step")
-            output = event.get("output")
-            if output:
-                fields_map = {"plan": "plan", "code": "code", "review": "review"}
-                target = fields_map.get(str(step_name))
-                if target:
-                    _registry.update(task_id, **{target: output})
-            _registry.set_progress(
-                task_id,
-                activity=f"{ev_type}: {step_name}",
-            )
-            await broadcast_monitor_event(
-                "agent_progress",
-                {
-                    "task_id": task_id,
-                    "activity": "completed" if ev_type == "step_completed" else ev_type,
-                    "status": "completed" if ev_type == "step_completed" else "error",
-                    "current_step": step_name,
-                    "elapsed_ms": event.get("duration_ms"),
-                    "error": event.get("error"),
-                },
-            )
-
-    writer.write("started", {"requirement": requirement})
-
-    parent_token = set_parent_task_id(task_id)
-    try:
-        result = await pipeline.execute(
-            config,
-            initial_context={
-                "user_requirement": requirement,
-                "requirement": requirement,
-                "message": requirement,
-            },
-            on_step_event=on_step_event,
-        )
-
-        from core.pipeline import PipelineStatus
-
-        if result.status == PipelineStatus.COMPLETED:
-            _registry.mark_done(task_id, TaskStatus.COMPLETED, output=result.context)
-            writer.write("done", {"status": "completed", "duration_ms": result.duration_ms})
-        else:
-            _registry.mark_done(task_id, TaskStatus.FAILED, error=result.error)
-            writer.write("done", {"status": "failed", "error": result.error})
-
-    except asyncio.CancelledError:
-        _registry.mark_done(task_id, TaskStatus.KILLED, error="cancelled by user")
-        writer.write("killed", {})
-        raise
-    except Exception as exc:
-        logger.exception("Task '%s' pipeline failed", task_id)
-        _registry.mark_done(task_id, TaskStatus.FAILED, error=str(exc))
-        writer.write("error", {"error": str(exc)})
-    finally:
-        reset_parent_task_id(parent_token)
-
-
-async def _run_single_agent_fallback(
-    task_id: str,
-    cap_registry,
-    requirement: str,
-    writer: TranscriptWriter,
-) -> None:
-    """fallback: 没匹配模板时，直接调 planner Agent。"""
-    writer.write("started", {"mode": "fallback_single_agent"})
-    _registry.set_progress(task_id, current_step="planner", activity="single-agent fallback")
-
-    parent_token = set_parent_task_id(task_id)
-    try:
-        result = await cap_registry.execute("planner", requirement=requirement)
-        _registry.mark_done(task_id, TaskStatus.COMPLETED, output=result)
-        _registry.update(task_id, plan=result)
-        writer.write("done", {"status": "completed"})
-    except asyncio.CancelledError:
-        _registry.mark_done(task_id, TaskStatus.KILLED, error="cancelled by user")
-        writer.write("killed", {})
-        raise
-    except Exception as exc:
-        logger.exception("Task '%s' single-agent fallback failed", task_id)
-        _registry.mark_done(task_id, TaskStatus.FAILED, error=str(exc))
-        writer.write("error", {"error": str(exc)})
-    finally:
-        reset_parent_task_id(parent_token)
 
 
 
@@ -426,6 +234,19 @@ async def _run_agent_task(
             },
         )
         _registry.set_progress(task_id, current_step="agent_loop", activity="agent deciding next action")
+        await broadcast_monitor_event(
+            "agent_progress",
+            {
+                "run_id": task_id,
+                "task_id": task_id,
+                "agent": agent_name,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "activity": "agent_loop",
+                "status": "running",
+                "current_step": "agent_loop",
+            },
+        )
 
         stream_fn = getattr(agent_cap, "execute_stream", None)
         if callable(stream_fn):
@@ -435,6 +256,19 @@ async def _run_agent_task(
 
                 if ev_type == "thinking":
                     _registry.set_progress(task_id, activity="thinking")
+                    await broadcast_monitor_event(
+                        "agent_progress",
+                        {
+                            "run_id": task_id,
+                            "task_id": task_id,
+                            "agent": agent_name,
+                            "workspace_id": workspace_id,
+                            "session_id": session_id,
+                            "activity": "thinking",
+                            "status": "running",
+                            "current_step": "agent_loop",
+                        },
+                    )
                 elif ev_type == "tool_call":
                     _registry.set_progress(
                         task_id,
@@ -442,12 +276,44 @@ async def _run_agent_task(
                         last_tool=event.get("tool"),
                         current_step="tool_use",
                     )
+                    await broadcast_monitor_event(
+                        "agent_progress",
+                        {
+                            "run_id": task_id,
+                            "task_id": task_id,
+                            "agent": agent_name,
+                            "workspace_id": workspace_id,
+                            "session_id": session_id,
+                            "activity": "calling_tool",
+                            "status": "running",
+                            "tool": event.get("tool"),
+                            "tool_call_id": event.get("tool_call_id"),
+                            "current_step": "tool_use",
+                        },
+                    )
                 elif ev_type == "tool_result":
+                    result_payload = event.get("result")
+                    is_error = isinstance(result_payload, dict) and bool(result_payload.get("error"))
                     _registry.set_progress(
                         task_id,
                         tool_count=1,
                         activity=f"tool result {event.get('tool')}",
                         last_tool=event.get("tool"),
+                    )
+                    await broadcast_monitor_event(
+                        "agent_progress",
+                        {
+                            "run_id": task_id,
+                            "task_id": task_id,
+                            "agent": agent_name,
+                            "workspace_id": workspace_id,
+                            "session_id": session_id,
+                            "activity": "tool_result",
+                            "status": "error" if is_error else "running",
+                            "tool": event.get("tool"),
+                            "tool_call_id": event.get("tool_call_id"),
+                            "current_step": "tool_use",
+                        },
                     )
                 elif ev_type == "done":
                     final_output = event.get("content")
@@ -474,6 +340,18 @@ async def _run_agent_task(
         else:
             # Non-streaming capability fallback. The capability still decides internally;
             # we simply lose incremental visibility.
+            await broadcast_monitor_event(
+                "agent_progress",
+                {
+                    "run_id": task_id,
+                    "task_id": task_id,
+                    "agent": agent_name,
+                    "workspace_id": workspace_id,
+                    "session_id": session_id,
+                    "activity": "running",
+                    "status": "running",
+                },
+            )
             final_output = await agent_cap.execute(**payload)
             writer.write("done", {"content": final_output})
 
@@ -496,6 +374,20 @@ async def _run_agent_task(
                 "duration_ms": int((asyncio.get_event_loop().time() - started) * 1000),
             },
         )
+        await broadcast_monitor_event(
+            "agent_progress",
+            {
+                "run_id": task_id,
+                "task_id": task_id,
+                "agent": agent_name,
+                "workspace_id": workspace_id,
+                "session_id": session_id,
+                "activity": "completed" if status == "completed" else "failed",
+                "status": status,
+                "duration_ms": int((asyncio.get_event_loop().time() - started) * 1000),
+                "error": failed_error,
+            },
+        )
 
     except asyncio.CancelledError:
         _registry.mark_done(task_id, TaskStatus.KILLED, error="cancelled by user")
@@ -503,6 +395,10 @@ async def _run_agent_task(
         await broadcast_monitor_event(
             "agent_run_cancelled",
             {"run_id": task_id, "task_id": task_id, "agent": agent_name, "status": "killed"},
+        )
+        await broadcast_monitor_event(
+            "agent_progress",
+            {"run_id": task_id, "task_id": task_id, "agent": agent_name, "activity": "cancelled", "status": "killed"},
         )
         raise
     except Exception as exc:
@@ -512,6 +408,10 @@ async def _run_agent_task(
         await broadcast_monitor_event(
             "agent_run_failed",
             {"run_id": task_id, "task_id": task_id, "agent": agent_name, "status": "failed", "error": str(exc)},
+        )
+        await broadcast_monitor_event(
+            "agent_progress",
+            {"run_id": task_id, "task_id": task_id, "agent": agent_name, "activity": "failed", "status": "failed", "error": str(exc)},
         )
     finally:
         reset_workspace_root_override(workspace_token)

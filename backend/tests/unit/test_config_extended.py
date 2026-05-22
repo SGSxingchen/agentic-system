@@ -26,7 +26,6 @@ from core.config import (
     MemoryConfig,
     BusConfig,
     ContextConfig,
-    PipelineConfig,
     AgentConfig,
 )
 
@@ -179,7 +178,6 @@ class TestConfigModels:
         assert config.llm.provider == "openai"
         assert config.memory.backend == "chroma"
         assert config.bus.queue_size == 1000
-        assert config.pipeline.max_iterations == 10
         assert config.tools.web_search.provider == "duckduckgo"
         assert config.tools.custom == {}
 

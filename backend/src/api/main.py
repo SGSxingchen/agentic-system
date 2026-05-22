@@ -33,8 +33,6 @@ from core.memory import (
     MemoryRetriever,
     create_memory_store,
 )
-from core.pipeline import Pipeline
-
 from .dependencies import (
     get_capability_registry,
     set_agent_registry,
@@ -46,7 +44,6 @@ from .dependencies import (
     set_memory_formation,
     set_memory_retriever,
     set_memory_store,
-    set_pipeline,
     set_reload_agent_fn,
 )
 from .routes import (
@@ -57,7 +54,6 @@ from .routes import (
     memory_router,
     personas_router,
     artifacts_router,
-    pipelines_router,
     tasks_router,
     runs_router,
 )
@@ -151,7 +147,7 @@ async def init_memory_system(config: Dict[str, Any]):
     memory_formation = MemoryFormation(
         store=memory_store,
         consolidation_threshold=float(memory_config.get("consolidation_threshold", 0.3)),
-        forget_after_days=int(memory_config.get("forget_after_days", 30)),
+        forget_after_days=int(memory_config.get("forget_after_days", 1)),
         forget_min_importance=float(memory_config.get("forget_min_importance", 0.3)),
     )
     memory_retriever = MemoryRetriever(store=memory_store)
@@ -382,16 +378,6 @@ async def lifespan(app: FastAPI):
     await init_memory_system(config)
     await reload_agents()
 
-    pipeline = Pipeline(cap_registry, bus)
-    ext_configs = _load_external_configs()
-    pipeline_templates = ext_configs.get("pipelines")
-    if isinstance(pipeline_templates, dict):
-        pipeline.load_templates(pipeline_templates)
-        print(f"[OK] pipeline initialized with {len(pipeline_templates)} templates")
-    else:
-        print("[OK] pipeline initialized without templates")
-    set_pipeline(pipeline)
-
     print("[OK] system initialization completed")
 
     try:
@@ -429,7 +415,6 @@ app.add_middleware(
 app.include_router(tasks_router)
 app.include_router(runs_router)
 app.include_router(agents_router)
-app.include_router(pipelines_router)
 app.include_router(memory_router)
 app.include_router(personas_router)
 app.include_router(config_router)

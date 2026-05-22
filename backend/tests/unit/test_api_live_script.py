@@ -44,15 +44,15 @@ def load_live_script() -> ModuleType:
     return module
 
 
-def test_smoke_suite_uses_pipeline_endpoints_only() -> None:
+def test_smoke_suite_uses_agent_run_endpoints_only() -> None:
     module = load_live_script()
     runner = RecordingRunner()
 
     module.run_smoke_tests(runner)
 
     urls = [call["url"] for call in runner.calls]
-    assert "/api/pipelines/templates" in urls
-    assert "/api/pipelines/execute" in urls
+    assert "/api/runs" in urls
+    assert all(not url.startswith("/api/pipelines") for url in urls)
     assert all(not url.startswith("/api/workflows") for url in urls)
 
 
@@ -66,5 +66,6 @@ def test_infra_suite_avoids_llm_dependent_agent_invocation() -> None:
     assert "/api/health" in urls
     assert "/api/config" in urls
     assert "/api/agents" in urls
-    assert "/api/pipelines/templates" in urls
+    assert "/api/runs" in urls
+    assert all(not url.startswith("/api/pipelines") for url in urls)
     assert all("/invoke" not in url for url in urls)

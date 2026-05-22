@@ -37,14 +37,12 @@ class TaskStatus(str, Enum):
 
 
 class TaskSubmitRequest(BaseModel):
-    """提交任务请求（兼容旧 /api/tasks）。
+    """提交任务请求。
 
-    默认 pipeline=auto 已迁移为自主 Agent Run；显式指定非 auto 的 pipeline
-    才走旧固定管线兼容路径。
+    /api/tasks 是 Agent Run 的便捷入口；固定 Pipeline 已移除。
     """
 
     requirement: str = Field(..., min_length=1, description="用户需求描述")
-    pipeline: str = Field(default="auto", description="兼容字段：auto=自主 Agent Run；其他值=旧管线模板")
     agent_name: str = Field(default="assistant", description="auto 模式下使用的 Agent")
     session_id: Optional[str] = Field(default=None, description="可选会话实例 ID")
     workspace_id: Optional[str] = Field(default=None, description="可选工作区实例 ID")
@@ -123,6 +121,7 @@ class AgentInfo(BaseModel):
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
+    mcp_capability_status: Optional[dict[str, Any]] = None
 
 
 class AgentInvokeRequest(BaseModel):
@@ -143,29 +142,6 @@ class AgentInvokeRequest(BaseModel):
         if not isinstance(value, dict) or "data" in value:
             return value
         return {"data": dict(value)}
-
-
-# ========================
-# 管线（Pipeline）相关
-# ========================
-
-
-class PipelineExecuteRequest(BaseModel):
-    """执行管线请求"""
-
-    pipeline_type: str = Field(default="plan_code_review", description="管线类型")
-    template_name: Optional[str] = Field(default=None, description="YAML 管线模板名称（优先级高于 pipeline_type）")
-    requirement: str = Field(default="", description="需求描述")
-    input: Optional[str] = Field(default=None, description="输入（别名，等价于 requirement）")
-    options: dict[str, Any] = Field(default_factory=dict, description="额外选项")
-
-
-class PipelineTemplate(BaseModel):
-    """管线模板"""
-
-    name: str
-    description: str
-    steps: list[str]
 
 
 # ========================
@@ -297,40 +273,6 @@ class AgentUpdateRequest(BaseModel):
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
-
-
-# ========================
-# 管线（Pipeline）CRUD
-# ========================
-
-
-class PipelineStepSchema(BaseModel):
-    """管线步骤"""
-
-    name: str = Field(..., min_length=1)
-    agent: str = Field(..., min_length=1)
-    input: Optional[dict[str, Any]] = None
-    output_key: Optional[str] = None
-    condition: Optional[str] = None
-    max_iterations: int = Field(default=1, ge=1)
-    timeout: Optional[float] = Field(default=None, gt=0, description="步骤超时秒数")
-
-
-class PipelineCreateRequest(BaseModel):
-    """创建管线请求"""
-
-    name: str = Field(..., min_length=1, description="管线名称（英文下划线格式）")
-    description: str = Field(default="", description="管线描述")
-    mode: str = Field(default="sequential", description="执行模式: sequential | parallel")
-    steps: list[PipelineStepSchema] = Field(default_factory=list, description="步骤列表")
-
-
-class PipelineUpdateRequest(BaseModel):
-    """更新管线请求（部分更新）"""
-
-    description: Optional[str] = None
-    mode: Optional[str] = None
-    steps: Optional[list[PipelineStepSchema]] = None
 
 
 # ========================

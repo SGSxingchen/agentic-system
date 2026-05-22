@@ -8,7 +8,7 @@
 
 不负责:
 - transcript 落盘（由 TranscriptWriter 处理）
-- Pipeline 执行细节（由 routes/tasks.py + Pipeline 处理）
+- Agent 执行细节（由 routes/tasks.py 处理）
 """
 from __future__ import annotations
 
@@ -42,9 +42,8 @@ class TaskRegistry:
     def create(
         self,
         *,
-        task_type: TaskType = TaskType.PIPELINE,
+        task_type: TaskType = TaskType.AGENT_RUN,
         requirement: str,
-        pipeline_name: str = "",
         agent_name: Optional[str] = None,
         session_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
@@ -55,14 +54,13 @@ class TaskRegistry:
     ) -> TaskState:
         """新建一条 TaskState（PENDING）。
 
-        ``pipeline_name`` 保持默认空值，使新的 Agent Run 不必伪装成管线。
+        默认创建 Agent Run；子 Agent 通过 task_type 显式标记。
         """
         task_id = str(uuid.uuid4())
         state = TaskState(
             id=task_id,
             type=task_type,
             requirement=requirement,
-            pipeline_name=pipeline_name,
             agent_name=agent_name,
             session_id=session_id,
             workspace_id=workspace_id,

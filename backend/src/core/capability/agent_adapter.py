@@ -1,6 +1,6 @@
 """AgentCapability — 将 Agent 包装为 CapabilityBase
 
-使 Agent 可以注册到 CapabilityRegistry，被 Pipeline 和其他 Agent 通过
+使 Agent 可以注册到 CapabilityRegistry，被其他 Agent 通过
 统一的 capability 接口调用。当 Agent 被其他 Agent 当工具调用时，
 LLM 通过 get_schema() 返回的 input_schema 了解该传什么参数。
 """
@@ -13,7 +13,7 @@ from ..agent.agent import Agent
 class AgentCapability(CapabilityBase):
     """将 Agent 适配为 CapabilityBase 接口
 
-    Pipeline 不需要知道 step 调用的是 Agent 还是工具，
+    调用方不需要知道目标是 Agent 还是工具，
     统一通过 CapabilityRegistry.execute() 调用。
 
     Args:

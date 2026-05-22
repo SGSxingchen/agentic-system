@@ -52,6 +52,11 @@ interface AgentCardData {
   max_iterations?: number
   skills?: any
   mcp_servers?: Array<any>
+  mcp_capability_status?: {
+    state?: string
+    message?: string
+    errors?: string[]
+  }
 }
 
 export function AgentPanel() {
@@ -330,8 +335,8 @@ export function AgentPanel() {
       <section className="agent-persona-card">
         <div className="agent-persona-card__header">
           <div>
-            <span className="agent-form__kicker">Persona Routing</span>
-            <h3>Agent 人格路由</h3>
+          <span className="agent-form__kicker">人格路由</span>
+          <h3>智能体人格路由</h3>
             <p>此处只管理“谁使用哪种人格”。人格定义、版本与审核请到“人格管理”页面。</p>
           </div>
           <button className="refresh-btn" onClick={() => fetchPersonaContext(true)}>刷新人格</button>
@@ -342,7 +347,7 @@ export function AgentPanel() {
         <div className="persona-priority-strip">
           <span>1 请求 persona_id</span>
           <span>2 session_id 绑定</span>
-          <span>3 Agent 绑定</span>
+              <span>3 个智能体绑定</span>
           <span>4 {personaName(baseId)}</span>
         </div>
 
@@ -427,7 +432,7 @@ export function AgentPanel() {
 
           <div className="agent-form__hero">
             <div>
-              <span className="agent-form__kicker">Agent Config</span>
+          <span className="agent-form__kicker">智能体配置</span>
               <h3 className="agent-form__title">{isNew ? '新建智能体' : `编辑 ${editingAgent}`}</h3>
               <p className="agent-form__subtitle">
                 配置角色、工具能力和调用边界。Agent 可以把工具或其他 Agent 当作能力使用。
@@ -435,9 +440,9 @@ export function AgentPanel() {
             </div>
             <div className="agent-form__stats">
               <span><strong>{form.tools.length}</strong> 已选能力</span>
-              <span><strong>{selectedAgentTools}</strong> 子 Agent</span>
+              <span><strong>{selectedAgentTools}</strong> 子智能体</span>
               <span><strong>{selectedNativeTools}</strong> 工具</span>
-              <span><strong>{(() => { try { return (JSON.parse(form.skills_json || '{}').items || []).length } catch { return 0 } })()}</strong> Skills</span>
+              <span><strong>{(() => { try { return (JSON.parse(form.skills_json || '{}').items || []).length } catch { return 0 } })()}</strong> 技能</span>
               <span><strong>{(() => { try { return (JSON.parse(form.mcp_servers_json || '[]') || []).length } catch { return 0 } })()}</strong> MCP</span>
             </div>
           </div>
@@ -447,7 +452,7 @@ export function AgentPanel() {
               <span>01</span>
               <div>
                 <h4>基础信息</h4>
-                <p>名称用于调用，描述用于让主 Agent 判断什么时候委派它。</p>
+            <p>名称用于调用，描述用于让主智能体判断何时委派该角色。</p>
               </div>
             </div>
 
@@ -515,7 +520,7 @@ export function AgentPanel() {
                 placeholder="定义智能体的角色、行为和输出格式..."
                 rows={10}
               />
-              <span className="form-hint">支持 Markdown。编辑已有 Agent 时会加载当前配置中的 Prompt。</span>
+                <span className="form-hint">支持 Markdown。编辑已有智能体时会加载当前配置中的提示词。</span>
             </div>
           </div>
 
@@ -524,7 +529,7 @@ export function AgentPanel() {
               <span>03</span>
               <div>
                 <h4>可用能力</h4>
-                <p>选择这个 Agent 可以调用的工具或子 Agent。</p>
+              <p>选择该智能体可以调用的工具或子智能体。</p>
               </div>
               <input
                 className="tool-search"
@@ -566,21 +571,21 @@ export function AgentPanel() {
                 <span className="form-hint">没有匹配的工具或 Agent</span>
               )}
             </div>
-            <span className="form-hint">LLM 会根据 Prompt 和上下文自主决定何时使用这些能力。</span>
+              <span className="form-hint">模型会根据提示词和上下文自主决定何时使用这些能力。</span>
           </div>
 
           <div className="agent-form__section agent-form__section--runtime">
             <div className="agent-form__section-title">
               <span>04</span>
               <div>
-                <h4>Skills 与 MCP（Agent 专属）</h4>
-                <p>只保存到当前 Agent。启动/调用该 Agent 时，才会加载启用的 SKILL.md 元数据和 MCP server 定义。</p>
+            <h4>技能与 MCP（智能体专属）</h4>
+            <p>只保存到当前智能体。启动或调用该智能体时，才会加载启用的 SKILL.md 元数据和 MCP server 定义。</p>
               </div>
             </div>
 
             <div className="agent-runtime-grid">
               <div className="form-group">
-                <label>Skills JSON</label>
+              <label>技能 JSON</label>
                 <textarea
                   className="runtime-json-editor"
                   value={form.skills_json}
@@ -628,6 +633,7 @@ export function AgentPanel() {
     ).length
     const skillCount = Array.isArray(agent.skills?.items) ? agent.skills.items.length : 0
     const mcpCount = Array.isArray(agent.mcp_servers) ? agent.mcp_servers.filter((server) => server.enabled !== false).length : 0
+    const mcpStatus = agent.mcp_capability_status
 
     return (
       <div key={agent.name} className="agent-card">
@@ -682,6 +688,16 @@ export function AgentPanel() {
           <span>{skillCount} skills</span>
           <span>{mcpCount} MCP</span>
         </div>
+
+        {mcpStatus && mcpStatus.state !== 'not_configured' && (
+          <div className={`agent-runtime-status agent-runtime-status--${mcpStatus.state || 'unknown'}`} title={mcpStatus.message}>
+            <strong>MCP: {mcpStatus.state}</strong>
+            <span>{mcpStatus.message}</span>
+            {Array.isArray(mcpStatus.errors) && mcpStatus.errors.length > 0 && (
+              <small>{mcpStatus.errors.join('; ')}</small>
+            )}
+          </div>
+        )}
 
         {/* 当前工具标签 + 管理按钮 */}
         <div className="agent-tools-section">

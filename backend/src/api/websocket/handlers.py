@@ -19,11 +19,13 @@ from ..dependencies import (
 )
 
 _BRIDGED_EVENT_TYPES = (
-    "step_started",
-    "step_completed",
-    "step_failed",
-    "step_skipped",
     "agent_progress",
+    "agent_status_update",
+    "agent_run_started",
+    "agent_run_event",
+    "agent_run_completed",
+    "agent_run_failed",
+    "agent_run_cancelled",
     "tool_call_started",
     "tool_call_finished",
 )
@@ -237,6 +239,15 @@ async def _handle_user_message(
                 event_type="agent_progress",
             ),
         )
+        await broadcast_monitor_event(
+            "agent_progress",
+            {
+                "agent": "assistant",
+                "activity": "planning",
+                "status": "running",
+                "message": "Preparing context and contacting LLM",
+            },
+        )
         async for event in stream_fn(**assistant_payload):
             etype = event.get("type")
 
@@ -267,6 +278,7 @@ async def _handle_user_message(
                     websocket,
                     _ws_message("event", progress_data, event_type="agent_progress"),
                 )
+                await broadcast_monitor_event("agent_progress", progress_data)
                 await manager.send_to(
                     websocket,
                     _ws_message(
@@ -313,6 +325,7 @@ async def _handle_user_message(
                     websocket,
                     _ws_message("event", progress_data, event_type="agent_progress"),
                 )
+                await broadcast_monitor_event("agent_progress", progress_data)
                 await manager.send_to(
                     websocket,
                     _ws_message(
@@ -370,6 +383,15 @@ async def _handle_user_message(
                         },
                         event_type="agent_progress",
                     ),
+                )
+                await broadcast_monitor_event(
+                    "agent_progress",
+                    {
+                        "agent": "assistant",
+                        "activity": "completed",
+                        "status": "completed",
+                        "elapsed_ms": event.get("elapsed_ms"),
+                    },
                 )
                 # 兼容现有前端：仍然下发 assistant_response 携带最终文本
                 await manager.send_to(
@@ -550,7 +572,7 @@ def schedule_memory_reflection(
 
 
 def register_bus_event_bridge(bus: Any) -> None:
-    """Broadcast safe pipeline events to every connected monitor client."""
+    """Broadcast safe runtime events to every connected monitor client."""
 
     bus_id = id(bus)
     if bus_id in _REGISTERED_BUS_IDS:
