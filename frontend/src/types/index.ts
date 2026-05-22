@@ -1,100 +1,12 @@
-// ===== Artifact / 前端附件 =====
+// ===== 通用 API 响应 =====
 
-export type ArtifactKind = 'html' | 'markdown' | 'code' | 'image' | 'file' | 'text'
-
-export interface Artifact {
-  id: string
-  kind: ArtifactKind | string
-  title: string
-  filename: string
-  mime_type: string
-  size: number
-  previewable: boolean
-  session_id?: string | null
-  message_id?: string | null
-  source?: string
-  metadata?: Record<string, any>
-  created_at: string
-  updated_at: string
-  download_url: string
-  open_url: string
-  content_url: string
-}
-
-// ===== 消息和事件 =====
-
-export interface Message {
-  id: string
-  type: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp: string
-  memoriesUsed?: number
-  elapsedMs?: number
-  usage?: TokenUsage
-  toolCalls?: ToolCallRecord[]
-  timeline?: MessageTimelineItem[]
-  progress?: AgentProgressEvent
-  artifacts?: Artifact[]
-}
-
-export type MessageTimelineItemKind = 'text' | 'tool_call'
-
-export interface MessageTimelineItem {
-  id: string
-  kind: MessageTimelineItemKind
-  order: number
-  content?: string
-  toolCall?: ToolCallRecord
-}
-
-export interface TokenUsage {
-  input_tokens?: number
-  output_tokens?: number
-  total_tokens?: number
-  [key: string]: number | undefined
-}
-
-export type ToolCallStatus = 'running' | 'success' | 'error'
-
-export interface ToolCallRecord {
-  id: string
-  tool: string
-  status: ToolCallStatus
-  args?: unknown
-  result?: unknown
-  error?: unknown
-  elapsedMs?: number
-  startedAt?: string
-  finishedAt?: string
-  concurrent?: boolean
-  truncated?: boolean
-}
-
-export interface AgentProgressEvent {
-  agent?: string
-  activity: 'planning' | 'calling_tool' | 'waiting' | 'completed' | 'running' | string
-  status?: 'running' | 'success' | 'error' | 'completed' | string
+export interface APIResponse<T = any> {
+  status: 'ok' | 'error'
   message?: string
-  tool?: string
-  tool_call_id?: string
-  current_step?: string
-  task_id?: string
-  elapsed_ms?: number
-  [key: string]: unknown
+  data?: T
 }
 
-export interface ChatSessionSummary {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-  message_count: number
-  last_message?: string
-}
-
-export interface ChatSession extends ChatSessionSummary {
-  messages: Message[]
-}
+// ===== WebSocket 事件 =====
 
 export interface WSEvent {
   type: string
@@ -134,6 +46,7 @@ export interface AgentInfo {
   max_iterations?: number
   skills?: AgentSkillConfig | null
   mcp_servers?: AgentMCPServerConfig[]
+  default_workspace_id?: string | null
 }
 
 // ===== 记忆 =====
@@ -187,19 +100,15 @@ export interface MemorySettings {
   }
 }
 
-// ===== 任务和管线 =====
+// ===== 任务 / Agent Run =====
 
-// v2 Phase B 起规范状态：pending | running | completed | failed | killed
-// planning/coding/reviewing 是旧 routes/tasks.py 残留，保留为 union 项以容忍升级前的旧后端响应。
 export type TaskStatus =
   | 'pending'
   | 'running'
+  | 'paused'
   | 'completed'
   | 'failed'
   | 'killed'
-  | 'planning'
-  | 'coding'
-  | 'reviewing'
 
 export interface TaskProgress {
   tool_count: number
@@ -216,7 +125,6 @@ export interface Task {
   status: TaskStatus
   requirement?: string
   agent?: string
-  pipeline?: string
   goal?: string
   type?: 'agent_run' | 'pipeline' | 'sub_agent' | string
   run_id?: string | null
@@ -225,6 +133,10 @@ export interface Task {
   workspace_id?: string | null
   mode?: string
   strategy?: string
+  max_iterations?: number
+  iteration?: number
+  completion_criteria?: string
+  auto_memory?: boolean
   input?: any
   output?: any
   plan?: any
@@ -258,6 +170,62 @@ export interface RunWorkspaceSummary {
   active_runs: number
   latest_updated_at: string
   agents: string[]
+}
+
+export interface RunMemoryContext {
+  run_id: string
+  query: string
+  completion_criteria?: string
+  auto_memory?: boolean
+  note?: string
+  memories: Memory[]
+}
+
+// ===== 受管理工作区 =====
+
+export interface WorkspaceFileEntry {
+  path: string
+  name: string
+  type: 'file' | 'directory' | string
+  size?: number | null
+  updated_at?: string | null
+}
+
+export interface ManagedWorkspace {
+  id: string
+  name: string
+  kind: string
+  source: string
+  root_path: string
+  created_at: string
+  updated_at: string
+  metadata?: Record<string, any> & {
+    description?: string
+    file_count?: number
+    directory_count?: number
+    total_bytes?: number
+  }
+  files?: WorkspaceFileEntry[]
+}
+
+export interface WorkspaceFileContent {
+  workspace_id: string
+  path: string
+  size: number
+  editable: boolean
+  is_text: boolean
+  encoding: string
+  too_large: boolean
+  max_editable_bytes: number
+  truncated?: boolean
+  binary?: boolean
+  content: string
+}
+
+export interface WorkspaceFileListing {
+  workspace_id: string
+  path: string
+  files: WorkspaceFileEntry[]
 }
 
 // ===== 配置 =====
@@ -329,14 +297,6 @@ export interface HealthStatus {
   agents?: Record<string, string>
 }
 
-// ===== API 响应 =====
-
-export interface APIResponse<T = any> {
-  status: 'ok' | 'error'
-  message?: string
-  data?: T
-}
-
 // ===== 能力 =====
 
 export interface CapabilityInfo {
@@ -345,98 +305,17 @@ export interface CapabilityInfo {
   parameters?: Record<string, any>
 }
 
-// ===== 进化能力图 =====
-
-export interface EvolutionNode {
-  id: string
-  label: string
-  type: 'agent' | 'tool' | 'dynamic_tool'
-  description?: string
-  status?: string
-  capabilities?: string[]
-  parameters?: Record<string, any>
-  mode?: string | null
-}
-
-export interface EvolutionEdge {
-  source: string
-  target: string
-  kind: 'uses' | 'delegates'
-}
-
-export interface EvolutionGraph {
-  summary: {
-    agents: number
-    tools: number
-    dynamic_tools: number
-    edges: number
-    master_agent?: string | null
-  }
-  nodes: EvolutionNode[]
-  edges: EvolutionEdge[]
-  supported_dynamic_modes: string[]
-  extension_points: string[]
-}
-
-export interface EvolutionSystemComponent {
-  id: string
-  title: string
-  status: 'healthy' | 'warning' | 'empty' | 'disabled' | string
-  summary: string
-  metrics: Record<string, any>
-  items: Array<Record<string, any>>
-  empty_state?: string
-}
-
-export interface EvolutionSystemStatus {
-  overview: {
-    system_name: string
-    version: string
-    generated_at: string
-    readiness: string
-    architecture: string
-    agent_count: number
-    tool_count: number
-    dynamic_tool_count: number
-    pipeline_count: number
-    model: string
-    [key: string]: any
-  }
-  components: EvolutionSystemComponent[]
-  graph: EvolutionGraph
-}
-
-export interface EvolutionCommand {
-  goal: string
-  target_components: string[]
-  command: string
-  status_snapshot: Record<string, any>
-}
-
-export interface ToolPromptInfo {
-  name: string
-  type: 'tool' | 'dynamic_tool'
-  prompt: string
-  prompt_source: 'default' | 'custom'
-  schema: Record<string, any>
-  returns?: string
-  mode?: string | null
-}
-
-// ===== 视图类型 =====
+// ===== 视图 =====
 
 export type PanelType =
-  | 'chat'
-  | 'tasks'
+  | 'overview'
+  | 'workspaces'
   | 'agents'
-  | 'memory'
-  | 'memory-settings'
+  | 'runs'
   | 'monitor'
-  | 'pipeline'
-  | 'evolution'
+  | 'memory'
   | 'personas'
-
-// ===== 视图类型（新 Layout 导航） =====
+  | 'settings'
 
 export type ViewType = 'dashboard' | 'tasks' | 'agents' | 'memory' | 'settings'
 

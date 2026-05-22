@@ -29,6 +29,7 @@ from core.memory import (
     MemoryFormation,
     MemoryRetriever,
     InMemoryStore,
+    MemoryType,
 )
 from core.agent import AgentRegistry
 
@@ -460,7 +461,14 @@ class TestRunsAPI:
     async def test_create_run_returns_agent_run(self, client):
         resp = await client.post(
             "/api/runs",
-            json={"goal": "做一个并发运行模型", "agent_name": "assistant", "workspace_id": "test-ws"},
+            json={
+                "goal": "做一个并发运行模型",
+                "agent_name": "assistant",
+                "workspace_id": "test-ws",
+                "mode": "continuous",
+                "max_iterations": 77,
+                "completion_criteria": "运行卡片展示持续工作语义",
+            },
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -468,6 +476,48 @@ class TestRunsAPI:
         assert body["data"]["type"] == "agent_run"
         assert body["data"]["agent_name"] == "assistant"
         assert body["data"]["workspace_id"] == "test-ws"
+        assert body["data"]["mode"] == "continuous"
+        assert body["data"]["max_iterations"] == 77
+        assert body["data"]["completion_criteria"] == "运行卡片展示持续工作语义"
+
+    async def test_control_run_pause_and_resume(self, client):
+        resp = await client.post(
+            "/api/runs",
+            json={"goal": "持续推进目标", "agent_name": "assistant"},
+        )
+        assert resp.status_code == 200
+        run_id = resp.json()["data"]["run_id"]
+
+        pause_resp = await client.post(f"/api/runs/{run_id}/control", json={"action": "pause"})
+        assert pause_resp.status_code == 200
+        assert pause_resp.json()["data"]["status"] == "paused"
+
+        resume_resp = await client.post(f"/api/runs/{run_id}/control", json={"action": "resume"})
+        assert resume_resp.status_code == 200
+        assert resume_resp.json()["data"]["status"] == "running"
+
+    async def test_get_run_memory_context(self, client, setup_deps):
+        await setup_deps["formation"].create_memory(
+            content="用户偏好：前端要像目标工作台，而不是普通工具箱。",
+            memory_type=MemoryType.SEMANTIC,
+            importance=0.9,
+            metadata={"source": "test"},
+        )
+        resp = await client.post(
+            "/api/runs",
+            json={"goal": "优化目标工作台 UI", "agent_name": "assistant"},
+        )
+        assert resp.status_code == 200
+        run_id = resp.json()["data"]["run_id"]
+
+        memory_resp = await client.get(f"/api/runs/{run_id}/memory-context")
+        assert memory_resp.status_code == 200
+        body = memory_resp.json()
+        assert body["status"] == "ok"
+        assert body["data"]["run_id"] == run_id
+        assert body["data"]["query"] == "优化目标工作台 UI"
+        assert body["data"]["memories"]
+        assert "目标工作台" in body["data"]["memories"][0]["content"]
 
     async def test_create_run_unknown_agent_returns_error(self, client):
         resp = await client.post(

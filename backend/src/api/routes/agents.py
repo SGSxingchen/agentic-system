@@ -76,6 +76,7 @@ def _agent_config_fields(name: str) -> dict:
         "max_iterations": config.get("max_iterations"),
         "skills": config.get("skills"),
         "mcp_servers": config.get("mcp_servers") or [],
+        "default_workspace_id": config.get("default_workspace_id"),
     }
 
 
@@ -182,6 +183,7 @@ async def list_agents():
                 max_iterations=config.get("max_iterations") if isinstance(config, dict) else None,
                 skills=config.get("skills") if isinstance(config, dict) else None,
                 mcp_servers=config.get("mcp_servers") if isinstance(config, dict) else [],
+                default_workspace_id=config.get("default_workspace_id") if isinstance(config, dict) else None,
             ).model_dump()
         )
 
@@ -266,6 +268,8 @@ async def create_agent(req: AgentCreateRequest):
         new_agent["skills"] = req.skills.model_dump()
     if mcp_servers:
         new_agent["mcp_servers"] = mcp_servers
+    if req.default_workspace_id:
+        new_agent["default_workspace_id"] = req.default_workspace_id.strip()
     agents_list.append(new_agent)
     data["agents"] = agents_list
 
@@ -318,6 +322,12 @@ async def update_agent(name: str, req: AgentUpdateRequest):
             if errors:
                 return APIResponse(status="error", message=f"MCP server '{server.get('name') or '<unnamed>'}' 配置无效: {', '.join(errors)}")
         target["mcp_servers"] = mcp_servers
+    if "default_workspace_id" in req.model_fields_set:
+        value = (req.default_workspace_id or "").strip()
+        if value:
+            target["default_workspace_id"] = value
+        else:
+            target.pop("default_workspace_id", None)
 
     data["agents"] = agents_list
 

@@ -50,6 +50,10 @@ class TaskRegistry:
         workspace_id: Optional[str] = None,
         mode: str = "autonomous",
         strategy: str = "agent_decides",
+        max_iterations: int = 50,
+        iteration: int = 0,
+        completion_criteria: str = "",
+        auto_memory: bool = True,
         parent_id: Optional[str] = None,
         output_file: Optional[str] = None,
     ) -> TaskState:
@@ -68,6 +72,10 @@ class TaskRegistry:
             workspace_id=workspace_id,
             mode=mode,
             strategy=strategy,
+            max_iterations=max_iterations,
+            iteration=iteration,
+            completion_criteria=completion_criteria,
+            auto_memory=auto_memory,
             parent_id=parent_id,
             output_file=output_file,
         )
@@ -174,6 +182,27 @@ class TaskRegistry:
         asyncio_task = self._asyncio_tasks.get(task_id)
         if asyncio_task is not None and not asyncio_task.done():
             asyncio_task.cancel()
+        return True
+
+    def pause(self, task_id: str) -> bool:
+        """Mark a running task as PAUSED without cancelling its asyncio task."""
+        task = self._tasks.get(task_id)
+        if task is None:
+            return False
+        terminal = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.KILLED}
+        if task.status in terminal:
+            return False
+        task.status = TaskStatus.PAUSED
+        task.touch()
+        return True
+
+    def resume(self, task_id: str) -> bool:
+        """Resume a paused task by returning it to RUNNING."""
+        task = self._tasks.get(task_id)
+        if task is None or task.status is not TaskStatus.PAUSED:
+            return False
+        task.status = TaskStatus.RUNNING
+        task.touch()
         return True
 
     def list_children(self, parent_id: str) -> List[TaskState]:

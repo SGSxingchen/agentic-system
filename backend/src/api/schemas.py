@@ -31,6 +31,7 @@ class TaskStatus(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     KILLED = "killed"
@@ -58,8 +59,11 @@ class AgentRunCreateRequest(BaseModel):
     agent_name: str = Field(default="assistant", description="负责本次运行的 Agent")
     session_id: Optional[str] = Field(default=None, description="会话实例 ID；仅作为上下文/溯源")
     workspace_id: Optional[str] = Field(default=None, description="工作区实例 ID；为空则自动创建 run- 前缀工作区")
-    mode: str = Field(default="autonomous", description="运行语义：autonomous/interactive/compat")
-    strategy: str = Field(default="agent_decides", description="调度策略说明；不表达固定步骤")
+    mode: str = Field(default="continuous", description="运行语义：continuous/autonomous/interactive/compat")
+    strategy: str = Field(default="memory_guided_agent_loop", description="调度策略说明；不表达固定步骤")
+    max_iterations: int = Field(default=50, ge=1, le=500, description="持续工作最大迭代轮数")
+    completion_criteria: str = Field(default="", description="目标完成标准，传给 Agent 用于自检")
+    auto_memory: bool = Field(default=True, description="是否自动使用和沉淀运行记忆")
     input: dict[str, Any] = Field(default_factory=dict, description="附加上下文输入")
     parent_id: Optional[str] = Field(default=None, description="可选父 run/task ID")
 
@@ -67,7 +71,7 @@ class AgentRunCreateRequest(BaseModel):
 class RunControlRequest(BaseModel):
     """运行控制请求。"""
 
-    action: Literal["cancel"] = Field(default="cancel", description="目前支持 cancel；pause/resume 留给后续协作协议")
+    action: Literal["pause", "resume", "cancel"] = Field(default="cancel", description="运行控制动作")
 
 
 class TaskResponse(BaseModel):
@@ -123,6 +127,7 @@ class AgentInfo(BaseModel):
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
+    default_workspace_id: Optional[str] = Field(default=None, description="Agent 默认绑定的工作区 ID")
 
 
 class AgentInvokeRequest(BaseModel):
@@ -285,6 +290,7 @@ class AgentCreateRequest(BaseModel):
     max_iterations: int = Field(default=10, ge=1, le=50, description="tool_use 最大循环次数")
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: list[MCPServerConfigRequest] = Field(default_factory=list)
+    default_workspace_id: Optional[str] = Field(default=None, description="默认绑定的工作区 ID")
 
 
 class AgentUpdateRequest(BaseModel):
@@ -297,6 +303,7 @@ class AgentUpdateRequest(BaseModel):
     max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
     skills: Optional[SkillConfigRequest] = None
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
+    default_workspace_id: Optional[str] = Field(default=None, description="默认绑定的工作区 ID；空字符串表示清空")
 
 
 # ========================

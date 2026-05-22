@@ -60,6 +60,7 @@ from .routes import (
     pipelines_router,
     tasks_router,
     runs_router,
+    workspaces_router,
 )
 from .websocket.handlers import (
     build_memory_context,
@@ -436,6 +437,7 @@ app.include_router(config_router)
 app.include_router(evolution_router)
 app.include_router(chat_sessions_router)
 app.include_router(artifacts_router)
+app.include_router(workspaces_router)
 
 
 @app.post("/api/chat")

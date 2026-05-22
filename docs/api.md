@@ -349,7 +349,7 @@ OpenAI 兼容服务的 `base_url` 可填写服务根地址或 `/v1` 地址，保
 
 ### POST /api/tasks
 
-提交新任务，按指定 Pipeline 模板异步执行。
+提交新任务。默认 `pipeline=auto` 会创建一个 Agent Run；只有显式传入非 `auto` 的 Pipeline 模板名时才走旧兼容管线路径。
 
 **请求体:**
 ```json
@@ -905,7 +905,7 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 
 ## Agent Run API（v2.5 默认任务模型）
 
-固定 Pipeline 已降级为兼容层。新任务应优先使用 Agent Run：一个 run 对应一个可多开的 agent/session/workspace/task 实例，调度层不假定固定步骤，Agent 根据上下文与工具反馈自主决定下一步。
+固定 Workflow 已废弃，Pipeline 已降级为兼容层。新任务应优先使用 Agent Run：一个 run 对应一个可多开的 agent/session/workspace/task 实例，调度层不假定固定步骤，Agent 根据上下文与工具反馈自主决定下一步。
 
 ### 创建运行
 
@@ -913,12 +913,15 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 
 ```json
 {
-  "goal": "实现一个可测试的用户登录 API",
+  "goal": "优化这个项目的 UI 与实际使用体验",
   "agent_name": "assistant",
-  "session_id": "chat-001",
-  "workspace_id": "login-api",
-  "mode": "autonomous",
-  "strategy": "agent_decides",
+  "session_id": "session-a",
+  "workspace_id": "workspace-a",
+  "mode": "continuous",
+  "strategy": "memory_guided_agent_loop",
+  "max_iterations": 50,
+  "completion_criteria": "前端构建通过，目标工作台能展示记忆上下文和暂停/继续控制。",
+  "auto_memory": true,
   "input": {}
 }
 ```
@@ -927,10 +930,11 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 
 ### 查询与控制
 
-- `GET /api/runs?agent_name=&workspace_id=&session_id=&status=`：列出运行实例。
+- `GET /api/runs?agent_name=&workspace_id=&session_id=&status=`：列出运行实例；`status` 可为 `pending` / `running` / `paused` / `completed` / `failed` / `killed`。
 - `GET /api/runs/{run_id}`：查看单个运行。
 - `GET /api/runs/{run_id}/events?offset=0`：读取 transcript 事件流。
-- `POST /api/runs/{run_id}/control`，body `{"action":"cancel"}`：请求取消。
+- `GET /api/runs/{run_id}/memory-context`：查看该目标召回的长期记忆、检索分数和完成标准。
+- `POST /api/runs/{run_id}/control`，body `{"action":"pause"}` / `{"action":"resume"}` / `{"action":"cancel"}`：暂停、继续或取消运行。
 - `DELETE /api/runs/{run_id}`：取消运行快捷方式。
 - `GET /api/runs/workspaces`：按工作区汇总运行。
 

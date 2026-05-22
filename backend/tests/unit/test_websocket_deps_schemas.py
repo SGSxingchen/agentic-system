@@ -40,6 +40,7 @@ from api.dependencies import (
     set_reload_agent_fn,
 )
 from api.schemas import (
+    AgentRunCreateRequest,
     AgentInfo,
     AgentInvokeRequest,
     APIResponse,
@@ -56,6 +57,7 @@ from api.schemas import (
     PipelineExecuteRequest,
     PipelineStepSchema,
     PipelineTemplate,
+    RunControlRequest,
 )
 from api.websocket import handlers as ws_handlers
 from api.websocket.handlers import ConnectionManager
@@ -249,7 +251,7 @@ class TestAPIResponse:
 
 class TestTaskStatus:
     def test_all_values(self):
-        expected = {"pending", "running", "completed", "failed", "killed"}
+        expected = {"pending", "running", "paused", "completed", "failed", "killed"}
         actual = {s.value for s in TaskStatus}
         assert actual == expected
 
@@ -278,6 +280,40 @@ class TestTaskSubmitRequest:
     def test_missing_requirement_rejected(self):
         with pytest.raises(Exception):
             TaskSubmitRequest()
+
+
+class TestAgentRunCreateRequest:
+    def test_defaults_to_continuous_memory_guided_run(self):
+        r = AgentRunCreateRequest(goal="持续优化 UI 直到可演示")
+
+        assert r.goal == "持续优化 UI 直到可演示"
+        assert r.mode == "continuous"
+        assert r.strategy == "memory_guided_agent_loop"
+        assert r.max_iterations == 50
+        assert r.completion_criteria == ""
+        assert r.auto_memory is True
+
+    def test_accepts_completion_criteria_and_iteration_budget(self):
+        r = AgentRunCreateRequest(
+            goal="完成目标工作台",
+            max_iterations=88,
+            completion_criteria="测试和前端构建通过",
+            auto_memory=False,
+        )
+
+        assert r.max_iterations == 88
+        assert r.completion_criteria == "测试和前端构建通过"
+        assert r.auto_memory is False
+
+
+class TestRunControlRequest:
+    @pytest.mark.parametrize("action", ["pause", "resume", "cancel"])
+    def test_accepts_supported_actions(self, action):
+        assert RunControlRequest(action=action).action == action
+
+    def test_rejects_unknown_action(self):
+        with pytest.raises(Exception):
+            RunControlRequest(action="restart")
 
 
 class TestTaskResponse:

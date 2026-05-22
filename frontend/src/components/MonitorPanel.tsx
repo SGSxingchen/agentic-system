@@ -1,282 +1,258 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useAppStore } from '../store/appStore'
+import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api/client'
+import { useAppStore } from '../store/appStore'
+import type { Task, WSEvent } from '../types'
 import './MonitorPanel.css'
+
+const FILTERS: Array<{ value: string; label: string; matches: (event: WSEvent) => boolean }> = [
+  { value: 'all', label: '全部', matches: () => true },
+  {
+    value: 'run',
+    label: '运行',
+    matches: (event) => {
+      const type = event.event_type || event.type || ''
+      return type.startsWith('agent_run') || type === 'agent_progress'
+    },
+  },
+  {
+    value: 'tool',
+    label: '工具',
+    matches: (event) => {
+      const type = event.event_type || event.type || ''
+      return type.startsWith('tool_call')
+    },
+  },
+  {
+    value: 'memory',
+    label: '记忆',
+    matches: (event) => {
+      const type = event.event_type || event.type || ''
+      return type.includes('memory') || type === 'reflection_generated'
+    },
+  },
+  {
+    value: 'error',
+    label: '错误',
+    matches: (event) => {
+      const type = event.event_type || event.type || ''
+      const detail = JSON.stringify(event.data || {}).toLowerCase()
+      return (
+        type.includes('error') ||
+        type.includes('failed') ||
+        detail.includes('"error"')
+      )
+    },
+  },
+]
+
+const ACTIVE_STATUSES = new Set(['running', 'paused'])
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: '排队',
+  running: '运行中',
+  paused: '已暂停',
+  completed: '已完成',
+  failed: '失败',
+  killed: '已取消',
+}
+
+function statusPillClass(status?: string) {
+  switch (status) {
+    case 'running':
+      return 'pill pill--info'
+    case 'completed':
+      return 'pill pill--success'
+    case 'failed':
+      return 'pill pill--danger'
+    case 'killed':
+    case 'paused':
+      return 'pill pill--warning'
+    default:
+      return 'pill'
+  }
+}
+
+function formatDuration(start?: string | null) {
+  if (!start) return '—'
+  const s = new Date(start).getTime()
+  if (Number.isNaN(s)) return '—'
+  const ms = Date.now() - s
+  if (ms < 0) return '—'
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`
+  if (ms < 3600_000) return `${Math.round(ms / 60_000)}m`
+  return `${Math.round(ms / 3600_000)}h`
+}
+
+function formatTimeShort(value?: string) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleTimeString('zh-CN', { hour12: false })
+}
 
 export function MonitorPanel() {
   const { state, dispatch } = useAppStore()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const eventListRef = useRef<HTMLDivElement>(null)
-  const [autoScroll, setAutoScroll] = useState(true)
-
-  const fetchHealth = useCallback(async () => {
-    const res = await api.getHealth()
-    if (res.status === 'ok' && res.data) {
-      dispatch({ type: 'SET_HEALTH', payload: res.data })
-      setError(null)
-    } else {
-      setError(res.message || '无法连接到后端服务')
-    }
-    setLoading(false)
-  }, [dispatch])
+  const [filter, setFilter] = useState('all')
+  const [runs, setRuns] = useState<Task[]>([])
 
   useEffect(() => {
-    fetchHealth()
-    const timer = setInterval(fetchHealth, 5000)
-    return () => clearInterval(timer)
-  }, [fetchHealth])
-
-  // 自动滚动到底部
-  useEffect(() => {
-    if (autoScroll && eventListRef.current) {
-      eventListRef.current.scrollTop = eventListRef.current.scrollHeight
+    const load = async () => {
+      const res = await api.getRuns()
+      if (res.status === 'ok' && Array.isArray(res.data)) setRuns(res.data)
     }
-  }, [state.wsEvents, autoScroll])
+    load()
+    const t = window.setInterval(load, 4000)
+    return () => window.clearInterval(t)
+  }, [])
 
-  const handleEventScroll = () => {
-    if (eventListRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = eventListRef.current
-      setAutoScroll(scrollHeight - scrollTop - clientHeight < 50)
-    }
-  }
+  const grouped = useMemo(() => {
+    const map = new Map<string, Task[]>()
+    runs
+      .filter((run) => ACTIVE_STATUSES.has(run.status))
+      .forEach((run) => {
+        const key = run.agent_name || run.agent || '未指定'
+        const list = map.get(key) || []
+        list.push(run)
+        map.set(key, list)
+      })
+    return Array.from(map.entries()).sort((a, b) => b[1].length - a[1].length)
+  }, [runs])
 
-  const health = state.health
-  const isBackendDown = !health && !loading
-  const latestProgress = [...state.wsEvents]
-    .reverse()
-    .find((event) => (event.event_type || event.type) === 'agent_progress')
+  const matcher = useMemo(
+    () => FILTERS.find((f) => f.value === filter)?.matches || (() => true),
+    [filter]
+  )
 
-  const healthDotColor = (ok: boolean | undefined) => {
-    if (isBackendDown) return '#9CA3AF'
-    return ok ? '#16A34A' : '#DC2626'
-  }
+  const filteredEvents = useMemo(
+    () => state.wsEvents.filter(matcher).slice(-200).reverse(),
+    [state.wsEvents, matcher]
+  )
 
   return (
-    <div className="monitor-panel">
-      <div className="panel-header">
-        <h2>系统监控</h2>
-        <button className="refresh-btn" onClick={fetchHealth}>
-          刷新
-        </button>
-      </div>
-
-      {error && <div className="monitor-error">{error}</div>}
-
-      {/* Health Status Cards */}
-      <div className="health-cards">
-        <div
-          className={`health-card ${
-            health ? 'healthy' : 'unhealthy'
-          }`}
-        >
-          <div
-            className="health-card-icon"
-            style={{
-              backgroundColor: healthDotColor(!!health),
-            }}
-          />
-          <div className="health-card-info">
-            <div className="health-card-label">系统状态</div>
-            <div className="health-card-value">
-              {loading ? '检查中...' : health ? '运行中' : '离线'}
-            </div>
+    <div className="page">
+      <div className="page__header">
+        <div>
+          <h1 className="page__title">监控</h1>
+          <div className="page__subtitle">
+            按智能体分组查看活跃运行；事件来自 WebSocket 实时通道。
           </div>
         </div>
-
-        <div
-          className={`health-card ${
-            health?.bus_running ? 'healthy' : 'unhealthy'
-          }`}
-        >
-          <div
-            className="health-card-icon"
-            style={{ backgroundColor: healthDotColor(health?.bus_running) }}
-          />
-          <div className="health-card-info">
-            <div className="health-card-label">事件总线</div>
-            <div className="health-card-value">
-              {isBackendDown ? '未知' : health?.bus_running ? '运行中' : '未运行'}
-            </div>
-          </div>
-        </div>
-
-        <div
-          className={`health-card ${
-            health?.agent_loaded ? 'healthy' : 'unhealthy'
-          }`}
-        >
-          <div
-            className="health-card-icon"
-            style={{ backgroundColor: healthDotColor(health?.agent_loaded) }}
-          />
-          <div className="health-card-info">
-            <div className="health-card-label">Agent 引擎</div>
-            <div className="health-card-value">
-              {isBackendDown ? '未知' : health?.agent_loaded ? '已加载' : '未加载'}
-            </div>
-          </div>
-        </div>
-
-        <div
-          className={`health-card ${
-            health?.memory_initialized ? 'healthy' : 'unhealthy'
-          }`}
-        >
-          <div
-            className="health-card-icon"
-            style={{ backgroundColor: healthDotColor(health?.memory_initialized) }}
-          />
-          <div className="health-card-info">
-            <div className="health-card-label">记忆系统</div>
-            <div className="health-card-value">
-              {isBackendDown ? '未知' : health?.memory_initialized ? '已初始化' : '未初始化'}
-            </div>
-          </div>
+        <div className="page__actions">
+          <button
+            type="button"
+            onClick={() => dispatch({ type: 'CLEAR_WS_EVENTS' })}
+          >
+            清空事件
+          </button>
         </div>
       </div>
 
-      {/* Connection Info */}
-      <div className="monitor-section">
-        <h3>连接信息</h3>
-        <div className="info-grid">
-          <div className="info-item">
-            <span className="info-label">WebSocket</span>
-            <span
-              className={`info-value ${
-                state.connected ? 'text-success' : 'text-danger'
-              }`}
-            >
-              {state.connected ? '已连接' : '未连接'}
+      <div className="monitor-shell">
+        <section className="console-card">
+          <header className="console-card__header">
+            <span className="console-card__title">活跃智能体</span>
+            <span className="text-muted">
+              {grouped.length} 个智能体 ·
+              {' '}
+              {grouped.reduce((acc, [, list]) => acc + list.length, 0)} 个运行
             </span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">消息总数</span>
-            <span className="info-value">{state.messages.length}</span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">事件总数</span>
-            <span className="info-value">{state.wsEvents.length}</span>
-          </div>
-          {health?.version && (
-            <div className="info-item">
-              <span className="info-label">版本</span>
-              <span className="info-value">{health.version}</span>
-            </div>
-          )}
-          {health?.uptime != null && (
-            <div className="info-item">
-              <span className="info-label">运行时间</span>
-              <span className="info-value">
-                {health.uptime > 3600
-                  ? `${Math.floor(health.uptime / 3600)}h ${Math.floor((health.uptime % 3600) / 60)}m`
-                  : health.uptime > 60
-                  ? `${Math.floor(health.uptime / 60)}m ${health.uptime % 60}s`
-                  : `${health.uptime}s`}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="monitor-section">
-        <h3>Agent 当前进度</h3>
-        {latestProgress?.data ? (
-          <div className="progress-snapshot">
-            <div>
-              <span className="info-label">Activity</span>
-              <strong>{latestProgress.data.activity || latestProgress.data.current_step || 'running'}</strong>
-            </div>
-            <div>
-              <span className="info-label">Status</span>
-              <strong>{latestProgress.data.status || '-'}</strong>
-            </div>
-            {(latestProgress.data.tool || latestProgress.data.agent) && (
-              <div>
-                <span className="info-label">Target</span>
-                <strong>{latestProgress.data.tool || latestProgress.data.agent}</strong>
+          </header>
+          <div className="console-card__body">
+            {grouped.length === 0 ? (
+              <div className="empty-state">
+                <strong>暂无活跃运行</strong>
+                <span>新创建的运行将按智能体分组显示。</span>
               </div>
-            )}
-            {latestProgress.data.task_id && (
-              <div>
-                <span className="info-label">Task</span>
-                <strong>{latestProgress.data.task_id}</strong>
+            ) : (
+              <div className="monitor-agents">
+                {grouped.map(([agentName, runList]) => (
+                  <div key={agentName} className="monitor-agent-card">
+                    <div className="monitor-agent-card__head">
+                      <span className="monitor-agent-card__name">{agentName}</span>
+                      <span className="monitor-agent-card__count">
+                        {runList.length} 个运行
+                      </span>
+                    </div>
+                    <div className="monitor-agent-card__body">
+                      {runList.map((run) => (
+                        <div className="monitor-run-pill" key={run.id}>
+                          <div className="monitor-run-pill__top">
+                            <span className={statusPillClass(run.status)}>
+                              {STATUS_LABEL[run.status] || run.status}
+                            </span>
+                            <span style={{ fontWeight: 500 }}>
+                              {run.requirement?.slice(0, 40) ||
+                                run.goal?.slice(0, 40) ||
+                                run.id.slice(0, 8)}
+                            </span>
+                          </div>
+                          <span className="text-muted text-mono" style={{ fontSize: 11 }}>
+                            {formatDuration(run.created_at)}
+                          </span>
+                          <div className="monitor-run-pill__sub">
+                            {run.progress?.activity || '等待事件…'}
+                            {run.progress?.last_tool
+                              ? ` · 最近工具 ${run.progress.last_tool}`
+                              : ''}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        ) : (
-          <div className="event-stream-empty event-stream-empty--compact">
-            等待 Agent 进度事件...
-          </div>
-        )}
-      </div>
+        </section>
 
-      {/* Event Stream */}
-      <div className="monitor-section event-stream-section">
-        <div className="section-header">
-          <h3>实时事件流</h3>
-          <div className="event-stream-actions">
-            <span className="event-count">
-              {state.wsEvents.length} 条事件
-            </span>
-            {!autoScroll && (
-              <button
-                className="clear-events-btn"
-                onClick={() => {
-                  setAutoScroll(true)
-                  if (eventListRef.current) {
-                    eventListRef.current.scrollTop = eventListRef.current.scrollHeight
-                  }
-                }}
-              >
-                {'\u2193'} 滚动到底部
-              </button>
-            )}
-            <button
-              className="clear-events-btn"
-              onClick={() => dispatch({ type: 'CLEAR_WS_EVENTS' })}
-            >
-              清空
-            </button>
-          </div>
-        </div>
-
-        <div
-          className="event-stream"
-          ref={eventListRef}
-          onScroll={handleEventScroll}
-        >
-          {state.wsEvents.length === 0 ? (
-            <div className="event-stream-empty">
-              <p>
-                {state.connected
-                  ? '等待系统事件...'
-                  : '未连接 WebSocket，请确保后端服务已启动'}
-              </p>
+        <section className="monitor-events">
+          <header className="monitor-events__header">
+            <span className="console-card__title">事件流</span>
+            <div className="monitor-events__filters">
+              {FILTERS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`btn-xs ${
+                    filter === option.value ? 'btn-primary' : ''
+                  }`}
+                  onClick={() => setFilter(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
-          ) : (
-            state.wsEvents.map((event, i) => (
-              <div key={i} className="event-stream-item">
-                <span className="event-time">
-                  {new Date(event.timestamp).toLocaleTimeString()}
-                </span>
-                <span className="event-type-tag">
-                  {event.event_type || event.type}
-                </span>
-                {event.data && (
-                  <details className="event-data-details">
-                    <summary>详情</summary>
-                    <pre className="event-data-preview">
-                      {typeof event.data === 'string'
-                        ? event.data
-                        : JSON.stringify(event.data, null, 2)}
-                    </pre>
-                  </details>
-                )}
+          </header>
+          <div className="monitor-events__list">
+            {filteredEvents.length === 0 ? (
+              <div className="empty-state">
+                <span>暂无匹配事件</span>
               </div>
-            ))
-          )}
-        </div>
+            ) : (
+              filteredEvents.map((event, index) => (
+                <div className="monitor-event-row" key={`${event.timestamp}-${index}`}>
+                  <span className="monitor-event-row__time">
+                    {formatTimeShort(event.timestamp)}
+                  </span>
+                  <span className="monitor-event-row__type">
+                    {event.event_type || event.type || '—'}
+                  </span>
+                  <span className="monitor-event-row__detail">
+                    {(() => {
+                      try {
+                        return typeof event.data === 'string'
+                          ? event.data
+                          : JSON.stringify(event.data).slice(0, 200)
+                      } catch {
+                        return ''
+                      }
+                    })()}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
       </div>
     </div>
   )

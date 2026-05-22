@@ -1,232 +1,750 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useAppStore } from '../store/appStore'
-import type { Persona, PersonaProposal, PersonaVersion } from '../types'
-import {
-  approvePersonaProposal,
-  archivePersona,
-  createPersona,
-  createPersonaProposal,
-  listPersonaProposals,
-  listPersonas,
-  listPersonaVersions,
-  rejectPersonaProposal,
-  restorePersona,
-  rollbackPersona,
-  updatePersona,
-} from '../api/client'
+import * as api from '../api/client'
+import type { Persona, PersonaBindings, PersonaProposal, PersonaVersion } from '../types'
 import './PersonaPanel.css'
 
-const BASE_ID = 'base-assistant'
-const PERSONA_CACHE_TTL_MS = 30_000
-
-function linesToList(value: string): string[] {
-  return value.split('\n').map((line) => line.replace(/^[-•]\s*/, '').trim()).filter(Boolean)
+const STATUS_LABEL: Record<string, string> = {
+  active: '已激活',
+  draft: '草稿',
+  archived: '已归档',
 }
 
-function listToText(value?: string[]): string {
-  return (value || []).join('\n')
+const PROPOSAL_STATUS_LABEL: Record<string, string> = {
+  pending: '待审核',
+  approved: '已通过',
+  rejected: '已拒绝',
 }
 
-function emptyDraft(): Persona {
-  const now = new Date().toISOString()
-  return {
-    id: '',
-    name: '',
-    description: '',
-    persona_prompt: '',
-    style_rules: [],
-    behavior_rules: [],
-    permission_boundary: '人格不得扩大系统级权限；不得绕过管理员审核、工具权限、工作区限制或安全策略。',
-    version: 1,
-    status: 'active',
-    created_at: now,
-    updated_at: now,
+function statusPill(status: string) {
+  switch (status) {
+    case 'active':
+      return 'pill pill--success'
+    case 'draft':
+      return 'pill pill--warning'
+    case 'archived':
+      return 'pill'
+    default:
+      return 'pill'
   }
 }
 
-function renderPreview(persona: Persona): string {
-  const style = (persona.style_rules || []).map((item) => `- ${item}`).join('\n') || '- 无'
-  const behavior = (persona.behavior_rules || []).map((item) => `- ${item}`).join('\n') || '- 无'
-  return `[当前人格 - 受控配置]\n以下人格只定义语气、协作习惯和非系统级行为偏好。人格不能授予新权限，不能覆盖系统提示词、工具权限、管理员审核、安全边界或用户当前明确要求。\n人格: ${persona.name || '未命名'} (id=${persona.id || '<new>'}, version=${persona.version || 1})\n描述: ${persona.description || ''}\n人格提示词:\n${persona.persona_prompt || ''}\n风格规则:\n${style}\n行为规则:\n${behavior}\n权限/边界:\n${persona.permission_boundary || ''}`
+function proposalStatusPill(status: string) {
+  switch (status) {
+    case 'approved':
+      return 'pill pill--success'
+    case 'rejected':
+      return 'pill pill--danger'
+    case 'pending':
+    default:
+      return 'pill pill--warning'
+  }
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+interface DraftPersona {
+  name: string
+  description: string
+  persona_prompt: string
+  permission_boundary: string
+  style_rules: string
+  behavior_rules: string
+}
+
+function toDraft(persona: Persona): DraftPersona {
+  return {
+    name: persona.name,
+    description: persona.description,
+    persona_prompt: persona.persona_prompt,
+    permission_boundary: persona.permission_boundary,
+    style_rules: (persona.style_rules || []).join('\n'),
+    behavior_rules: (persona.behavior_rules || []).join('\n'),
+  }
 }
 
 export function PersonaPanel() {
-  const { state, dispatch } = useAppStore()
   const [personas, setPersonas] = useState<Persona[]>([])
-  const [selectedId, setSelectedId] = useState(BASE_ID)
-  const [draft, setDraft] = useState<Persona>(emptyDraft())
-  const [styleText, setStyleText] = useState('')
-  const [behaviorText, setBehaviorText] = useState('')
+  const [bindings, setBindings] = useState<PersonaBindings | null>(null)
   const [proposals, setProposals] = useState<PersonaProposal[]>([])
   const [versions, setVersions] = useState<PersonaVersion[]>([])
-  const [feedback, setFeedback] = useState('')
-  const [proposalSessionId, setProposalSessionId] = useState('')
-  const [reviewer, setReviewer] = useState('local-admin')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<DraftPersona | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [showArchived, setShowArchived] = useState(false)
+  const [includeArchived, setIncludeArchived] = useState(false)
 
-  const selected = useMemo(
-    () => personas.find((item) => item.id === selectedId) || personas[0],
+  const flashNotice = (message: string) => {
+    setNotice(message)
+    window.setTimeout(() => setNotice(''), 2400)
+  }
+
+  const loadPersonas = useCallback(async () => {
+    const [pRes, bRes] = await Promise.all([
+      api.listPersonas(includeArchived),
+      api.getAgentPersonaBindings(),
+    ])
+    if (pRes.status === 'ok' && Array.isArray(pRes.data)) {
+      const list = pRes.data
+      setPersonas(list)
+      setSelectedId((current) => current || list[0]?.id || null)
+    } else {
+      setError(pRes.message || '加载人格失败')
+    }
+    if (bRes.status === 'ok' && bRes.data) setBindings(bRes.data)
+  }, [includeArchived])
+
+  useEffect(() => {
+    loadPersonas()
+  }, [loadPersonas])
+
+  useEffect(() => {
+    api.listPersonaProposals('pending').then((res) => {
+      if (res.status === 'ok' && Array.isArray(res.data)) setProposals(res.data)
+    })
+  }, [])
+
+  const selectedPersona = useMemo(
+    () => personas.find((p) => p.id === selectedId) || null,
     [personas, selectedId]
   )
 
-  const refresh = useCallback(async (force = false) => {
-    const cache = state.personaCache
-    const now = Date.now()
-    const personasFresh =
-      !force &&
-      cache.personasFetchedAt > 0 &&
-      now - cache.personasFetchedAt < PERSONA_CACHE_TTL_MS &&
-      cache.includeArchived === showArchived &&
-      cache.personas.length > 0
-
-    const [personaRes, proposalRes] = await Promise.all([
-      personasFresh
-        ? Promise.resolve({ status: 'ok' as const, data: cache.personas })
-        : listPersonas(showArchived),
-      listPersonaProposals(),
-    ])
-    if (personaRes.status === 'ok' && personaRes.data) {
-      setPersonas(personaRes.data)
-      dispatch({ type: 'SET_PERSONAS_CACHE', payload: { personas: personaRes.data, includeArchived: showArchived } })
-    }
-    if (proposalRes.status === 'ok' && proposalRes.data) setProposals(proposalRes.data)
-  }, [dispatch, showArchived, state.personaCache])
-
-  useEffect(() => { refresh() }, [refresh])
-
   useEffect(() => {
-    if (!selected) return
-    setDraft(selected)
-    setStyleText(listToText(selected.style_rules))
-    setBehaviorText(listToText(selected.behavior_rules))
-    listPersonaVersions(selected.id).then((res) => {
-      if (res.status === 'ok' && res.data) setVersions(res.data.slice().reverse())
-    })
-  }, [selected])
-
-  const saveDraft = async () => {
-    const payload = {
-      ...draft,
-      style_rules: linesToList(styleText),
-      behavior_rules: linesToList(behaviorText),
+    if (!selectedPersona) {
+      setDraft(null)
+      setVersions([])
+      return
     }
-    const res = draft.id
-      ? await updatePersona(draft.id, payload)
-      : await createPersona({ ...payload, name: payload.name || '新人格' })
-    setNotice(res.status === 'ok' ? '人格已保存' : res.message || '保存失败')
-    dispatch({ type: 'INVALIDATE_PERSONA_CACHE' })
-    await refresh(true)
-    if (res.status === 'ok' && res.data) setSelectedId((res.data as Persona).id)
-  }
-
-  const generateProposal = async () => {
-    if (!selected) return
-    const res = await createPersonaProposal(selected.id, {
-      source: 'admin_instruction',
-      feedback: feedback || '请根据最近反馈优化人格。',
-      session_id: proposalSessionId || undefined,
+    setDraft(toDraft(selectedPersona))
+    setEditing(false)
+    api.listPersonaVersions(selectedPersona.id).then((res) => {
+      if (res.status === 'ok' && Array.isArray(res.data)) setVersions(res.data)
     })
-    setNotice(res.status === 'ok' ? '建议已进入待审核队列，未自动覆盖人格正文' : res.message || '生成失败')
-    setFeedback('')
-    await refresh(true)
+  }, [selectedPersona])
+
+  const handleSave = async () => {
+    if (!selectedPersona || !draft) return
+    setSaving(true)
+    const payload: Partial<Persona> = {
+      name: draft.name,
+      description: draft.description,
+      persona_prompt: draft.persona_prompt,
+      permission_boundary: draft.permission_boundary,
+      style_rules: draft.style_rules.split('\n').map((s) => s.trim()).filter(Boolean),
+      behavior_rules: draft.behavior_rules
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    }
+    const res = await api.updatePersona(selectedPersona.id, payload)
+    setSaving(false)
+    if (res.status === 'ok') {
+      flashNotice('已保存人格')
+      setEditing(false)
+      await loadPersonas()
+    } else {
+      setError(res.message || '保存失败')
+    }
   }
 
-  const previewPersona: Persona = {
-    ...draft,
-    style_rules: linesToList(styleText),
-    behavior_rules: linesToList(behaviorText),
+  const handleArchiveToggle = async () => {
+    if (!selectedPersona) return
+    if (selectedPersona.status === 'archived') {
+      const res = await api.restorePersona(selectedPersona.id)
+      if (res.status === 'ok') {
+        flashNotice('已恢复')
+        await loadPersonas()
+      } else {
+        setError(res.message || '操作失败')
+      }
+    } else {
+      const ok = window.confirm('确认归档该人格？归档后将不会被新会话使用。')
+      if (!ok) return
+      const res = await api.archivePersona(selectedPersona.id)
+      if (res.status === 'ok') {
+        flashNotice('已归档')
+        await loadPersonas()
+      } else {
+        setError(res.message || '操作失败')
+      }
+    }
   }
+
+  const handleApproveProposal = async (proposalId: string) => {
+    const res = await api.approvePersonaProposal(proposalId, 'admin', '管理员审核通过')
+    if (res.status === 'ok') {
+      flashNotice('审核已通过')
+      const refreshed = await api.listPersonaProposals('pending')
+      if (refreshed.status === 'ok' && Array.isArray(refreshed.data)) {
+        setProposals(refreshed.data)
+      }
+      await loadPersonas()
+    } else {
+      setError(res.message || '操作失败')
+    }
+  }
+
+  const handleRejectProposal = async (proposalId: string) => {
+    const res = await api.rejectPersonaProposal(proposalId, 'admin', '管理员拒绝')
+    if (res.status === 'ok') {
+      flashNotice('已拒绝')
+      const refreshed = await api.listPersonaProposals('pending')
+      if (refreshed.status === 'ok' && Array.isArray(refreshed.data)) {
+        setProposals(refreshed.data)
+      }
+    } else {
+      setError(res.message || '操作失败')
+    }
+  }
+
+  const handleRollback = async (version: number) => {
+    if (!selectedPersona) return
+    const ok = window.confirm(`回滚到版本 v${version}？`)
+    if (!ok) return
+    const res = await api.rollbackPersona(selectedPersona.id, version, 'admin')
+    if (res.status === 'ok') {
+      flashNotice(`已回滚到 v${version}`)
+      await loadPersonas()
+    } else {
+      setError(res.message || '回滚失败')
+    }
+  }
+
+  // === bindings derived ===
+  const agentBindings = useMemo(() => {
+    if (!bindings || !selectedPersona) return [] as string[]
+    return Object.entries(bindings.agents || {})
+      .filter(([, personaId]) => personaId === selectedPersona.id)
+      .map(([agent]) => agent)
+  }, [bindings, selectedPersona])
+
+  const sessionBindings = useMemo(() => {
+    if (!bindings || !selectedPersona) return [] as string[]
+    return Object.entries(bindings.sessions || {})
+      .filter(([, personaId]) => personaId === selectedPersona.id)
+      .map(([sessionId]) => sessionId)
+  }, [bindings, selectedPersona])
 
   return (
-    <div className="persona-panel">
-      <header className="persona-hero">
+    <div className="page">
+      <div className="page__header">
         <div>
-          <span className="persona-kicker">Persona Governance</span>
-          <h2>人格管理</h2>
-          <p>只管理人格定义、测试预览、迭代建议和版本审核。Agent/会话绑定已迁移到“智能体管理”页面。</p>
+          <h1 className="page__title">人格</h1>
+          <div className="page__subtitle">
+            人格定义角色、风格与权限边界，按 Agent 或会话绑定。
+            {bindings?.precedence && bindings.precedence.length > 0 && (
+              <>
+                {' '}
+                优先级：{bindings.precedence.join(' → ')}
+              </>
+            )}
+          </div>
         </div>
-        <button className="persona-primary" onClick={() => { setSelectedId(''); setDraft(emptyDraft()); setStyleText(''); setBehaviorText('') }}>新建人格</button>
-      </header>
+        <div className="page__actions">
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12.5,
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(event) => setIncludeArchived(event.target.checked)}
+            />
+            <span>包含已归档</span>
+          </label>
+          <button type="button" onClick={loadPersonas}>
+            刷新
+          </button>
+        </div>
+      </div>
 
-      {notice && <div className="persona-notice">{notice}</div>}
+      {error && (
+        <div className="alert alert--error">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button className="btn-xs" onClick={() => setError('')}>
+            关闭
+          </button>
+        </div>
+      )}
+      {notice && <div className="alert alert--success">{notice}</div>}
 
-      <div className="persona-grid">
-        <aside className="persona-list-card">
-          <label className="persona-check"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> 显示归档</label>
-          <div className="persona-list">
-            {personas.map((persona) => (
-              <button key={persona.id} className={`persona-list-item ${persona.id === selectedId ? 'active' : ''}`} onClick={() => setSelectedId(persona.id)}>
-                <strong>{persona.name}</strong>
-                <span>v{persona.version} · {persona.status}</span>
-              </button>
+      {proposals.length > 0 && (
+        <section className="console-card">
+          <header className="console-card__header">
+            <span className="console-card__title">待审核建议</span>
+            <span className="text-muted">{proposals.length} 条</span>
+          </header>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12 }}>
+            {proposals.map((proposal) => (
+              <div className="persona-proposal" key={proposal.id}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <div>
+                    <strong>{proposal.summary || '人格变更建议'}</strong>
+                    <div style={{ color: 'var(--color-text-muted)', fontSize: 11.5 }}>
+                      来源 {proposal.source} · 基于 v{proposal.base_version} ·{' '}
+                      {formatDateTime(proposal.created_at)}
+                    </div>
+                  </div>
+                  <span className={proposalStatusPill(proposal.status)}>
+                    {PROPOSAL_STATUS_LABEL[proposal.status] || proposal.status}
+                  </span>
+                </div>
+                {proposal.proposal_text && (
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                    {proposal.proposal_text}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    onClick={() => handleRejectProposal(proposal.id)}
+                  >
+                    拒绝
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    onClick={() => handleApproveProposal(proposal.id)}
+                  >
+                    通过
+                  </button>
+                </div>
+              </div>
             ))}
+          </div>
+        </section>
+      )}
+
+      <div className="persona-shell">
+        <aside className="persona-list">
+          <div className="persona-list__header">
+            <span style={{ fontWeight: 600 }}>人格列表</span>
+            <span className="text-muted">{personas.length} 个</span>
+          </div>
+          <div className="persona-list__items">
+            {personas.length === 0 ? (
+              <div className="empty-state">
+                <span>暂无人格</span>
+              </div>
+            ) : (
+              personas.map((persona) => (
+                <button
+                  key={persona.id}
+                  type="button"
+                  className={`persona-row ${
+                    selectedId === persona.id ? 'persona-row--active' : ''
+                  }`}
+                  onClick={() => setSelectedId(persona.id)}
+                >
+                  <span className="persona-row__name">{persona.name}</span>
+                  <span className={statusPill(persona.status)}>
+                    {STATUS_LABEL[persona.status] || persona.status}
+                  </span>
+                  <span className="persona-row__sub">
+                    v{persona.version} · {formatDateTime(persona.updated_at)}
+                  </span>
+                </button>
+              ))
+            )}
           </div>
         </aside>
 
-        <section className="persona-editor-card">
-          <div className="persona-form-row">
-            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="人格名称" />
-            <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Persona['status'] })}>
-              <option value="active">active</option><option value="draft">draft</option><option value="archived">archived</option>
-            </select>
+        {selectedPersona && draft ? (
+          <div className="persona-detail">
+            <section className="console-card">
+              <header className="console-card__header">
+                <span className="console-card__title">{selectedPersona.name}</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {!editing ? (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => setEditing(true)}
+                    >
+                      编辑
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditing(false)
+                          setDraft(toDraft(selectedPersona))
+                        }}
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={handleSave}
+                        disabled={saving}
+                      >
+                        {saving ? '保存中…' : '保存'}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className={
+                      selectedPersona.status === 'archived' ? '' : 'btn-danger'
+                    }
+                    onClick={handleArchiveToggle}
+                  >
+                    {selectedPersona.status === 'archived' ? '恢复' : '归档'}
+                  </button>
+                </div>
+              </header>
+              <div className="console-card__body">
+                <dl className="persona-meta-grid">
+                  <div>
+                    <dt>状态</dt>
+                    <dd>
+                      <span className={statusPill(selectedPersona.status)}>
+                        {STATUS_LABEL[selectedPersona.status]}
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>当前版本</dt>
+                    <dd>v{selectedPersona.version}</dd>
+                  </div>
+                  <div>
+                    <dt>创建时间</dt>
+                    <dd>{formatDateTime(selectedPersona.created_at)}</dd>
+                  </div>
+                  <div>
+                    <dt>更新时间</dt>
+                    <dd>{formatDateTime(selectedPersona.updated_at)}</dd>
+                  </div>
+                </dl>
+              </div>
+            </section>
+
+            <section className="console-card">
+              <header className="console-card__header">
+                <span className="console-card__title">基础信息</span>
+              </header>
+              <div className="console-card__body">
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '10px 16px',
+                  }}
+                >
+                  <div>
+                    <label
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      名称
+                    </label>
+                    <input
+                      type="text"
+                      value={draft.name}
+                      disabled={!editing}
+                      onChange={(event) =>
+                        setDraft({ ...draft, name: event.target.value })
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      权限边界
+                    </label>
+                    <input
+                      type="text"
+                      value={draft.permission_boundary}
+                      disabled={!editing}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          permission_boundary: event.target.value,
+                        })
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      简述
+                    </label>
+                    <input
+                      type="text"
+                      value={draft.description}
+                      disabled={!editing}
+                      onChange={(event) =>
+                        setDraft({ ...draft, description: event.target.value })
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="console-card">
+              <header className="console-card__header">
+                <span className="console-card__title">人格 Prompt</span>
+              </header>
+              <div className="console-card__body">
+                {editing ? (
+                  <textarea
+                    rows={8}
+                    value={draft.persona_prompt}
+                    onChange={(event) =>
+                      setDraft({ ...draft, persona_prompt: event.target.value })
+                    }
+                    style={{
+                      width: '100%',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 12.5,
+                    }}
+                  />
+                ) : (
+                  <div className="persona-prompt-block">
+                    {draft.persona_prompt || '— 未配置 —'}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="console-card">
+              <header className="console-card__header">
+                <span className="console-card__title">风格与行为规则</span>
+                <span className="text-muted" style={{ fontSize: 11.5 }}>
+                  每行一条
+                </span>
+              </header>
+              <div className="console-card__body">
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 16,
+                  }}
+                >
+                  <div>
+                    <label
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      风格
+                    </label>
+                    {editing ? (
+                      <textarea
+                        rows={8}
+                        value={draft.style_rules}
+                        onChange={(event) =>
+                          setDraft({ ...draft, style_rules: event.target.value })
+                        }
+                        style={{
+                          width: '100%',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 12.5,
+                        }}
+                      />
+                    ) : (
+                      <ul className="persona-rules">
+                        {selectedPersona.style_rules?.length ? (
+                          selectedPersona.style_rules.map((rule, idx) => (
+                            <li key={idx}>{rule}</li>
+                          ))
+                        ) : (
+                          <li className="text-muted">— 未配置 —</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      行为
+                    </label>
+                    {editing ? (
+                      <textarea
+                        rows={8}
+                        value={draft.behavior_rules}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            behavior_rules: event.target.value,
+                          })
+                        }
+                        style={{
+                          width: '100%',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 12.5,
+                        }}
+                      />
+                    ) : (
+                      <ul className="persona-rules">
+                        {selectedPersona.behavior_rules?.length ? (
+                          selectedPersona.behavior_rules.map((rule, idx) => (
+                            <li key={idx}>{rule}</li>
+                          ))
+                        ) : (
+                          <li className="text-muted">— 未配置 —</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="console-card">
+              <header className="console-card__header">
+                <span className="console-card__title">绑定关系</span>
+              </header>
+              <div className="console-card__body">
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 16,
+                    fontSize: 12.5,
+                  }}
+                >
+                  <div>
+                    <label
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      绑定的智能体（{agentBindings.length}）
+                    </label>
+                    {agentBindings.length === 0 ? (
+                      <div className="text-muted">未绑定到任何智能体</div>
+                    ) : (
+                      <ul className="persona-rules">
+                        {agentBindings.map((agent) => (
+                          <li key={agent}>{agent}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      绑定的会话（{sessionBindings.length}）
+                    </label>
+                    {sessionBindings.length === 0 ? (
+                      <div className="text-muted">未绑定会话</div>
+                    ) : (
+                      <ul className="persona-rules">
+                        {sessionBindings.map((sessionId) => (
+                          <li key={sessionId} className="text-mono" style={{ fontSize: 11.5 }}>
+                            {sessionId}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="console-card">
+              <header className="console-card__header">
+                <span className="console-card__title">版本历史</span>
+                <span className="text-muted">{versions.length} 个版本</span>
+              </header>
+              {versions.length === 0 ? (
+                <div className="empty-state">
+                  <span>暂无版本记录</span>
+                </div>
+              ) : (
+                versions.map((version) => (
+                  <div className="persona-section__row" key={version.version}>
+                    <div>
+                      <strong>v{version.version}</strong>
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          color: 'var(--color-text-muted)',
+                          fontSize: 11.5,
+                        }}
+                      >
+                        {formatDateTime(version.created_at)} ·{' '}
+                        {version.reviewer || '—'}
+                      </span>
+                      {version.reason && (
+                        <div
+                          style={{
+                            color: 'var(--color-text-muted)',
+                            fontSize: 11.5,
+                            marginTop: 2,
+                          }}
+                        >
+                          {version.reason}
+                        </div>
+                      )}
+                    </div>
+                    {version.version !== selectedPersona.version && (
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        onClick={() => handleRollback(version.version)}
+                      >
+                        回滚
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </section>
           </div>
-          <textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="描述" rows={2} />
-          <textarea value={draft.persona_prompt} onChange={(e) => setDraft({ ...draft, persona_prompt: e.target.value })} placeholder="persona/system prompt 片段" rows={5} />
-          <div className="persona-two-cols">
-            <label>风格规则<textarea value={styleText} onChange={(e) => setStyleText(e.target.value)} rows={6} /></label>
-            <label>行为规则<textarea value={behaviorText} onChange={(e) => setBehaviorText(e.target.value)} rows={6} /></label>
+        ) : (
+          <div className="persona-detail">
+            <section className="console-card">
+              <div className="console-card__body">
+                <div className="empty-state">
+                  <strong>请选择一个人格</strong>
+                  <span>左侧列出已配置的人格。</span>
+                </div>
+              </div>
+            </section>
           </div>
-          <label>权限/边界说明<textarea value={draft.permission_boundary} onChange={(e) => setDraft({ ...draft, permission_boundary: e.target.value })} rows={3} /></label>
-          <div className="persona-actions">
-            <button className="persona-primary" onClick={saveDraft}>保存</button>
-            {draft.id && draft.id !== BASE_ID && draft.status !== 'archived' && <button onClick={async () => { await archivePersona(draft.id); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) }}>归档</button>}
-            {draft.id && draft.status === 'archived' && <button onClick={async () => { await restorePersona(draft.id); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) }}>恢复</button>}
-          </div>
-        </section>
+        )}
       </div>
-
-      <div className="persona-grid persona-grid--bottom">
-        <section className="persona-card">
-          <h3>人格测试 / 注入预览</h3>
-          <p className="persona-muted">预览运行时追加到 system prompt 的受控人格块。此处仅预览人格本身，不展示 Agent/Session 绑定。</p>
-          <pre className="persona-preview">{renderPreview(previewPersona)}</pre>
-        </section>
-
-        <section className="persona-card">
-          <h3>生成迭代建议</h3>
-          <textarea value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder="输入对话反馈、管理员指令或反思摘要。建议只进入待审核，不会自动覆盖。" rows={5} />
-          <input value={proposalSessionId} onChange={(e) => setProposalSessionId(e.target.value)} placeholder="可选 session_id（仅作为建议来源追踪）" />
-          <button className="persona-primary" onClick={generateProposal} disabled={!selected}>生成待审核建议</button>
-        </section>
-      </div>
-
-      <section className="persona-card">
-        <h3>迭代建议审核</h3>
-        <div className="persona-reviewer"><input value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="reviewer" /></div>
-        <div className="persona-proposals">
-          {proposals.map((proposal) => (
-            <article key={proposal.id} className={`persona-proposal persona-proposal--${proposal.status}`}>
-              <div><strong>{proposal.source}</strong><span>{proposal.status} · {proposal.persona_id} @ v{proposal.base_version}</span></div>
-              <p>{proposal.summary}</p>
-              <details><summary>查看 diff / 变更说明</summary><pre>{proposal.diff}</pre><pre>{proposal.proposal_text}</pre></details>
-              {proposal.status === 'pending' && <div className="persona-actions"><button className="persona-primary" onClick={async () => { await approvePersonaProposal(proposal.id, reviewer); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) }}>批准生成新版本</button><button onClick={async () => { await rejectPersonaProposal(proposal.id, reviewer); await refresh(true) }}>拒绝</button></div>}
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="persona-card">
-        <h3>版本历史 / 回滚</h3>
-        <div className="persona-version-list">
-          {versions.map((version) => (
-            <div key={`${version.version}-${version.created_at}`} className="persona-version-item">
-              <span>v{version.version} · {version.reason} · {new Date(version.created_at).toLocaleString()}</span>
-              {selected && version.version !== selected.version && <button onClick={async () => { if (window.confirm(`确认回滚到 v${version.version}？会生成新的版本。`)) { await rollbackPersona(selected.id, version.version, reviewer); dispatch({ type: 'INVALIDATE_PERSONA_CACHE' }); await refresh(true) } }}>回滚到此版本</button>}
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   )
 }
