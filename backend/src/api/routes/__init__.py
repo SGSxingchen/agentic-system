@@ -10,6 +10,7 @@ from .evolution import router as evolution_router
 from .chat_sessions import router as chat_sessions_router
 from .personas import router as personas_router
 from .artifacts import router as artifacts_router
+from .workspaces import router as workspaces_router
 
 __all__ = [
     "tasks_router",
@@ -21,4 +22,5 @@ __all__ = [
     "chat_sessions_router",
     "personas_router",
     "artifacts_router",
+    "workspaces_router",
 ]

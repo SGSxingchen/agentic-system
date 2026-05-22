@@ -434,6 +434,24 @@ class TestChatSessionsAPI:
         assert get_resp.status_code == 404
         assert chat_sessions_file.exists()
 
+    async def test_chat_session_workspace_binding_can_be_created_and_updated(self, client, chat_sessions_file):
+        created = (
+            await client.post(
+                "/api/chat-sessions",
+                json={"title": "workspace bound", "workspace_id": "project-a"},
+            )
+        ).json()["data"]
+
+        assert created["workspace_id"] == "project-a"
+
+        resp = await client.put(
+            f"/api/chat-sessions/{created['id']}",
+            json={"workspace_id": "project-b"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["workspace_id"] == "project-b"
+
 
 # ========================
 # 任务管理

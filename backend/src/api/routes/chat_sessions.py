@@ -35,7 +35,7 @@ async def list_chat_sessions() -> APIResponse:
 async def create_chat_session(req: ChatSessionCreateRequest) -> APIResponse:
     """Create a new chat page."""
 
-    session = _store().create_session(req.title)
+    session = _store().create_session(req.title, workspace_id=req.workspace_id)
     return APIResponse(status="ok", data=session)
 
 
@@ -56,7 +56,12 @@ async def update_chat_session(
 ) -> APIResponse:
     """Update chat session metadata."""
 
-    session = _store().update_session(session_id, title=req.title)
+    session = _store().update_session(
+        session_id,
+        title=req.title,
+        workspace_id=req.workspace_id,
+        update_workspace="workspace_id" in req.model_fields_set,
+    )
     if not session:
         raise HTTPException(status_code=404, detail="chat session not found")
     return APIResponse(status="ok", data=session)

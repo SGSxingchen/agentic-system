@@ -23,10 +23,17 @@ from core.capability import (
 from core.capability.agent_adapter import AgentCapability
 from core.bus import UnifiedBus
 from core.config import load_config, load_yaml_configs
+from core.chat_history import ChatHistoryStore
 from core.context import ContextStore
 from core.llm import create_llm_client
 from core.mcp import format_mcp_servers_for_prompt, normalize_agent_mcp_servers
 from core.skills import format_skills_for_prompt, load_agent_skills
+from core.workspace import (
+    WorkspaceNotFoundError,
+    WorkspaceStore,
+    session_workspace_id,
+    session_workspace_root,
+)
 from core.memory import (
     ConversationMemoryBuffer,
     MemoryFormation,
@@ -56,6 +63,7 @@ from .routes import (
     artifacts_router,
     tasks_router,
     runs_router,
+    workspaces_router,
 )
 from .websocket.handlers import (
     build_memory_context,
@@ -105,6 +113,31 @@ def _attach_stream_memory_usage(
         content.setdefault("memories_used", memories_used)
         enriched["content"] = content
     return enriched
+
+
+def _resolve_request_workspace(req: dict) -> tuple[Optional[str], Optional[str]]:
+    explicit = str(req.get("workspace_id") or "").strip()
+    if explicit:
+        try:
+            workspace = WorkspaceStore().get(explicit)
+        except WorkspaceNotFoundError as exc:
+            raise ValueError(f"workspace not found: {explicit}") from exc
+        return workspace.id, workspace.root_path
+
+    session_id = str(req.get("session_id") or "").strip()
+    if not session_id:
+        return None, None
+
+    session = ChatHistoryStore().get_session(session_id)
+    bound_workspace_id = str((session or {}).get("workspace_id") or "").strip()
+    if bound_workspace_id:
+        try:
+            workspace = WorkspaceStore().get(bound_workspace_id)
+        except WorkspaceNotFoundError as exc:
+            raise ValueError(f"workspace not found: {bound_workspace_id}") from exc
+        return workspace.id, workspace.root_path
+
+    return session_workspace_id(session_id), str(session_workspace_root(session_id))
 
 
 async def init_memory_system(config: Dict[str, Any]):
@@ -200,10 +233,86 @@ def _apply_capability_prompt_overrides(cap_registry: CapabilityRegistry) -> None
         print(f"[OK] applied tool prompt overrides: {', '.join(applied)}")
 
 
+def _agent_has_llm_override(agent_def: Dict[str, Any]) -> bool:
+    raw_llm = agent_def.get("llm")
+    if isinstance(raw_llm, dict):
+        for key, value in raw_llm.items():
+            if key in {"source", "api_key_set"}:
+                continue
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if key == "api_key" and isinstance(value, str) and value.strip() in {"********", "••••••••"}:
+                continue
+            if isinstance(value, (dict, list)) and not value:
+                continue
+            return True
+    return bool(str(agent_def.get("model") or "").strip())
+
+
+def _merge_agent_llm_config(
+    base_llm_config: Dict[str, Any],
+    agent_def: Dict[str, Any],
+) -> Dict[str, Any]:
+    merged = dict(base_llm_config or {})
+    raw_llm = agent_def.get("llm")
+    if isinstance(raw_llm, dict):
+        for key, value in raw_llm.items():
+            if value is None:
+                continue
+            if key in {"source", "api_key_set"}:
+                continue
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    continue
+                if key == "api_key" and value in {"********", "••••••••"}:
+                    continue
+            if key in {"openai", "anthropic"} and isinstance(value, dict):
+                nested = dict(merged.get(key) or {})
+                nested.update(value)
+                merged[key] = nested
+            else:
+                merged[key] = value
+
+    model = str(agent_def.get("model") or "").strip()
+    if model:
+        merged["model"] = model
+    if merged.get("reasoning_effort"):
+        openai_config = dict(merged.get("openai") or {})
+        openai_config.setdefault("reasoning_effort", merged["reasoning_effort"])
+        merged["openai"] = openai_config
+    return merged
+
+
+def _public_llm_config(config: Dict[str, Any], *, overridden: bool) -> Dict[str, Any]:
+    public = {
+        key: config.get(key)
+        for key in (
+            "provider",
+            "model",
+            "base_url",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "reasoning_effort",
+            "stop_sequences",
+            "openai",
+            "anthropic",
+        )
+        if config.get(key) is not None
+    }
+    public["api_key_set"] = bool(config.get("api_key"))
+    public["source"] = "agent_config" if overridden else "global_default"
+    return public
+
+
 def _create_agents_from_config(
     agents_config: List[Dict[str, Any]],
     llm_client: Any,
     cap_registry: CapabilityRegistry,
+    base_llm_config: Optional[Dict[str, Any]] = None,
 ) -> List[Agent]:
     """Create configured agents and register agent-to-agent capability adapters."""
 
@@ -214,6 +323,17 @@ def _create_agents_from_config(
     for agent_def in agents_config:
         name = agent_def["name"]
         tool_names = agent_def.get("tools", [])
+        has_llm_override = _agent_has_llm_override(agent_def)
+        agent_llm_config = _merge_agent_llm_config(base_llm_config or {}, agent_def)
+        agent_llm_client = llm_client
+        if has_llm_override and base_llm_config is not None:
+            agent_llm_client = create_llm_client(
+                provider=agent_llm_config.get("provider", "openai"),
+                api_key=agent_llm_config.get("api_key", ""),
+                model=agent_llm_config.get("model", "gpt-3.5-turbo"),
+                base_url=agent_llm_config.get("base_url") or None,
+                generation_config=agent_llm_config,
+            )
 
         tools = []
         agent_tool_names: List[str] = []
@@ -246,10 +366,15 @@ def _create_agents_from_config(
             print(f"  [skills] agent '{name}' loaded {len(loaded_skills)} skill(s): {', '.join(skill.name for skill in loaded_skills)}")
         if mcp_servers:
             print(f"  [mcp] agent '{name}' configured {len(mcp_servers)} MCP server(s): {', '.join(server.name for server in mcp_servers)} (adapter not auto-started)")
+        if has_llm_override:
+            print(
+                f"  [llm] agent '{name}' uses "
+                f"{agent_llm_config.get('provider', 'openai')} / {agent_llm_config.get('model')}"
+            )
 
         agent = Agent(
             name=name,
-            llm_client=llm_client,
+            llm_client=agent_llm_client,
             system_prompt=system_prompt,
             tools=tools,
             output_format=agent_def.get("output_format", "text"),
@@ -263,6 +388,7 @@ def _create_agents_from_config(
                 "skills": [skill.__dict__ for skill in loaded_skills],
                 "mcp_servers": [server.__dict__ for server in mcp_servers],
                 "mcp_capability_status": "configured_not_connected" if mcp_servers else "not_configured",
+                "llm": _public_llm_config(agent_llm_config, overridden=has_llm_override),
             },
         )
         agents.append(agent)
@@ -322,7 +448,12 @@ async def reload_agents() -> None:
             raise RuntimeError("config/agents.yaml is missing or empty")
 
         print(f"[INFO] loading {len(agents_config)} configured agents")
-        agents = _create_agents_from_config(agents_config, llm_client, cap_registry)
+        agents = _create_agents_from_config(
+            agents_config,
+            llm_client,
+            cap_registry,
+            base_llm_config=llm_config,
+        )
 
         for agent in agents:
             registry.register(agent)
@@ -421,6 +552,7 @@ app.include_router(config_router)
 app.include_router(evolution_router)
 app.include_router(chat_sessions_router)
 app.include_router(artifacts_router)
+app.include_router(workspaces_router)
 
 
 @app.post("/api/chat")
@@ -439,6 +571,11 @@ async def chat_endpoint(req: dict):
         payload = {"message": message}
         if req.get("session_id"):
             payload["session_id"] = req.get("session_id")
+        workspace_id, workspace_root = _resolve_request_workspace(req)
+        if workspace_id:
+            payload["workspace_id"] = workspace_id
+        if workspace_root:
+            payload["_trusted_workspace_root"] = workspace_root
         if req.get("persona_id"):
             payload["persona_id"] = req.get("persona_id")
         if isinstance(req.get("messages"), list):
@@ -496,6 +633,11 @@ async def chat_stream_endpoint(req: dict):
             payload = {"message": message}
             if req.get("session_id"):
                 payload["session_id"] = req.get("session_id")
+            workspace_id, workspace_root = _resolve_request_workspace(req)
+            if workspace_id:
+                payload["workspace_id"] = workspace_id
+            if workspace_root:
+                payload["_trusted_workspace_root"] = workspace_root
             if req.get("persona_id"):
                 payload["persona_id"] = req.get("persona_id")
             if isinstance(req.get("messages"), list):

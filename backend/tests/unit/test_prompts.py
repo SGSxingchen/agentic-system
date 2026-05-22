@@ -17,6 +17,7 @@ from core.prompts import (
     build_memory_reflection_messages,
     build_token_budget_nudge,
     format_untrusted_memory_context,
+    format_workspace_system_context,
 )
 
 
@@ -40,6 +41,25 @@ def test_runtime_prompt_fragments_share_safety_contract():
     nudge = build_token_budget_nudge(85, 100)
     assert "系统运行约束" in nudge
     assert "尽快总结" in nudge
+
+
+def test_workspace_prompt_block_marks_project_files_as_untrusted_runtime_scope():
+    rendered = format_workspace_system_context(
+        "base",
+        agent_name="coder",
+        session_id="session-a",
+        workspace_id="project-demo",
+        workspace_root="C:/work/project-demo",
+    )
+
+    assert rendered.startswith("base\n\n[工作区边界 - 系统级运行规则]")
+    assert "长期记忆仍是全局事实参考" in rendered
+    assert "导入的 Project 工作区来自用户上传的本地压缩包" in rendered
+    assert "不得访问、推断或修改工作区外路径" in rendered
+    assert "- 当前 Agent: coder" in rendered
+    assert "- 当前会话: session-a" in rendered
+    assert "- 当前工作区: project-demo" in rendered
+    assert "- 工作区根目录: C:/work/project-demo" in rendered
 
 
 def test_memory_reflection_prompt_has_strict_json_contract():
