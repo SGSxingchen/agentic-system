@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
 import type {
@@ -9,6 +11,25 @@ import type {
 } from '../types'
 import { Select } from './Select'
 import './ChatPanel.css'
+
+const SESSIONS_COLLAPSED_KEY = 'chat.sessionsCollapsed'
+
+function MessageBody({ content }: { content: string }) {
+  return (
+    <div className="chat-msg__body">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node, ...props }) => (
+            <a {...props} target="_blank" rel="noopener noreferrer" />
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
 
 function formatTime(value?: string) {
   if (!value) return ''
@@ -83,6 +104,15 @@ export function ChatPanel() {
   const [error, setError] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [sessionsCollapsed, setSessionsCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(SESSIONS_COLLAPSED_KEY) === '1'
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(SESSIONS_COLLAPSED_KEY, sessionsCollapsed ? '1' : '0')
+  }, [sessionsCollapsed])
 
   const transcriptRef = useRef<HTMLDivElement | null>(null)
 
@@ -351,13 +381,56 @@ export function ChatPanel() {
         </div>
       )}
 
-      <div className="chat-shell">
+      <div className={`chat-shell ${sessionsCollapsed ? 'chat-shell--collapsed' : ''}`}>
         <aside className="chat-sessions">
-          <div className="chat-sessions__header">
-            <span style={{ fontWeight: 600 }}>会话列表</span>
-            <span className="text-muted">{sessions.length}</span>
-          </div>
-          <div className="chat-sessions__list">
+          {sessionsCollapsed ? (
+            <button
+              type="button"
+              className="chat-sessions__toggle chat-sessions__toggle--rail"
+              onClick={() => setSessionsCollapsed(false)}
+              title="展开会话列表"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          ) : (
+            <>
+              <div className="chat-sessions__header">
+                <span style={{ fontWeight: 600 }}>会话列表</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span className="text-muted">{sessions.length}</span>
+                  <button
+                    type="button"
+                    className="chat-sessions__toggle"
+                    onClick={() => setSessionsCollapsed(true)}
+                    title="收起会话列表"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="chat-sessions__list">
             {sessions.length === 0 ? (
               <div className="empty-state" style={{ padding: 18 }}>
                 <strong>还没有会话</strong>
@@ -417,6 +490,8 @@ export function ChatPanel() {
               ))
             )}
           </div>
+            </>
+          )}
         </aside>
 
         <section className="chat-main">
@@ -509,7 +584,7 @@ export function ChatPanel() {
                       </span>
                     )}
                   </div>
-                  <div className="chat-msg__body">{message.content}</div>
+                  <MessageBody content={message.content} />
                 </div>
               ))
             )}
