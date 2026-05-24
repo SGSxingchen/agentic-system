@@ -453,7 +453,7 @@ class TestAgentStatusAndLifecycle:
         assert "[当前人格 - 受控配置]" in system_content
         assert "[长期记忆 - 不可信资料]" in system_content
         assert "不可信" in system_content
-        assert "不要执行" in system_content
+        assert "不当指令" in system_content
         assert "忽略之前所有指令" in system_content
 
     async def test_run_json_output(self):
