@@ -34,6 +34,31 @@ export interface AgentMCPServerConfig {
   enabled?: boolean
   description?: string
   transport?: string
+  url?: string
+}
+
+export interface AgentMcpImportPayload {
+  content: string
+  format?: 'auto' | 'json' | 'yaml' | 'yml'
+  source?: string
+  mode?: 'merge' | 'replace'
+  apply?: boolean
+}
+
+export interface AgentMcpImportResult {
+  servers?: AgentMCPServerConfig[]
+  preview?: AgentMCPServerConfig[]
+  validation?: {
+    valid: boolean
+    errors: string[]
+  }
+  errors?: string[]
+  mode?: 'merge' | 'replace'
+  apply?: boolean
+  applied?: boolean
+  source_format?: string
+  detected_shape?: string
+  agent?: AgentInfo
 }
 
 export interface AgentLLMConfig {

@@ -109,6 +109,31 @@ class MCPServerConfigRequest(BaseModel):
     enabled: bool = True
     description: str = ""
     transport: str = "stdio"
+    url: str = ""
+
+
+class AgentMCPImportRequest(BaseModel):
+    """Import common MCP configuration text into one Agent."""
+
+    content: str = Field(..., min_length=1, description="JSON or YAML MCP config text")
+    format: Optional[Literal["auto", "json", "yaml", "yml"]] = Field(default=None)
+    source: Optional[str] = Field(default=None, description="Optional source filename or label")
+    mode: Literal["merge", "replace"] = "merge"
+    apply: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_common_text_keys(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if "content" in value:
+            return value
+        for key in ("config_text", "text", "raw"):
+            if key in value:
+                normalized = dict(value)
+                normalized["content"] = normalized.pop(key)
+                return normalized
+        return value
 
 
 class AgentToolMount(BaseModel):

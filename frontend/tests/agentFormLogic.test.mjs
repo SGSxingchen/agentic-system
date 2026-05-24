@@ -24,6 +24,7 @@ try {
   const {
     agentToDraft,
     buildAgentUpdatePayload,
+    hasAgentDraftChanges,
   } = await import(pathToFileURL(outPath).href + `?cache=${Date.now()}`)
 
   const globalAgent = {
@@ -35,6 +36,8 @@ try {
     output_format: 'text',
     max_iterations: 8,
     default_workspace_id: null,
+    skills: null,
+    mcp_servers: [],
     llm: {
       source: 'global_default',
       provider: 'openai',
@@ -45,17 +48,26 @@ try {
   const inheritedDraft = agentToDraft(globalAgent)
   assert.equal(inheritedDraft.llm_provider, '')
   assert.equal(inheritedDraft.llm_model, '')
+  assert.equal(inheritedDraft.skills, null)
+  assert.deepEqual(inheritedDraft.mcp_servers, [])
   assert.deepEqual(buildAgentUpdatePayload(inheritedDraft), {
     description: '通用助手',
     system_prompt: '保持正式、准确。',
     output_format: 'text',
     max_iterations: 8,
     tools: ['code_parser'],
+    skills: null,
+    mcp_servers: [],
     default_workspace_id: null,
   })
 
   const agentScopedDraft = agentToDraft({
     ...globalAgent,
+    skills: {
+      enabled: true,
+      items: [{ path: './skills/python/SKILL.md' }],
+    },
+    mcp_servers: [{ name: 'filesystem', command: 'npx', args: ['-y'] }],
     llm: {
       source: 'agent_config',
       provider: 'openai',
@@ -66,6 +78,15 @@ try {
     },
   })
   assert.equal(agentScopedDraft.llm_model, 'gpt-agent')
+  assert.deepEqual(agentScopedDraft.skills, {
+    enabled: true,
+    directories: [],
+    disabled: [],
+    items: [{ path: './skills/python/SKILL.md' }],
+  })
+  assert.deepEqual(agentScopedDraft.mcp_servers, [
+    { name: 'filesystem', command: 'npx', args: ['-y'], env: {} },
+  ])
   assert.deepEqual(
     buildAgentUpdatePayload({
       ...agentScopedDraft,
@@ -95,6 +116,24 @@ try {
     max_tokens: 2048,
   })
   assert.equal(payload.default_workspace_id, 'workspace_1')
+  assert.deepEqual(payload.skills, {
+    enabled: true,
+    directories: [],
+    disabled: [],
+    items: [{ path: './skills/python/SKILL.md' }],
+  })
+  assert.deepEqual(payload.mcp_servers, [
+    { name: 'filesystem', command: 'npx', args: ['-y'], env: {} },
+  ])
+
+  assert.equal(hasAgentDraftChanges(globalAgent, agentToDraft(globalAgent)), false)
+  assert.equal(
+    hasAgentDraftChanges(globalAgent, {
+      ...agentToDraft(globalAgent),
+      description: '存在未保存修改',
+    }),
+    true
+  )
 
   assert.throws(
     () => buildAgentUpdatePayload({ ...agentScopedDraft, llm_temperature: 'hot' }),

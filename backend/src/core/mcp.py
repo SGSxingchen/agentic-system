@@ -27,6 +27,7 @@ class MCPServerConfig:
     cwd: str = ""
     description: str = ""
     transport: str = "stdio"
+    url: str = ""
 
 
 def normalize_agent_mcp_servers(agent_config: Dict[str, Any]) -> List[MCPServerConfig]:
@@ -48,7 +49,13 @@ def normalize_agent_mcp_servers(agent_config: Dict[str, Any]) -> List[MCPServerC
             continue
         name = str(item.get("name") or "").strip()
         command = str(item.get("command") or "").strip()
-        if not name or not command or name in seen:
+        transport = str(item.get("transport") or "stdio")
+        url = str(item.get("url") or "").strip()
+        if not name or name in seen:
+            continue
+        if transport == "stdio" and not command:
+            continue
+        if transport != "stdio" and not (command or url):
             continue
         args_raw = item.get("args", [])
         if isinstance(args_raw, str):
@@ -68,7 +75,8 @@ def normalize_agent_mcp_servers(agent_config: Dict[str, Any]) -> List[MCPServerC
                 enabled=True,
                 cwd=str(item.get("cwd") or ""),
                 description=str(item.get("description") or ""),
-                transport=str(item.get("transport") or "stdio"),
+                transport=transport,
+                url=url,
             )
         )
         seen.add(name)
@@ -79,8 +87,21 @@ def validate_mcp_server_payload(server: Dict[str, Any]) -> List[str]:
     errors: List[str] = []
     if not str(server.get("name") or "").strip():
         errors.append("name is required")
-    if bool(server.get("enabled", True)) and not str(server.get("command") or "").strip():
+    transport = str(server.get("transport") or "stdio")
+    if (
+        bool(server.get("enabled", True))
+        and (transport == "stdio" or transport not in SUPPORTED_MCP_TRANSPORTS)
+        and not str(server.get("command") or "").strip()
+    ):
         errors.append("command is required when server is enabled")
+    if (
+        bool(server.get("enabled", True))
+        and transport in SUPPORTED_MCP_TRANSPORTS
+        and transport != "stdio"
+        and not str(server.get("command") or "").strip()
+        and not str(server.get("url") or "").strip()
+    ):
+        errors.append("url is required when non-stdio server is enabled")
     args = server.get("args", [])
     if args is not None and not isinstance(args, list):
         errors.append("args must be a list of strings")
@@ -89,7 +110,6 @@ def validate_mcp_server_payload(server: Dict[str, Any]) -> List[str]:
     env = server.get("env", {})
     if env is not None and not isinstance(env, dict):
         errors.append("env must be an object")
-    transport = str(server.get("transport") or "stdio")
     if transport not in SUPPORTED_MCP_TRANSPORTS:
         errors.append("transport must be one of http, sse, stdio, streamable_http")
     return errors
@@ -282,8 +302,9 @@ def format_mcp_servers_for_prompt(servers: List[MCPServerConfig]) -> str:
         cmd = f"{server.command} {suffix}".strip()
         env_keys = ", ".join(sorted(server.env)) if server.env else "none"
         desc = f" - {server.description}" if server.description else ""
+        endpoint = server.url or "-"
         lines.append(
             f"- {server.name}{desc}: transport={server.transport}, "
-            f"command={cmd}, cwd={server.cwd or '-'}, env_keys={env_keys}"
+            f"command={cmd}, url={endpoint}, cwd={server.cwd or '-'}, env_keys={env_keys}"
         )
     return "\n".join(lines)

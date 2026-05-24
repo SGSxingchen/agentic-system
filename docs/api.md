@@ -277,6 +277,27 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
 
 部分更新配置化 Agent，写入 `config/agents.yaml` 并热重载。支持字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`skills`、`mcp_servers`。传入 `"skills": null` 表示清除该 Agent 的 skills 配置。
 
+### POST /api/agents/{name}/mcp/import
+
+把常见 MCP 配置文本导入到指定 Agent 的 `mcp_servers` 列表。接口接受 JSON 或 YAML 文本，支持 Claude Desktop / Cursor 常见的 `mcpServers`、项目当前的 `mcp_servers`、通用 `servers` 和纯数组格式。响应中的 `servers` 与 `preview` 会对 `env` 值脱敏；错误信息不会包含真实环境变量值。
+
+**请求体:**
+```json
+{
+  "content": "{ \"mcpServers\": { \"filesystem\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"], \"env\": {}, \"disabled\": false } } }",
+  "format": "json",
+  "source": "claude_desktop_config.json",
+  "mode": "merge",
+  "apply": false
+}
+```
+
+- `format` 可省略，后端会自动按 JSON/YAML 解析；也可显式传 `json`、`yaml` 或 `yml`。
+- `mode=merge` 会按 server `name` 更新同名项并保留未出现在导入内容里的旧 server；`mode=replace` 会用导入结果替换整个列表。
+- `apply=false` 只返回预览，不写入；`apply=true` 会写入 `config/agents.yaml` 并热重载，失败时回滚。
+- `agent_manager` 不允许通过该普通导入接口直接写入；如需修改其 MCP 挂载，必须走受控 `agent_manager` 工具链。
+- `disabled=true` 会映射为 `enabled=false`；未声明 `transport` 时默认 `stdio`。带 `url` 或 `type/transport` 的配置会尽量映射为 `http`、`sse` 或 `streamable_http`，但当前运行时只有 `stdio` server 会真正注册本地代理工具。
+
 ### DELETE /api/agents/{name}
 
 删除配置化 Agent 并热重载。为避免误删答辩演示核心角色，内置关键 Agent（`assistant`、`tool_creator`、`agent_creator`、`agent_manager`、`planner`、`coder`、`reviewer`、`persona_evolution`）会返回 `status: "error"`，不能从管理页删除。
@@ -930,6 +951,7 @@ WebSocket 监控事件 `agent_run_started`、`agent_run_event`、`agent_run_comp
 - `GET /api/agents/configs`：返回所有 Agent 的配置视图，包括模型、Tools、MCP、Skills、默认工作区。
 - `GET /api/agents/{name}/config`：返回单个 Agent 配置视图。
 - `POST /api/agents` 与 `PUT /api/agents/{name}` 支持 `llm`、`model`、`tools`、`mcp_servers`、`skills`、`default_workspace_id`、`default_workspace_root`。
+- `POST /api/agents/{name}/mcp/import`：解析 Claude Desktop / Cursor、项目格式、通用 `servers` 或数组格式的 MCP JSON/YAML 文本，返回脱敏预览；`apply=true` 时按 `merge` 或 `replace` 写入该 Agent 的 `mcp_servers` 并热重载。
 
 `llm` 支持字段：`provider`、`api_key`、`model`、`base_url`、`temperature`、`top_p`、`max_tokens`、`stop_sequences`、`reasoning_effort`、`openai`、`anthropic`。未配置时继承全局 LLM；配置后该 Agent 启动时使用独立 LLM client。响应只返回 `api_key_set`，不会明文返回 Agent 独立密钥。
 

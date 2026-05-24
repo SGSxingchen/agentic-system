@@ -1,4 +1,4 @@
-import type { AgentInfo } from '../types'
+import type { AgentInfo, AgentMCPServerConfig, AgentSkillConfig } from '../types'
 
 export interface AgentDraft {
   description: string
@@ -6,6 +6,8 @@ export interface AgentDraft {
   output_format: 'text' | 'json'
   max_iterations: number
   tools: string[]
+  skills: AgentSkillConfig | null
+  mcp_servers: AgentMCPServerConfig[]
   default_workspace_id: string
   had_agent_llm: boolean
   llm_provider: string
@@ -20,6 +22,24 @@ function isAgentScopedLlm(agent: AgentInfo) {
   return agent.llm?.source === 'agent_config' || (!agent.llm && Boolean(agent.model))
 }
 
+function cloneSkills(skills?: AgentSkillConfig | null): AgentSkillConfig | null {
+  if (!skills) return null
+  return {
+    ...skills,
+    directories: [...(skills.directories || [])],
+    disabled: [...(skills.disabled || [])],
+    items: (skills.items || []).map((item) => ({ ...item })),
+  }
+}
+
+function cloneMcpServers(servers?: AgentMCPServerConfig[]) {
+  return (servers || []).map((server) => ({
+    ...server,
+    args: [...(server.args || [])],
+    env: { ...(server.env || {}) },
+  }))
+}
+
 export function agentToDraft(agent: AgentInfo): AgentDraft {
   const hasAgentLlm = isAgentScopedLlm(agent)
 
@@ -29,6 +49,8 @@ export function agentToDraft(agent: AgentInfo): AgentDraft {
     output_format: agent.output_format === 'json' ? 'json' : 'text',
     max_iterations: agent.max_iterations || 10,
     tools: [...(agent.capabilities || [])],
+    skills: cloneSkills(agent.skills),
+    mcp_servers: cloneMcpServers(agent.mcp_servers),
     default_workspace_id: agent.default_workspace_id || '',
     had_agent_llm: hasAgentLlm,
     llm_provider: hasAgentLlm ? agent.llm?.provider || '' : '',
@@ -60,6 +82,8 @@ export function buildAgentUpdatePayload(draft: AgentDraft): Record<string, unkno
     output_format: draft.output_format,
     max_iterations: draft.max_iterations,
     tools: draft.tools,
+    skills: draft.skills,
+    mcp_servers: draft.mcp_servers,
     default_workspace_id: draft.default_workspace_id || null,
   }
 
@@ -82,4 +106,8 @@ export function buildAgentUpdatePayload(draft: AgentDraft): Record<string, unkno
   }
 
   return payload
+}
+
+export function hasAgentDraftChanges(agent: AgentInfo, draft: AgentDraft): boolean {
+  return JSON.stringify(draft) !== JSON.stringify(agentToDraft(agent))
 }

@@ -1,4 +1,6 @@
 import sys
+import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +13,10 @@ from core.mcp import (
     normalize_agent_mcp_servers,
     validate_agent_mcp_servers_payload,
     validate_mcp_server_payload,
+)
+from core.mcp_import import (
+    merge_imported_mcp_servers,
+    parse_mcp_import_text,
 )
 from core.mcp_adapter import (
     MCPServerProxyCapability,
@@ -135,6 +141,102 @@ def test_mcp_masked_env_values_preserve_existing_secrets():
         "MODE": "dev",
         "NEW": "${NEW_TOKEN}",
     }
+
+
+def test_parse_claude_desktop_mcp_servers_json():
+    result = parse_mcp_import_text(json.dumps({
+        "mcpServers": {
+            "filesystem": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+                "env": {"TOKEN": "secret"},
+                "disabled": False,
+            },
+            "remote_docs": {
+                "url": "https://example.test/mcp/sse",
+                "type": "sse",
+                "disabled": True,
+            },
+        }
+    }))
+
+    assert result.errors == []
+    assert [server["name"] for server in result.servers] == ["filesystem", "remote_docs"]
+    assert result.servers[0]["transport"] == "stdio"
+    assert result.servers[0]["enabled"] is True
+    assert result.servers[1]["transport"] == "sse"
+    assert result.servers[1]["enabled"] is False
+    assert result.servers[1]["url"] == "https://example.test/mcp/sse"
+
+
+def test_parse_current_mcp_servers_format_and_yaml_servers_map():
+    current = parse_mcp_import_text(
+        """
+        mcp_servers:
+          - name: filesystem
+            command: npx
+            args:
+              - -y
+              - '@modelcontextprotocol/server-filesystem'
+        """,
+        source_format="yaml",
+    )
+    generic = parse_mcp_import_text(
+        """
+        servers:
+          docs:
+            url: https://example.test/mcp
+            transport: streamable-http
+        """
+    )
+
+    assert current.errors == []
+    assert current.servers[0]["name"] == "filesystem"
+    assert current.servers[0]["args"] == ["-y", "@modelcontextprotocol/server-filesystem"]
+    assert generic.errors == []
+    assert generic.servers[0]["name"] == "docs"
+    assert generic.servers[0]["transport"] == "streamable_http"
+
+
+def test_parse_pure_array_and_invalid_input_without_secret_leak():
+    array_result = parse_mcp_import_text('[{"name":"fs","command":"npx"}]')
+    invalid = parse_mcp_import_text('{"mcpServers": {"fs": {"env": {"TOKEN": "real-secret", }}}')
+
+    assert array_result.errors == []
+    assert array_result.servers == [
+        {
+            "name": "fs",
+            "command": "npx",
+            "args": [],
+            "env": {},
+            "cwd": "",
+            "enabled": True,
+            "description": "",
+            "transport": "stdio",
+        }
+    ]
+    assert invalid.servers == []
+    assert invalid.errors
+    assert "real-secret" not in "; ".join(invalid.errors)
+
+
+def test_merge_and_replace_imported_mcp_servers_preserve_masked_env_values():
+    existing = [
+        {"name": "filesystem", "command": "npx", "env": {"TOKEN": "real-secret", "MODE": "prod"}},
+        {"name": "kept", "command": "node", "env": {}},
+    ]
+    incoming = [
+        {"name": "filesystem", "command": "npx", "env": {"TOKEN": "********", "MODE": "dev"}},
+        {"name": "new", "command": "uvx", "env": {}},
+    ]
+
+    merged = merge_imported_mcp_servers(existing, incoming, mode="merge")
+    replaced = merge_imported_mcp_servers(existing, incoming, mode="replace")
+
+    assert [server["name"] for server in merged] == ["filesystem", "kept", "new"]
+    assert merged[0]["env"] == {"TOKEN": "real-secret", "MODE": "dev"}
+    assert [server["name"] for server in replaced] == ["filesystem", "new"]
+    assert replaced[0]["env"]["TOKEN"] == "real-secret"
 
 
 def test_mcp_capability_status_explains_runtime_pending():
@@ -391,6 +493,105 @@ async def test_agent_create_rejects_invalid_mcp_before_saving(monkeypatch):
 
     assert response.status == "error"
     assert "command is required when server is enabled" in response.message
+    assert saved is False
+
+
+async def test_agent_mcp_import_preview_and_apply_merge_replace(monkeypatch):
+    from api.routes import agents as agent_routes
+    from api.schemas import AgentMCPImportRequest
+
+    saved = {}
+    source_config = {
+        "agents": [
+            {
+                "name": "assistant",
+                "mcp_servers": [
+                    {
+                        "name": "filesystem",
+                        "command": "npx",
+                        "env": {"TOKEN": "real-secret", "MODE": "prod"},
+                    },
+                    {"name": "kept", "command": "node"},
+                ],
+            }
+        ]
+    }
+
+    monkeypatch.setattr(agent_routes, "load_single_yaml", lambda name: deepcopy(source_config))
+
+    async def capture_save(data, previous_data):
+        saved.clear()
+        saved.update(data)
+
+    monkeypatch.setattr(agent_routes, "_save_config_and_reload", capture_save)
+
+    preview = await agent_routes.import_agent_mcp_config(
+        "assistant",
+        AgentMCPImportRequest(
+            content='{"mcpServers":{"filesystem":{"command":"npx","env":{"TOKEN":"********","MODE":"dev"}}}}',
+            mode="merge",
+            apply=False,
+        ),
+    )
+    assert preview.status == "ok"
+    assert saved == {}
+    assert preview.data["preview"][0]["env"] == {"TOKEN": "********", "MODE": "********"}
+
+    merged = await agent_routes.import_agent_mcp_config(
+        "assistant",
+        AgentMCPImportRequest(
+            content='{"mcpServers":{"filesystem":{"command":"npx","env":{"TOKEN":"********","MODE":"dev"}},"new":{"command":"uvx"}}}',
+            mode="merge",
+            apply=True,
+        ),
+    )
+
+    assert merged.status == "ok"
+    mcp_servers = saved["agents"][0]["mcp_servers"]
+    assert [server["name"] for server in mcp_servers] == ["filesystem", "kept", "new"]
+    assert mcp_servers[0]["env"] == {"TOKEN": "real-secret", "MODE": "dev"}
+
+    replaced = await agent_routes.import_agent_mcp_config(
+        "assistant",
+        AgentMCPImportRequest(
+            content='{"mcp_servers":[{"name":"filesystem","command":"npx","env":{"TOKEN":"********"}}]}',
+            mode="replace",
+            apply=True,
+        ),
+    )
+
+    assert replaced.status == "ok"
+    assert [server["name"] for server in saved["agents"][0]["mcp_servers"]] == ["filesystem"]
+    assert saved["agents"][0]["mcp_servers"][0]["env"] == {"TOKEN": "real-secret"}
+
+
+async def test_agent_mcp_import_rejects_direct_agent_manager_apply(monkeypatch):
+    from api.routes import agents as agent_routes
+    from api.schemas import AgentMCPImportRequest
+
+    saved = False
+
+    async def fail_if_saved(*args, **kwargs):
+        nonlocal saved
+        saved = True
+
+    monkeypatch.setattr(
+        agent_routes,
+        "load_single_yaml",
+        lambda name: {"agents": [{"name": "agent_manager", "mcp_servers": []}]},
+    )
+    monkeypatch.setattr(agent_routes, "_save_config_and_reload", fail_if_saved)
+
+    response = await agent_routes.import_agent_mcp_config(
+        "agent_manager",
+        AgentMCPImportRequest(
+            content='{"mcpServers":{"filesystem":{"command":"npx"}}}',
+            apply=True,
+        ),
+    )
+
+    assert response.status == "error"
+    assert "agent_manager" in response.message
     assert saved is False
 
 

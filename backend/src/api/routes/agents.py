@@ -7,6 +7,7 @@
 - GET  /api/agents/{name}       — 获取特定 Agent 详情
 - POST /api/agents              — 创建新 Agent
 - PUT  /api/agents/{name}       — 更新 Agent 配置
+- POST /api/agents/{name}/mcp/import — 导入常见 MCP 配置
 - DELETE /api/agents/{name}     — 删除 Agent
 - POST /api/agents/{name}/invoke — 直接调用某个 Agent
 - GET  /api/agents/capabilities/list — 列出所有可用能力（供 Agent 选择 tools）
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 from ..schemas import (
     APIResponse,
     AgentInfo,
+    AgentMCPImportRequest,
     AgentMCPMount,
     AgentInvokeRequest,
     AgentCreateRequest,
@@ -49,6 +51,7 @@ from core.mcp import (
     validate_agent_mcp_servers_payload,
     validate_mcp_server_payload,
 )
+from core.mcp_import import merge_imported_mcp_servers, parse_mcp_import_text
 from ..websocket.handlers import build_memory_context, schedule_memory_reflection
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -367,6 +370,13 @@ def _build_agent_info(
 def _format_mcp_validation_error(mcp_servers: list[dict]) -> str | None:
     errors = validate_agent_mcp_servers_payload(mcp_servers)
     return "; ".join(errors) if errors else None
+
+
+def _find_agent_config(agents_list: list[Any], name: str) -> dict[str, Any] | None:
+    for agent in agents_list:
+        if isinstance(agent, dict) and agent.get("name") == name:
+            return agent
+    return None
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
@@ -879,6 +889,70 @@ async def update_agent(name: str, req: AgentUpdateRequest):
         message=f"Agent '{name}' 已更新",
         data=_sanitize_agent_config_for_response(target),
     )
+
+
+@router.post("/{name}/mcp/import", response_model=APIResponse)
+async def import_agent_mcp_config(name: str, req: AgentMCPImportRequest):
+    """Import common MCP config formats into one Agent-scoped mcp_servers list."""
+
+    data = load_single_yaml("agents.yaml")
+    previous_data = deepcopy(data)
+    agents_list = data.get("agents", [])
+    if not isinstance(agents_list, list):
+        return APIResponse(status="error", message="config/agents.yaml 中 agents 必须是列表")
+
+    target = _find_agent_config(agents_list, name)
+    if target is None:
+        return APIResponse(status="error", message=f"Agent '{name}' 不存在")
+    if req.apply and name == "agent_manager":
+        return APIResponse(status="error", message="agent_manager 只能通过受控 agent_manager 工具链修改")
+
+    parsed = parse_mcp_import_text(
+        req.content,
+        source_format=req.format,
+        source=req.source,
+    )
+    validation_errors = validate_agent_mcp_servers_payload(parsed.servers)
+    errors = [*parsed.errors, *validation_errors]
+    preview_servers = (
+        merge_imported_mcp_servers(
+            target.get("mcp_servers"),
+            parsed.servers,
+            mode=req.mode,
+        )
+        if not errors
+        else parsed.servers
+    )
+    payload = {
+        "servers": sanitize_mcp_servers_for_response(parsed.servers),
+        "validation": {
+            "valid": not errors,
+            "errors": errors,
+        },
+        "errors": errors,
+        "preview": sanitize_mcp_servers_for_response(preview_servers),
+        "mode": req.mode,
+        "apply": req.apply,
+        "applied": False,
+        "source_format": parsed.source_format,
+        "detected_shape": parsed.detected_shape,
+    }
+
+    if errors:
+        return APIResponse(status="error", message="MCP 导入配置无效", data=payload)
+    if not req.apply:
+        return APIResponse(status="ok", data=payload)
+
+    target["mcp_servers"] = preview_servers
+    data["agents"] = agents_list
+    try:
+        await _save_config_and_reload(data, previous_data)
+    except RuntimeError as exc:
+        return APIResponse(status="error", message=str(exc), data=payload)
+
+    payload["applied"] = True
+    payload["agent"] = _sanitize_agent_config_for_response(target)
+    return APIResponse(status="ok", message=f"Agent '{name}' MCP 配置已导入", data=payload)
 
 
 @router.delete("/{name}", response_model=APIResponse)

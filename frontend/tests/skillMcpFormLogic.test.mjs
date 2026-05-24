@@ -24,6 +24,8 @@ await writeFile(outPath, transpiled.outputText, 'utf8')
 try {
   const {
     buildSkillConfig,
+    skillItemDraftToConfig,
+    skillItemToDraft,
     skillConfigToDraft,
     mcpDraftToServer,
     mcpServerToDraft,
@@ -56,6 +58,72 @@ try {
       strategy: '',
     }),
     null
+  )
+
+  assert.deepEqual(
+    skillItemToDraft({
+      name: 'repo_style',
+      description: '项目约定',
+      instructions: '保持最小补丁',
+      enabled: false,
+    }),
+    {
+      kind: 'inline',
+      name: 'repo_style',
+      description: '项目约定',
+      instructions: '保持最小补丁',
+      path: '',
+      original: {
+        name: 'repo_style',
+        description: '项目约定',
+        instructions: '保持最小补丁',
+        enabled: false,
+      },
+    }
+  )
+
+  assert.deepEqual(
+    skillItemDraftToConfig({
+      kind: 'inline',
+      name: 'repo_style',
+      description: '项目约定',
+      instructions: '保持最小补丁',
+      path: '',
+      original: {
+        name: 'repo_style',
+        description: '旧说明',
+        instructions: '旧指令',
+        enabled: false,
+      },
+    }),
+    {
+      name: 'repo_style',
+      description: '项目约定',
+      instructions: '保持最小补丁',
+      enabled: false,
+    }
+  )
+
+  assert.deepEqual(
+    skillItemDraftToConfig({
+      kind: 'path',
+      name: '',
+      description: '',
+      instructions: '',
+      path: './skills/python/SKILL.md',
+      original: {
+        path: './skills/old/SKILL.md',
+        enabled: false,
+        source: 'team',
+      },
+    }),
+    { path: './skills/python/SKILL.md', enabled: false, source: 'team' }
+  )
+
+  assert.equal(
+    skillItemToDraft({ path: '', enabled: true }).kind,
+    'path',
+    '空路径草稿仍应保持路径 Skill 类型，便于新增后填写'
   )
 
   const mcpDraft = mcpServerToDraft({

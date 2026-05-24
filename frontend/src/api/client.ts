@@ -1,5 +1,7 @@
 import type {
   APIResponse,
+  AgentMcpImportPayload,
+  AgentMcpImportResult,
   AgentMCPServerConfig,
   AgentInfo,
   AgentSkillConfig,
@@ -322,6 +324,18 @@ export async function updateAgent(
   }
 ): Promise<APIResponse<unknown>> {
   const response = await put(`/api/agents/${name}`, data)
+  if (response.status === 'ok') invalidateGetCache('/api/agents')
+  return response
+}
+
+export async function importAgentMcpConfig(
+  name: string,
+  payload: AgentMcpImportPayload
+): Promise<APIResponse<AgentMcpImportResult>> {
+  const response = await post<AgentMcpImportResult>(
+    `/api/agents/${encodeURIComponent(name)}/mcp/import`,
+    payload
+  )
   if (response.status === 'ok') invalidateGetCache('/api/agents')
   return response
 }
