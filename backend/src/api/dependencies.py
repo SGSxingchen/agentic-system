@@ -24,6 +24,7 @@ class _AppState:
         self.reload_agent: Optional[Callable[[], Coroutine]] = None
         self.context_store = None          # ContextStore 实例
         self.capability_registry = None    # CapabilityRegistry 实例
+        self.task_registry = None          # TaskRegistry 实例（Phase 2 多 agent 共享）
 
 
 _state = _AppState()
@@ -71,6 +72,10 @@ def set_capability_registry(registry) -> None:
     _state.capability_registry = registry
 
 
+def set_task_registry(registry) -> None:
+    _state.task_registry = registry
+
+
 # ─── Getter（由路由调用） ─────────────────────────────────
 
 def get_bus():
@@ -111,3 +116,13 @@ def get_context_store():
 
 def get_capability_registry():
     return _state.capability_registry
+
+
+def get_task_registry():
+    """返回全局共享的 TaskRegistry。
+
+    Phase 2 起聊天室编排器与 routes/tasks.py 都通过同一个实例派 task；
+    main.py:lifespan 在启动时把 routes/tasks.py 的进程级单例注册进来，
+    保证 ``DELETE /api/tasks/{id}`` 能取消 chatroom 派出的发言任务。
+    """
+    return _state.task_registry

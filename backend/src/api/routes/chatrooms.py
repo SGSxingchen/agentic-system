@@ -1,9 +1,10 @@
 """Chatroom routes (multi-agent group chat).
 
-Phase 1 surface — REST only. Uses ``ChatroomStore`` for persistence and the
-existing ``CapabilityRegistry`` to drive a single Agent reply per ``invoke``
-call (blocking). Phase 2 will turn ``invoke`` into a non-blocking speaking task
-with WebSocket streaming and relay dispatch.
+Phase 2 surface — REST + non-blocking task dispatch. The blocking
+single-shot ``invoke`` of Phase 1 has been replaced by a speaking task that
+streams events to subscribed websockets via
+``broadcast_chatroom_event``. Mentioned agents are auto-dispatched
+(``dispatch_speaking_task``) and the auto-host setting is honoured.
 """
 
 from __future__ import annotations
@@ -13,9 +14,11 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 
-from core.chatroom import ChatroomStore, build_room_context, parse_mentions
+from core.chatroom import ChatroomStore, parse_mentions
+from core.chatroom_orchestrator import dispatch_speaking_task
+from core.task import TaskStatus
 
-from ..dependencies import get_agent_registry, get_capability_registry
+from ..dependencies import get_capability_registry, get_task_registry
 from ..schemas import (
     APIResponse,
     ChatroomCreateRequest,
@@ -139,13 +142,20 @@ async def post_chatroom_user_message(
     room_id: str,
     req: ChatroomMessageCreateRequest,
 ) -> APIResponse:
-    """Append a user message; parse mentions only (Phase 1 dispatches nothing)."""
+    """Append a user message and dispatch any mentioned agents.
 
+    Phase 2 wires mentions to ``dispatch_speaking_task`` so each mentioned
+    member gets its own ``AGENT_SPEAK`` task running in the background.
+    The ``auto_host`` setting falls back to the host agent when no mention
+    targets an existing member.
+    """
+
+    store = _store()
     room = _ensure_room(room_id)
     valid_names = _all_member_names(room)
     mentions = parse_mentions(req.content, valid_names)
 
-    message = _store().add_message(
+    message = store.add_message(
         room_id,
         {
             "sender": "user",
@@ -157,18 +167,40 @@ async def post_chatroom_user_message(
     if not message:
         raise HTTPException(status_code=404, detail="chatroom not found")
 
+    dispatched: List[Dict[str, Any]] = []
+    for target in mentions:
+        ticket = dispatch_speaking_task(
+            room_id,
+            target,
+            parent_message_id=message["id"],
+            store=store,
+        )
+        dispatched.append(ticket)
+
+    if not mentions:
+        settings = room.get("settings") or {}
+        if bool(settings.get("auto_host")):
+            host_agent = str(settings.get("host_agent") or "planner").strip()
+            if host_agent and host_agent in valid_names:
+                ticket = dispatch_speaking_task(
+                    room_id,
+                    host_agent,
+                    parent_message_id=message["id"],
+                    store=store,
+                )
+                dispatched.append(ticket)
+
     return APIResponse(
         status="ok",
         data={
             "message": message,
             "mentions": mentions,
-            # Phase 2 will attach dispatched_tasks; expose key now to keep schema stable
-            "dispatched_tasks": [],
+            "dispatched_tasks": dispatched,
         },
     )
 
 
-# ─── 召唤 Agent 发言（Phase 1: 阻塞）─────────────────────
+# ─── 召唤 Agent 发言（Phase 2: 非阻塞）─────────────────────
 
 
 @router.post("/{room_id}/invoke", response_model=APIResponse)
@@ -176,138 +208,54 @@ async def invoke_chatroom_agent(
     room_id: str,
     req: ChatroomInvokeRequest,
 ) -> APIResponse:
-    """Blocking single-shot agent reply. Phase 2 swaps this for a speaking task."""
+    """Dispatch a speaking task for ``agent_name``; returns immediately.
 
-    store = _store()
-    room = _ensure_room(room_id)
+    The actual reply streams through the chatroom websocket channel; clients
+    should subscribe via ``{event_type: "subscribe", channel: "chatroom:<id>"}``
+    to receive ``chatroom_agent_thinking`` / ``chatroom_message_done``.
+    """
 
-    valid_names = _all_member_names(room)
-    if req.agent_name not in valid_names:
-        # 写一条 failed 占位消息，便于前端看到拒绝原因
-        store.add_message(
-            room_id,
-            {
-                "sender": f"agent:{req.agent_name}",
-                "content": f"成员 {req.agent_name} 不在房间里",
-                "status": "failed",
-                "meta": {"error": "member_not_in_room"},
-            },
-        )
+    _ensure_room(room_id)
+    ticket = dispatch_speaking_task(
+        room_id,
+        req.agent_name,
+        prompt=req.prompt,
+    )
+    if ticket.get("error") == "member_not_in_room":
         raise HTTPException(
             status_code=400,
             detail=f"agent '{req.agent_name}' is not a member of this chatroom",
         )
-
-    cap_registry = get_capability_registry()
-    if cap_registry is None:
-        raise HTTPException(
-            status_code=503,
-            detail="capability registry not initialised",
-        )
-    if not cap_registry.get(req.agent_name):
-        store.add_message(
-            room_id,
-            {
-                "sender": f"agent:{req.agent_name}",
-                "content": f"成员 {req.agent_name} 已失效（未在 capability registry 注册）",
-                "status": "failed",
-                "meta": {"error": "agent_not_registered"},
-            },
-        )
+    if ticket.get("error") == "agent_not_registered":
         raise HTTPException(status_code=404, detail=f"agent '{req.agent_name}' not registered")
-
-    # 拼上下文
-    context_messages = build_room_context(room, req.agent_name)
-    payload: Dict[str, Any] = {
-        "messages": context_messages,
-        "message": req.prompt or "请发言",
-    }
-    if room.get("workspace_id"):
-        payload["workspace_id"] = room["workspace_id"]
-
-    try:
-        result = await cap_registry.execute(req.agent_name, **payload)
-    except Exception as exc:  # noqa: BLE001 — 兜底捕获后写 failed 消息
-        logger.exception("chatroom invoke failed for agent=%s", req.agent_name)
-        message = store.add_message(
-            room_id,
-            {
-                "sender": f"agent:{req.agent_name}",
-                "content": f"调用失败：{exc}",
-                "status": "failed",
-                "meta": {"error": str(exc), "exception_type": type(exc).__name__},
-            },
-        )
+    if ticket.get("error"):
         return APIResponse(
             status="error",
-            message=str(exc),
-            data={"message": message, "dispatched_tasks": []},
+            message=str(ticket.get("error")),
+            data=ticket,
         )
 
-    reply_text = _coerce_reply_text(result)
-    mentions = parse_mentions(reply_text, _all_member_names(room))
-    meta: Dict[str, Any] = {}
-    if isinstance(result, dict):
-        for key in ("usage", "elapsed_ms", "metrics"):
-            if key in result:
-                meta[key] = result[key]
-
-    message = store.add_message(
-        room_id,
-        {
-            "sender": f"agent:{req.agent_name}",
-            "content": reply_text,
-            "mentions": mentions,
-            "status": "done",
-            "meta": meta,
-        },
-    )
-    return APIResponse(
-        status="ok",
-        data={
-            "message": message,
-            # Phase 2 接力派发；Phase 1 先返回空数组占位
-            "dispatched_tasks": [],
-        },
-    )
+    return APIResponse(status="ok", data=ticket)
 
 
-# ─── 取消（Phase 1 桩）────────────────────────────────────
+# ─── 取消 ─────────────────────────────────────────────────
 
 
 @router.post("/{room_id}/cancel", response_model=APIResponse)
 async def cancel_chatroom_tasks(room_id: str) -> APIResponse:
-    """Cancel all in-flight speaking tasks (Phase 2 hooks this up)."""
+    """Cancel all in-flight speaking tasks for the room."""
 
-    _ensure_room(room_id)
-    return APIResponse(status="ok", data={"cancelled": 0})
+    room = _ensure_room(room_id)
+    task_registry = get_task_registry()
+    if task_registry is None:
+        return APIResponse(status="ok", data={"cancelled": 0})
 
-
-# ─── 内部 ─────────────────────────────────────────────────
-
-
-def _coerce_reply_text(result: Any) -> str:
-    """把 cap_registry.execute 的返回值压成一段文本，给消息正文用。
-
-    Agent.run 返回 dict：``{"response": str, ...}``（text 模式）或
-    解析后的 JSON dict（json 模式）。我们尽量取 ``response`` 字段，
-    取不到就回退到 ``raw_response`` 或整个 dict 的 JSON 串，避免空消息。
-    """
-
-    if result is None:
-        return ""
-    if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
-        for key in ("response", "raw_response", "content", "text", "answer"):
-            value = result.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-        # JSON 模式且无 response：序列化整个 dict 兜底
-        try:
-            import json
-
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            return str(result)
-    return str(result)
+    cancelled = 0
+    in_flight = {"pending", "streaming"}
+    for msg in (room.get("messages") or []):
+        status = str(msg.get("status") or "")
+        task_id = msg.get("task_id")
+        if status in in_flight and task_id:
+            if task_registry.kill(task_id):
+                cancelled += 1
+    return APIResponse(status="ok", data={"cancelled": cancelled})

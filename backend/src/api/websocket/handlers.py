@@ -96,10 +96,18 @@ def _ws_message(
 
 
 class ConnectionManager:
-    """Track active WebSocket connections."""
+    """Track active WebSocket connections.
+
+    Phase 2 adds opt-in channel subscriptions so multi-agent chatroom events
+    can be fanned out to interested clients without spamming every monitor
+    socket. The default ``broadcast`` still talks to all connections — only
+    chatroom events go through ``broadcast_to_channel``.
+    """
 
     def __init__(self) -> None:
         self._connections: list[WebSocket] = []
+        # 频道订阅表：channel name → 订阅该频道的 socket 集合
+        self._channels: dict[str, set[WebSocket]] = {}
 
     @property
     def active_count(self) -> int:
@@ -118,6 +126,13 @@ class ConnectionManager:
     def disconnect(self, websocket: WebSocket) -> None:
         if websocket in self._connections:
             self._connections.remove(websocket)
+        # 离线时清理所有频道订阅
+        for subscribers in self._channels.values():
+            subscribers.discard(websocket)
+        # 清理空频道，防止字典无限增长
+        empty = [name for name, subs in self._channels.items() if not subs]
+        for name in empty:
+            self._channels.pop(name, None)
         print(f"[WS] disconnected ({self.active_count} active)")
 
     async def broadcast(self, message: dict[str, Any]) -> None:
@@ -137,8 +152,76 @@ class ConnectionManager:
         except Exception:
             self.disconnect(websocket)
 
+    # ─── Phase 2: 频道订阅 ─────────────────────────────────
+
+    def subscribe(self, websocket: WebSocket, channel: str) -> None:
+        """订阅 channel；同一 socket 多次订阅幂等。"""
+        if not channel:
+            return
+        self._channels.setdefault(channel, set()).add(websocket)
+
+    def unsubscribe(self, websocket: WebSocket, channel: str) -> None:
+        """从 channel 退订；channel 不存在时静默。"""
+        if not channel:
+            return
+        subs = self._channels.get(channel)
+        if not subs:
+            return
+        subs.discard(websocket)
+        if not subs:
+            self._channels.pop(channel, None)
+
+    def channel_subscribers(self, channel: str) -> list[WebSocket]:
+        """返回订阅 channel 的 socket 列表副本（测试用）。"""
+        return list(self._channels.get(channel, set()))
+
+    async def broadcast_to_channel(
+        self,
+        channel: str,
+        message: dict[str, Any],
+    ) -> None:
+        """只向订阅了 channel 的 socket 推送消息。"""
+        subs = self._channels.get(channel)
+        if not subs:
+            return
+        disconnected: list[WebSocket] = []
+        # 拷一份；send_json 失败要清理时不能改正在迭代的 set
+        for websocket in list(subs):
+            try:
+                await websocket.send_json(message)
+            except Exception:
+                disconnected.append(websocket)
+        for websocket in disconnected:
+            self.disconnect(websocket)
+
 
 manager = ConnectionManager()
+
+
+def chatroom_channel(room_id: str) -> str:
+    """Return the canonical channel name for a chatroom."""
+    return f"chatroom:{room_id}"
+
+
+async def broadcast_chatroom_event(
+    room_id: str,
+    event_type: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Fan out a chatroom-scoped event to every subscribed websocket.
+
+    The message envelope mirrors ``broadcast_monitor_event`` so the frontend
+    parser can stay uniform: ``{type: "event", event_type, data, timestamp}``.
+    ``room_id`` is always echoed inside ``data`` so listeners that split a
+    single socket across multiple rooms can route correctly.
+    """
+
+    payload = dict(data or {})
+    payload.setdefault("room_id", room_id)
+    await manager.broadcast_to_channel(
+        chatroom_channel(room_id),
+        _ws_message("event", payload, event_type=event_type),
+    )
 
 
 async def broadcast_monitor_event(
@@ -171,6 +254,28 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await manager.send_to(
                     websocket,
                     _ws_message("event", {"message": "pong"}, event_type="pong"),
+                )
+            elif event_type == "subscribe":
+                channel = str(payload.get("channel") or "").strip()
+                manager.subscribe(websocket, channel)
+                await manager.send_to(
+                    websocket,
+                    _ws_message(
+                        "event",
+                        {"channel": channel, "subscribed": True},
+                        event_type="subscribed",
+                    ),
+                )
+            elif event_type == "unsubscribe":
+                channel = str(payload.get("channel") or "").strip()
+                manager.unsubscribe(websocket, channel)
+                await manager.send_to(
+                    websocket,
+                    _ws_message(
+                        "event",
+                        {"channel": channel, "subscribed": False},
+                        event_type="unsubscribed",
+                    ),
                 )
             else:
                 await manager.send_to(

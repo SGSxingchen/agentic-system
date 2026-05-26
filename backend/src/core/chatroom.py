@@ -634,4 +634,157 @@ __all__ = [
     "ChatroomStore",
     "build_room_context",
     "parse_mentions",
+    "should_summarize",
+    "summarize_room",
 ]
+
+
+# ─── 摘要触发与生成 ────────────────────────────────────────
+
+
+def _settings_int(room: Dict[str, Any], key: str, default: int) -> int:
+    """Pull an integer from ``room.settings``; clamp at 0 to avoid negative slicing."""
+
+    settings = room.get("settings") or {}
+    try:
+        value = int(settings.get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(0, value)
+
+
+def _summary_candidate_messages(room: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return the slice of messages eligible for a fresh summary.
+
+    Eligible = "older than the most recent N messages" AND "after the last summary cursor".
+    The slice keeps the original chronological order so the LLM can reason about it.
+    """
+
+    messages: List[Dict[str, Any]] = list(room.get("messages") or [])
+    if not messages:
+        return []
+
+    recent_n = _settings_int(room, "recent_n", 30)
+    older_count = max(0, len(messages) - recent_n)
+    earliest_window = messages[:older_count]
+    if not earliest_window:
+        return []
+
+    cursor = (room.get("summary_until_msg_id") or "").strip()
+    if not cursor:
+        return earliest_window
+
+    # 找到 cursor 位置，仅返回它之后的消息
+    cursor_idx: Optional[int] = None
+    for index, msg in enumerate(earliest_window):
+        if msg.get("id") == cursor:
+            cursor_idx = index
+            break
+    if cursor_idx is None:
+        # cursor 已不在窗口内（多轮摘要后可能漂出去），保守返回整窗
+        return earliest_window
+    return earliest_window[cursor_idx + 1 :]
+
+
+def should_summarize(room: Dict[str, Any]) -> bool:
+    """Decide whether the chatroom currently needs a fresh summary pass.
+
+    True when the count of "older than recent_n" messages that are NOT yet
+    covered by ``summary_until_msg_id`` is at or above ``settings.summary_threshold_m``.
+    """
+
+    candidates = _summary_candidate_messages(room)
+    threshold = _settings_int(room, "summary_threshold_m", 20)
+    return len(candidates) >= max(1, threshold)
+
+
+def _format_summary_input(messages: List[Dict[str, Any]]) -> str:
+    """Render the messages as a chronological dialog block for the LLM."""
+
+    lines: List[str] = []
+    for msg in messages:
+        sender = str(msg.get("sender") or "system")
+        content = str(msg.get("content") or "").strip()
+        if not content:
+            continue
+        # 跳过未完成消息，避免摘要里掺进半截输出
+        if msg.get("status") and msg.get("status") != "done":
+            continue
+        lines.append(f"[{sender}] {content}")
+    return "\n".join(lines)
+
+
+async def summarize_room(
+    room: Dict[str, Any],
+    llm_client: Any,
+    *,
+    store: Optional["ChatroomStore"] = None,
+) -> Optional[Dict[str, Any]]:
+    """Generate (or refresh) the room summary; persist on success.
+
+    Returns the updated room dict on success. Failures are swallowed with a
+    ``logging.warning`` — the caller (chatroom orchestrator) deliberately runs
+    this in ``asyncio.create_task`` so it never blocks the active speaker.
+    """
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if llm_client is None or not hasattr(llm_client, "chat"):
+        logger.warning("summarize_room skipped: llm_client missing or invalid")
+        return None
+
+    candidates = _summary_candidate_messages(room)
+    if not candidates:
+        return None
+
+    dialog = _format_summary_input(candidates)
+    if not dialog.strip():
+        return None
+
+    # 延迟导入避免循环依赖
+    try:
+        from .prompts import CHATROOM_SUMMARY_PROMPT
+    except ImportError:  # pragma: no cover — prompts 模块缺失只能跳过
+        logger.warning("summarize_room: CHATROOM_SUMMARY_PROMPT not available")
+        return None
+
+    previous = (room.get("summary") or "").strip()
+    user_block = (
+        ("[已有摘要]\n" + previous + "\n\n") if previous else ""
+    ) + "[新增对话]\n" + dialog
+
+    messages = [
+        {"role": "system", "content": CHATROOM_SUMMARY_PROMPT},
+        {"role": "user", "content": user_block},
+    ]
+
+    try:
+        response = await llm_client.chat(messages)
+    except Exception as exc:  # noqa: BLE001 — 静默吞错
+        logger.warning("summarize_room LLM call failed: %s", exc)
+        return None
+
+    summary_text = ""
+    if hasattr(response, "content"):
+        summary_text = str(response.content or "").strip()
+    elif isinstance(response, dict):
+        summary_text = str(response.get("content") or response.get("response") or "").strip()
+    elif isinstance(response, str):
+        summary_text = response.strip()
+
+    if not summary_text:
+        logger.warning("summarize_room: LLM returned empty content")
+        return None
+
+    last_id = candidates[-1].get("id")
+    if not last_id:
+        return None
+
+    target_store = store or ChatroomStore()
+    return target_store.update_room(
+        room["id"],
+        summary=summary_text,
+        summary_until_msg_id=str(last_id),
+    )

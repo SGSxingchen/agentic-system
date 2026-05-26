@@ -57,6 +57,7 @@ from .dependencies import (
     set_memory_retriever,
     set_memory_store,
     set_reload_agent_fn,
+    set_task_registry,
 )
 from .routes import (
     agents_router,
@@ -516,6 +517,11 @@ async def lifespan(app: FastAPI):
     set_bus(bus)
     set_agent_registry(registry)
     set_reload_agent_fn(reload_agents)
+
+    # 把 routes/tasks.py 里已存在的进程级 TaskRegistry 暴露给依赖容器，
+    # 让 chatroom 编排器与 routes/tasks.py 共用同一个 task 图谱。
+    from .routes.tasks import get_task_registry as _legacy_get_task_registry
+    set_task_registry(_legacy_get_task_registry())
 
     await bus.start()
     register_bus_event_bridge(bus)
