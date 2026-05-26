@@ -61,6 +61,7 @@ from .dependencies import (
 from .routes import (
     agents_router,
     chat_sessions_router,
+    chatrooms_router,
     config_router,
     evolution_router,
     memory_router,
@@ -580,6 +581,7 @@ app.include_router(personas_router)
 app.include_router(config_router)
 app.include_router(evolution_router)
 app.include_router(chat_sessions_router)
+app.include_router(chatrooms_router)
 app.include_router(artifacts_router)
 app.include_router(workspaces_router)
 

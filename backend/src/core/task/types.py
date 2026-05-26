@@ -19,6 +19,7 @@ class TaskType(str, Enum):
 
     AGENT_RUN = "agent_run"
     SUB_AGENT = "sub_agent"
+    AGENT_SPEAK = "agent_speak"
     # 预留：未来 Phase D 实装
     # SHELL = "shell"
 

@@ -28,6 +28,9 @@ _workspace_root_cv: ContextVar[Optional[Path]] = ContextVar(
 _dispatch_depth_cv: ContextVar[int] = ContextVar(
     "agentic_dispatch_depth", default=0
 )
+_current_room_id_cv: ContextVar[Optional[str]] = ContextVar(
+    "agentic_current_room_id", default=None
+)
 
 
 # ─── parent_task_id ────────────────────────────────────
@@ -88,3 +91,18 @@ def set_dispatch_depth(depth: int) -> Token:
 
 def reset_dispatch_depth(token: Token) -> None:
     _dispatch_depth_cv.reset(token)
+
+
+# ─── current_room_id（聊天室上下文）─────────────────────
+
+
+def get_current_room_id() -> Optional[str]:
+    return _current_room_id_cv.get()
+
+
+def set_current_room_id(room_id: Optional[str]) -> Token:
+    return _current_room_id_cv.set(room_id)
+
+
+def reset_current_room_id(token: Token) -> None:
+    _current_room_id_cv.reset(token)
