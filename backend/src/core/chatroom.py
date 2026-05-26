@@ -329,6 +329,49 @@ class ChatroomStore:
                     return deepcopy(messages[index + 1 :])
         return deepcopy(messages)
 
+    def set_room_goal(
+        self,
+        room_id: str,
+        goal: str,
+        *,
+        set_by: str,
+        reason: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """更新房间 goal；旧 goal 推入 goal_history。
+
+        Args:
+            room_id: 目标房间 id
+            goal: 新目标，空字符串视为清空 goal
+            set_by: 修改人（用户 id 或 ``agent:<name>``）
+            reason: 可选的修改原因，会落进 goal_history 项
+
+        Returns:
+            更新后的房间 dict；房间不存在返回 None。
+        """
+
+        new_goal = str(goal or "").strip()
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return None
+
+            history = list(room.get("goal_history") or [])
+            previous = (room.get("goal") or "").strip()
+            entry: Dict[str, Any] = {
+                "goal": previous or None,
+                "set_by": str(set_by or "").strip() or "unknown",
+                "set_at": _utc_now(),
+            }
+            if reason:
+                entry["reason"] = str(reason)
+            history.append(entry)
+
+            room["goal"] = new_goal or None
+            room["goal_history"] = history
+            room["updated_at"] = _utc_now()
+            self._write_room(room)
+            return deepcopy(room)
+
     # ─── 内部 IO ──────────────────────────────────────────
 
     def _room_path(self, room_id: str) -> Path:

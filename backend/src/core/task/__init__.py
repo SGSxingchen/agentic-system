@@ -28,6 +28,12 @@ from .context import (
     get_current_room_id,
     set_current_room_id,
     reset_current_room_id,
+    get_current_speaker_name,
+    set_current_speaker_name,
+    reset_current_speaker_name,
+    get_current_create_counter,
+    set_current_create_counter,
+    reset_current_create_counter,
 )
 
 __all__ = [
@@ -56,4 +62,10 @@ __all__ = [
     "get_current_room_id",
     "set_current_room_id",
     "reset_current_room_id",
+    "get_current_speaker_name",
+    "set_current_speaker_name",
+    "reset_current_speaker_name",
+    "get_current_create_counter",
+    "set_current_create_counter",
+    "reset_current_create_counter",
 ]

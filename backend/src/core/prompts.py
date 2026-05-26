@@ -103,6 +103,9 @@ TOOL_DESCRIPTIONS: Mapping[str, str] = {
     "generate_persona_patch_proposal": "人格迭代建议工具：创建 pending 人格补丁建议；批准前不会生效。",
     "apply_confirmed_persona_patch": "受限人格补丁应用工具：仅在显式管理员确认后批准 pending 建议并生成新人格版本。",
     "list_persona_patch_history": "只读人格迭代历史工具：查看补丁建议、版本历史和反馈记录。",
+    "chatroom_invite": "聊天室邀请工具：把已注册 Agent 加入当前房间；只能在 chatroom 发言任务内使用。",
+    "chatroom_create_agent": "聊天室动态成员创建工具：基于 base_agent 复制一个新 Agent 并加入当前房间；只能在 chatroom 发言任务内使用，单 task 上限 2 次。",
+    "chatroom_set_goal": "聊天室目标更新工具：替换当前房间的主要目标，旧目标进入 goal_history；只能在 chatroom 发言任务内使用。",
 }
 
 

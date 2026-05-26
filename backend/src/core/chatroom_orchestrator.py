@@ -43,8 +43,14 @@ from .task import (
     TaskStatus,
     TaskType,
     TranscriptWriter,
+    reset_current_create_counter,
     reset_current_room_id,
+    reset_current_speaker_name,
+    reset_workspace_root_override,
+    set_current_create_counter,
     set_current_room_id,
+    set_current_speaker_name,
+    set_workspace_root_override,
 )
 
 
@@ -206,6 +212,49 @@ def _attach_workspace(payload: Dict[str, Any], workspace_id: Optional[str]) -> N
         return
     payload["workspace_id"] = workspace.id
     payload["_trusted_workspace_root"] = workspace.root_path
+
+
+def _maybe_set_workspace_root(
+    room_id: str,
+    *,
+    store: ChatroomStore,
+):
+    """Set ``workspace_root_override`` ContextVar from room.workspace_id.
+
+    Returns the contextvar Token (or ``None``) so the caller can reset it
+    in a finally block. Logs but never raises when the workspace is missing
+    so a stale ``workspace_id`` cannot block the speaker.
+    """
+
+    from pathlib import Path
+
+    room = store.get_room(room_id) or {}
+    workspace_id = (room.get("workspace_id") or "").strip()
+    if not workspace_id:
+        return None
+
+    try:
+        from core.workspace import WorkspaceNotFoundError, WorkspaceStore  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        logger.warning("workspace module unavailable: %s", exc)
+        return None
+    try:
+        workspace = WorkspaceStore().get(workspace_id)
+    except WorkspaceNotFoundError:
+        logger.warning(
+            "chatroom workspace not found, skipping workspace_root_override: %s",
+            workspace_id,
+        )
+        return None
+    except Exception as exc:  # pragma: no cover
+        logger.warning("chatroom workspace lookup failed: %s", exc)
+        return None
+
+    try:
+        return set_workspace_root_override(Path(workspace.root_path))
+    except Exception as exc:  # pragma: no cover
+        logger.warning("set_workspace_root_override failed: %s", exc)
+        return None
 
 
 # ─── 主入口 ────────────────────────────────────────────────
@@ -475,6 +524,10 @@ async def _run_speaking_task(
     writer = TranscriptWriter(task_id)
 
     room_token = set_current_room_id(room_id)
+    speaker_token = set_current_speaker_name(agent_name)
+    create_counter: List[int] = [0]
+    counter_token = set_current_create_counter(create_counter)
+    workspace_token = _maybe_set_workspace_root(room_id, store=store)
     started_at = datetime.utcnow()
     tool_started: Dict[str, datetime] = {}
     accumulated = ""
@@ -742,6 +795,10 @@ async def _run_speaking_task(
             },
         )
     finally:
+        if workspace_token is not None:
+            reset_workspace_root_override(workspace_token)
+        reset_current_create_counter(counter_token)
+        reset_current_speaker_name(speaker_token)
         reset_current_room_id(room_token)
 
 

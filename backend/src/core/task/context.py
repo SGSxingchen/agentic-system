@@ -31,6 +31,14 @@ _dispatch_depth_cv: ContextVar[int] = ContextVar(
 _current_room_id_cv: ContextVar[Optional[str]] = ContextVar(
     "agentic_current_room_id", default=None
 )
+_current_speaker_name_cv: ContextVar[Optional[str]] = ContextVar(
+    "agentic_current_speaker_name", default=None
+)
+# 单 task 内 chatroom_create_agent 计数器：用一个 list[int] 当可变容器，
+# 每次创建 +1，便于工具内部读写而无需新建 Token。
+_current_create_counter_cv: ContextVar[Optional[List[int]]] = ContextVar(
+    "agentic_current_create_counter", default=None
+)
 
 
 # ─── parent_task_id ────────────────────────────────────
@@ -106,3 +114,33 @@ def set_current_room_id(room_id: Optional[str]) -> Token:
 
 def reset_current_room_id(token: Token) -> None:
     _current_room_id_cv.reset(token)
+
+
+# ─── current_speaker_name（聊天室发言者）─────────────────
+
+
+def get_current_speaker_name() -> Optional[str]:
+    return _current_speaker_name_cv.get()
+
+
+def set_current_speaker_name(name: Optional[str]) -> Token:
+    return _current_speaker_name_cv.set(name)
+
+
+def reset_current_speaker_name(token: Token) -> None:
+    _current_speaker_name_cv.reset(token)
+
+
+# ─── current_create_counter（单 task 内 create_agent 上限）────
+
+
+def get_current_create_counter() -> Optional[List[int]]:
+    return _current_create_counter_cv.get()
+
+
+def set_current_create_counter(counter: Optional[List[int]]) -> Token:
+    return _current_create_counter_cv.set(counter)
+
+
+def reset_current_create_counter(token: Token) -> None:
+    _current_create_counter_cv.reset(token)
