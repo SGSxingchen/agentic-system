@@ -113,12 +113,14 @@ async def update_chatroom(room_id: str, req: ChatroomUpdateRequest) -> APIRespon
 
 @router.delete("/{room_id}", response_model=APIResponse)
 async def delete_chatroom(room_id: str) -> APIResponse:
-    """Delete a chatroom (Phase 1: only the JSON file)."""
+    """Delete a chatroom; first cancel any in-flight speaking tasks."""
 
+    room = _ensure_room(room_id)
+    cancelled = _kill_room_in_flight_tasks(room)
     deleted = _store().delete_room(room_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="chatroom not found")
-    return APIResponse(status="ok")
+    return APIResponse(status="ok", data={"cancelled": cancelled})
 
 
 # ─── 消息 ────────────────────────────────────────────────
@@ -246,16 +248,21 @@ async def cancel_chatroom_tasks(room_id: str) -> APIResponse:
     """Cancel all in-flight speaking tasks for the room."""
 
     room = _ensure_room(room_id)
+    cancelled = _kill_room_in_flight_tasks(room)
+    return APIResponse(status="ok", data={"cancelled": cancelled})
+
+
+def _kill_room_in_flight_tasks(room: Dict[str, Any]) -> int:
+    """Kill any in-flight speaking tasks for ``room``; return count actually cancelled."""
+
     task_registry = get_task_registry()
     if task_registry is None:
-        return APIResponse(status="ok", data={"cancelled": 0})
-
+        return 0
     cancelled = 0
     in_flight = {"pending", "streaming"}
     for msg in (room.get("messages") or []):
         status = str(msg.get("status") or "")
         task_id = msg.get("task_id")
-        if status in in_flight and task_id:
-            if task_registry.kill(task_id):
-                cancelled += 1
-    return APIResponse(status="ok", data={"cancelled": cancelled})
+        if status in in_flight and task_id and task_registry.kill(task_id):
+            cancelled += 1
+    return cancelled

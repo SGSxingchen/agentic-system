@@ -67,17 +67,18 @@ _MENTION_RE = re.compile(r"@([A-Za-z0-9_\-一-鿿㐀-䶿]+)")
 def _strip_inline_code(content: str) -> str:
     """把代码块/行内反引号包围的内容替换成等长空白，避免 @ 被解析。
 
-    最简实现：先剥 ``` 三引号块，再剥 ` 单引号片段。匹配后用同样长度的空格
-    替代，保证后续 mention 偏移不变。
+    顺序：先剥 ``` 三引号块（含未闭合的，闭合不到就把剩余整段当代码处理），
+    再剥 ` 单引号片段（含未闭合的，同样把剩余当代码）。匹配后用同样长度的
+    空格替代，保证后续 mention 偏移不变。
     """
 
     def _blank(match: re.Match) -> str:
         return " " * len(match.group(0))
 
-    # 三引号代码块（贪婪匹配最近的闭合 ```）
-    triple = re.sub(r"```[\s\S]*?```", _blank, content)
-    # 行内 `code`（不跨行）
-    inline = re.sub(r"`[^`\n]*`", _blank, triple)
+    # 三引号代码块；闭合不到时吞到末尾
+    triple = re.sub(r"```[\s\S]*?```|```[\s\S]*", _blank, content)
+    # 行内 `code`（不跨行）；闭合不到时吞到行尾
+    inline = re.sub(r"`[^`\n]*`|`[^`\n]*", _blank, triple)
     return inline
 
 

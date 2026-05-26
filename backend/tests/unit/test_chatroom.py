@@ -351,3 +351,20 @@ def test_build_room_context_dynamic_members_in_others(store: ChatroomStore):
     # planner 是 target，不应在 others 里
     other_section = sys_text.split("其他成员：", 1)[1]
     assert "planner" not in other_section
+
+
+# ─── 回归测试：未闭合代码块 ──────────────────────────────
+
+
+def test_parse_mentions_skips_unclosed_triple_backtick():
+    """未闭合的 ``` 代码块也应跳过其后的 @ — Phase 4 review 修复。"""
+
+    text = "前导 @planner\n```python\nx = '@coder ignored from here on'"
+    assert parse_mentions(text, ["planner", "coder"]) == ["planner"]
+
+
+def test_parse_mentions_skips_unclosed_inline_backtick():
+    """未闭合的行内 ` 后的 @ 也应被忽略，至到行尾。"""
+
+    text = "看这个 @planner ，但是这个 `不闭合 @coder 也不算"
+    assert parse_mentions(text, ["planner", "coder"]) == ["planner"]

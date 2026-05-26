@@ -328,3 +328,86 @@ async def test_notification_failed_subagent(
     assert notif is not None
     assert "<status>failed</status>" in notif["content"]
     assert "boom" in notif["content"]
+
+
+# =====================
+# 回归：子 Agent 隔离 chatroom 上下文
+# =====================
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_isolates_chatroom_context_vars():
+    """父在 chatroom 内派子 Agent 时，子任务的 current_room_id/speaker 应被重置。
+
+    不重置会导致子 Agent 调 chatroom_invite 等工具时误命中父房间。
+    回归 Phase 4 终审 §13。
+    """
+    from capabilities.tools.dispatch_agent import _run_subagent
+    from core.task import (
+        get_current_room_id,
+        get_current_speaker_name,
+        set_current_room_id,
+        set_current_speaker_name,
+        reset_current_room_id,
+        reset_current_speaker_name,
+        TranscriptWriter,
+    )
+
+    captured: Dict[str, Any] = {}
+
+    class _CaptureCap(CapabilityBase):
+        @property
+        def name(self) -> str:
+            return "_capture"
+
+        @property
+        def description(self) -> str:
+            return ""
+
+        def get_schema(self) -> CapabilitySchema:
+            return CapabilitySchema(
+                name=self.name,
+                description="",
+                parameters={"type": "object", "properties": {}},
+            )
+
+        async def execute(self, **_: Any) -> Any:
+            captured["room_id"] = get_current_room_id()
+            captured["speaker"] = get_current_speaker_name()
+            return {"ok": True}
+
+    # 父任务设置 chatroom 上下文
+    room_token = set_current_room_id("parent-room-123")
+    speaker_token = set_current_speaker_name("planner")
+    try:
+        registry = TaskRegistry()
+        task = registry.create(
+            requirement="probe",
+            agent_name="_capture",
+            parent_id=None,
+        )
+
+        class _NullWriter:
+            def write(self, *_a, **_kw):
+                pass
+
+        await _run_subagent(
+            task_id=task.id,
+            subagent_type="_capture",
+            prompt="ping",
+            subagent_cap=_CaptureCap(),
+            worktree_path=None,
+            parent_box=None,
+            task_registry=registry,
+            writer=_NullWriter(),
+        )
+
+        # 子 Agent 内部看不到父房间
+        assert captured["room_id"] is None
+        assert captured["speaker"] is None
+        # 父上下文恢复
+        assert get_current_room_id() == "parent-room-123"
+        assert get_current_speaker_name() == "planner"
+    finally:
+        reset_current_speaker_name(speaker_token)
+        reset_current_room_id(room_token)

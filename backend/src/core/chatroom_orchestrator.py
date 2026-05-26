@@ -530,6 +530,7 @@ async def _run_speaking_task(
     workspace_token = _maybe_set_workspace_root(room_id, store=store)
     started_at = datetime.utcnow()
     tool_started: Dict[str, datetime] = {}
+    tool_total = 0  # 累计已发起的 tool_call 数（含未完成）
     accumulated = ""
     final_text = ""
     final_meta: Dict[str, Any] = {}
@@ -612,6 +613,7 @@ async def _run_speaking_task(
                     tool_name = str(event.get("tool") or "")
                     call_id = str(event.get("tool_call_id") or f"{tool_name}:{len(tool_started) + 1}")
                     tool_started[call_id] = datetime.utcnow()
+                    tool_total += 1
                     writer.write(
                         "step_tool_call",
                         {
@@ -677,9 +679,7 @@ async def _run_speaking_task(
                         final_meta["usage"] = event["usage"]
                     if event.get("elapsed_ms") is not None:
                         final_meta["elapsed_ms"] = event["elapsed_ms"]
-                    final_meta["tool_count"] = len(tool_started) + sum(
-                        1 for _ in []  # placeholder for clarity
-                    )
+                    final_meta["tool_count"] = tool_total
                     break
 
                 else:

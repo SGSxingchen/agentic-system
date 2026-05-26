@@ -360,3 +360,63 @@ async def test_post_message_without_mention_no_dispatch_unless_auto_host(client,
     body = resp.json()["data"]
     assert body["mentions"] == []
     assert body["dispatched_tasks"] == []
+
+
+@pytest.mark.asyncio
+async def test_delete_room_kills_in_flight_tasks(client, deps):
+    """删除房间应先级联 kill 所有 in-flight speaking task — Phase 4 review 修复。"""
+
+    class HangingCap(CapabilityBase):
+        @property
+        def name(self) -> str:  # type: ignore[override]
+            return "planner"
+
+        @property
+        def description(self) -> str:  # type: ignore[override]
+            return "hangs"
+
+        def get_schema(self) -> CapabilitySchema:
+            return CapabilitySchema(name="planner", description="hangs")
+
+        async def execute(self, **kwargs):
+            await asyncio.sleep(5.0)
+            return {"response": "never"}
+
+        async def execute_stream(self, **kwargs):
+            yield {"type": "thinking", "content": "starting"}
+            await asyncio.sleep(5.0)
+            yield {"type": "done", "content": {"response": "never"}}
+
+    deps["cap_registry"].register_native(HangingCap())
+
+    create = await client.post(
+        "/api/chatrooms",
+        json={"title": "del", "members": ["planner"]},
+    )
+    room_id = create.json()["data"]["id"]
+
+    invoked = await client.post(
+        f"/api/chatrooms/{room_id}/invoke",
+        json={"agent_name": "planner"},
+    )
+    task_id = invoked.json()["data"]["task_id"]
+    task_registry: TaskRegistry = deps["task_registry"]
+
+    streaming = await _wait_for(
+        lambda: task_registry.get(task_id) is not None
+        and task_registry.get(task_id).status is TaskStatus.RUNNING,
+        timeout=2.0,
+    )
+    assert streaming
+
+    delete = await client.delete(f"/api/chatrooms/{room_id}")
+    assert delete.status_code == 200
+    # delete 返回里告知本次取消了多少 task
+    assert delete.json()["data"]["cancelled"] >= 1
+
+    killed = await _wait_for(
+        lambda: task_registry.get(task_id) is not None
+        and task_registry.get(task_id).status is TaskStatus.KILLED,
+        timeout=2.0,
+    )
+    assert killed

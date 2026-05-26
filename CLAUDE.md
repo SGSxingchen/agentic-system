@@ -31,6 +31,7 @@
 | 能力插件系统 | ✅ 已实现 | CodeParser + StaticAnalyzer + TestRunner |
 | YAML 配置体系 | ✅ 已实现 | config/ 目录主配置，动态加载，fallback 机制 |
 | 前后端分离 | ✅ 已实现 | FastAPI + React/TypeScript + WebSocket |
+| Agent 多 Agent 群聊（Chatroom） | ✅ 已实现 | 多 Agent 房间、@ 接力、auto-host、摘要压缩、动态拉人造人、工作区绑定 |
 | MCP 集成 | ❌ 预留接口 | CapabilityRegistry 预留了 MCP 类型支持 |
 | 消息持久化 | ❌ 预留接口 | 当前仅内存队列 |
 
@@ -38,13 +39,13 @@
 
 | 指标 | 数值 |
 |------|------|
-| Python 源文件 | 82 个 |
-| 前端 TS/TSX 文件 | 16 个 |
-| 前端 CSS 文件 | 11 个 |
-| 后端代码行数 | ~8,300 行 |
-| 前端代码行数 | ~5,100 行 (TS+CSS) |
-| 测试用例 | ~605 个 |
-| 测试代码行数 | ~4,900 行 |
+| Python 源文件 | 88 个 (+6 chatroom) |
+| 前端 TS/TSX 文件 | 18 个 (+2 ChatroomPanel) |
+| 前端 CSS 文件 | 12 个 (+1 ChatroomPanel.css) |
+| 后端代码行数 | ~9,500 行 |
+| 前端代码行数 | ~5,800 行 (TS+CSS) |
+| 测试用例 | 798 个 |
+| 测试代码行数 | ~5,800 行 |
 | YAML 配置文件 | 3 个主配置 (config/) + 1 个运行时配置 (src/config.yaml) |
 
 ---
@@ -351,7 +352,35 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - 父 task 取消时所有 SUB_AGENT 子 task 级联 KILLED（TaskRegistry.kill 递归）
 - Worktree 隔离（可选）：`worktree=true` 时用 `git worktree add --detach` 在 `workspace/worktrees/{task_id}/` 建临时工作树；通过 contextvar 覆盖 `_safety.get_workspace_root()`，让子 Agent 的文件 tool 在隔离目录运行
 
-跨 async 调用栈传递的运行时上下文集中在 `core/task/context.py`：`parent_task_id` / `notification_box` / `workspace_root_override` / `dispatch_depth` 共 4 个 ContextVar。所有 setter 返回 `Token`，调用方用 try/finally reset。
+跨 async 调用栈传递的运行时上下文集中在 `core/task/context.py`：`parent_task_id` / `notification_box` / `workspace_root_override` / `dispatch_depth` / `current_room_id` / `current_speaker_name` / `current_create_counter` 共 7 个 ContextVar。所有 setter 返回 `Token`，调用方用 try/finally reset。
+
+### 3.10 Agent 聊天室（Chatroom）
+
+多 Agent 群聊形态。完整设计见 [`docs/superpowers/specs/2026-05-26-agent-chatroom-design.md`](docs/superpowers/specs/2026-05-26-agent-chatroom-design.md)。
+
+**模型** (`core/chatroom.py`)：
+- `Chatroom`：id / title / **topic** / **goal** / goal_history / members / dynamic_members / workspace_id / summary / settings
+- `ChatroomMessage`：id / room_id / sender (`user` / `agent:<name>` / `system`) / content / mentions / parent_message_id / status (`pending`/`streaming`/`done`/`failed`) / task_id / meta
+- `ChatroomStore`：JSON 持久化（`data/chatrooms/{room_id}.json` + `_index.json`），原子写
+- 工具：`parse_mentions(content, valid)` 解析 `@AgentName`（跳过反引号代码段，含未闭合）；`build_room_context(room, target)` 拼系统提示（topic+goal+summary）+ 最近 N 条历史
+
+**编排** (`core/chatroom_orchestrator.py`)：
+- `dispatch_speaking_task(room_id, agent_name, parent_message_id?)` —— 同步入口，不阻塞
+- `_run_speaking_task` 后台 coroutine：插占位消息（pending）→ stream Agent → 最终消息 done + 解析 @ → 递归派接力（`max_relay_depth` 默认 3）
+- `maybe_schedule_summary` —— 早于 recent_n 的消息累计 ≥ summary_threshold_m 时异步派 `summarize_room`，不阻塞发言
+- task 类型 `TaskType.AGENT_SPEAK`；transcript 写到 `workspace/tasks/{task_id}.jsonl`
+
+**自治工具**（默认对所有 Agent 注册，房间外调用直接 error）：
+- `chatroom_invite(agent_name)` —— 拉已注册 Agent 入群
+- `chatroom_create_agent(name, role_prompt, base_agent="generic")` —— 运行时造新 Agent；单 task 上限 2 次；动态成员存房间 JSON，重启后由 `rebuild_chatroom_dynamic_agents` 重建
+- `chatroom_set_goal(goal, reason?)` —— 改房间主目标，旧 goal 入 history
+
+**WebSocket 频道**：
+客户端 `{event_type:"subscribe", channel:"chatroom:<id>"}` 订阅；事件类型：`chatroom_message_added` / `_started` / `_done` / `_failed`、`chatroom_agent_thinking` / `tool_call` / `tool_result`、`chatroom_summary_updated`、`chatroom_member_added` / `_removed`、`chatroom_goal_updated`。
+
+**工作区绑定**：`Chatroom.workspace_id` 在派 speaking task 时通过 `set_workspace_root_override` 注入；`read_file` / `write_file` / `bash` 等工作区工具自动落到该房间根目录。
+
+**前端**：`frontend/src/components/ChatroomPanel.tsx` —— 三栏布局（房间列表 / 消息流 + topic·goal banner / 成员设置）；独立 useWebSocket 连接订阅频道；@ mention 浮窗、思考折叠、工具调用卡片、状态徽标、断线重订阅。
 
 ---
 
@@ -427,6 +456,15 @@ _CAPABILITY_CLASS_MAP = {
 | POST | `/api/runs/{run_id}/control` | 控制运行 |
 | DELETE | `/api/runs/{run_id}` | 取消运行 |
 | GET | `/api/runs/workspaces` | 汇总运行工作区 |
+| GET | `/api/chatrooms` | 列出聊天室摘要 |
+| POST | `/api/chatrooms` | 创建聊天室 |
+| GET | `/api/chatrooms/{room_id}` | 获取房间详情（含消息） |
+| PUT | `/api/chatrooms/{room_id}` | 更新房间元数据 |
+| DELETE | `/api/chatrooms/{room_id}` | 删除房间（先级联 kill in-flight） |
+| GET | `/api/chatrooms/{room_id}/messages` | 增量消息（支持 since） |
+| POST | `/api/chatrooms/{room_id}/messages` | 用户发言（自动派发 mention） |
+| POST | `/api/chatrooms/{room_id}/invoke` | 召唤指定 Agent 发言（异步派 task） |
+| POST | `/api/chatrooms/{room_id}/cancel` | 取消房间所有 in-flight 发言 |
 | GET | `/api/memory/stats` | 记忆统计 |
 | GET | `/api/memory/list` | 列出记忆 |
 | POST | `/api/memory/search` | 搜索记忆 |
@@ -438,6 +476,8 @@ _CAPABILITY_CLASS_MAP = {
 ### 5.2 WebSocket
 
 `ws://localhost:8001/ws` — 实时通信 (Agent 状态、对话响应)
+
+支持频道订阅：客户端发 `{event_type:"subscribe", channel:"chatroom:<id>"}` / `unsubscribe` 接入聊天室事件流。频道事件见 §3.10。
 
 ---
 

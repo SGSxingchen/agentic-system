@@ -156,8 +156,11 @@ class ChatroomCreateAgentCapability(CapabilityBase):
             return {"error": "must be called inside a chatroom speaking task"}
 
         # 单 task 上限校验
+        # `counter` 是 ContextVar 持有的可变 list 计数器（[count]）。
+        # orchestrator 在派发 speaking task 时初始化为 [0]；
+        # 但本工具也允许 list 为空 / 容器缺失（旧调用路径或未来变更），保持稳健。
         counter = get_current_create_counter()
-        if counter is not None and counter and counter[0] >= _MAX_CREATE_PER_TASK:
+        if counter and counter[0] >= _MAX_CREATE_PER_TASK:
             return {
                 "error": (
                     f"chatroom_create_agent reached per-task limit "
@@ -222,8 +225,8 @@ class ChatroomCreateAgentCapability(CapabilityBase):
         )
 
         # 计数器递增
-        if counter is not None:
-            counter[0] = (counter[0] if counter else 0) + 1
+        if counter:
+            counter[0] += 1
 
         # System 消息 + 广播
         speaker = get_current_speaker_name() or "system"
