@@ -531,3 +531,86 @@ async def test_dispatch_invalidates_disconnected_llm_gracefully(
 
     monkeypatch.setattr("core.chatroom_orchestrator._get_llm_client", lambda: None)
     assert maybe_schedule_summary(room["id"], store=store) is None
+
+
+# =====================
+# host_directive 解析（spec §3.4 完整版）
+# =====================
+
+
+def test_parse_host_directive_extracts_fenced_json():
+    from core.chatroom_orchestrator import _parse_host_directive
+
+    room = {
+        "members": ["planner", "coder", "reviewer"],
+        "settings": {"auto_host": True, "host_agent": "planner"},
+    }
+    text = (
+        "我先安排一下：让 coder 起草模块 A，让 reviewer 等草稿出来再审。\n\n"
+        "```json\n"
+        '{"actions": ['
+        '{"agent": "coder", "prompt": "起草模块 A 的 API 草案"},'
+        '{"agent": "reviewer", "prompt": "等草稿出来后审"}'
+        "]}\n"
+        "```"
+    )
+
+    actions = _parse_host_directive(text, room, speaker="planner")
+    assert actions is not None
+    assert [a["agent"] for a in actions] == ["coder", "reviewer"]
+    assert actions[0]["prompt"].startswith("起草")
+
+
+def test_parse_host_directive_only_when_speaker_is_host():
+    from core.chatroom_orchestrator import _parse_host_directive
+
+    room = {
+        "members": ["planner", "coder"],
+        "settings": {"auto_host": True, "host_agent": "planner"},
+    }
+    text = '{"actions": [{"agent": "coder", "prompt": "x"}]}'
+
+    # 不是 host 调用 → 返回 None
+    assert _parse_host_directive(text, room, speaker="coder") is None
+    # auto_host=False → 返回 None
+    room2 = {**room, "settings": {"auto_host": False, "host_agent": "planner"}}
+    assert _parse_host_directive(text, room2, speaker="planner") is None
+
+
+def test_parse_host_directive_filters_unknown_and_self():
+    from core.chatroom_orchestrator import _parse_host_directive
+
+    room = {
+        "members": ["planner", "coder"],
+        "settings": {"auto_host": True, "host_agent": "planner"},
+    }
+    text = (
+        '{"actions": ['
+        '{"agent": "coder", "prompt": "ok"},'
+        '{"agent": "planner", "prompt": "self mention should be dropped"},'
+        '{"agent": "ghost", "prompt": "unknown"}'
+        "]}"
+    )
+    actions = _parse_host_directive(text, room, speaker="planner")
+    assert actions == [{"agent": "coder", "prompt": "ok"}]
+
+
+def test_parse_host_directive_returns_none_for_garbage():
+    from core.chatroom_orchestrator import _parse_host_directive
+
+    room = {
+        "members": ["planner", "coder"],
+        "settings": {"auto_host": True, "host_agent": "planner"},
+    }
+    # 文本里没有 JSON
+    assert _parse_host_directive("不输出 JSON 啊", room, speaker="planner") is None
+    # JSON 不是对象
+    assert _parse_host_directive("[1,2,3]", room, speaker="planner") is None
+    # 没有 actions 字段
+    assert (
+        _parse_host_directive('{"plan": "..."}', room, speaker="planner") is None
+    )
+    # actions 为空 → 视为 None（让调用方走 mention 回退）
+    assert (
+        _parse_host_directive('{"actions": []}', room, speaker="planner") is None
+    )

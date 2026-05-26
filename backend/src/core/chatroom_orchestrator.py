@@ -27,7 +27,9 @@ in ``api/routes/chatrooms.py`` is the only synchronous entry point for now.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
@@ -740,7 +742,32 @@ async def _run_speaking_task(
         )
 
         # ── 接力派发 ──────────────────────────────────────
-        if mentions:
+        # host_directive 优先：如果发言者是 auto_host 模式下的 host_agent，
+        # 优先尝试把回复解析为结构化指令，按指令派发；否则回退到 mention 接力。
+        directive_actions = _parse_host_directive(
+            final_text,
+            room_after,
+            speaker=agent_name,
+        )
+        if directive_actions:
+            await _broadcast(
+                room_id,
+                "chatroom_host_directive",
+                {
+                    "room_id": room_id,
+                    "host": agent_name,
+                    "actions": directive_actions,
+                },
+            )
+            for action in directive_actions:
+                dispatch_speaking_task(
+                    room_id,
+                    action["agent"],
+                    prompt=action.get("prompt"),
+                    parent_message_id=message_id,
+                    store=store,
+                )
+        elif mentions:
             for relay_target in mentions:
                 dispatch_speaking_task(
                     room_id,
@@ -806,3 +833,101 @@ __all__ = [
     "dispatch_speaking_task",
     "maybe_schedule_summary",
 ]
+
+
+# ─── host_directive 解析 ──────────────────────────────────
+
+
+def _parse_host_directive(
+    final_text: str,
+    room: Dict[str, Any],
+    *,
+    speaker: str,
+) -> Optional[List[Dict[str, Any]]]:
+    """从主持人 Agent 的回复里解析结构化调度指令。
+
+    仅当：(a) 房间 auto_host=True，(b) speaker 与 settings.host_agent 一致，
+    (c) 文本里能找到一段可解析的 JSON ``{"actions":[{"agent":...,"prompt":...}]}``，
+    才返回 actions 列表（每项已校验 agent 在房间成员里）。
+    其余情况返回 None，调用方回退到 mention 解析。
+    """
+
+    if not final_text:
+        return None
+    settings = room.get("settings") or {}
+    if not bool(settings.get("auto_host")):
+        return None
+    host_agent = str(settings.get("host_agent") or "").strip()
+    if not host_agent or speaker != host_agent:
+        return None
+
+    payload = _extract_json_object(final_text)
+    if not isinstance(payload, dict):
+        return None
+    actions = payload.get("actions")
+    if not isinstance(actions, list) or not actions:
+        return None
+
+    valid_names = set(_all_member_names(room)) - {speaker}
+    cleaned: List[Dict[str, Any]] = []
+    for raw in actions:
+        if not isinstance(raw, dict):
+            continue
+        agent_name = str(raw.get("agent") or "").strip()
+        if not agent_name or agent_name not in valid_names:
+            continue
+        prompt = raw.get("prompt")
+        if prompt is not None and not isinstance(prompt, str):
+            prompt = str(prompt)
+        cleaned.append({"agent": agent_name, "prompt": prompt})
+    return cleaned or None
+
+
+def _extract_json_object(text: str) -> Optional[Any]:
+    """从一段自由文本里抽出第一个完整 JSON 对象。
+
+    优先匹配 ``json``/`json` 代码围栏，其次扫描首个 ``{`` 起到平衡的 ``}``。
+    出错全部静默返回 None，让调用方回退。
+    """
+
+    # 1) 围栏块 ```json ... ```
+    fence = re.search(
+        r"```(?:json)?\s*([\s\S]+?)\s*```",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if fence:
+        try:
+            return json.loads(fence.group(1))
+        except (ValueError, TypeError):
+            pass
+
+    # 2) 首个 { 起的平衡块（朴素括号配对，能处理嵌套）
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start : i + 1])
+                except (ValueError, TypeError):
+                    return None
+    return None

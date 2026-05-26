@@ -420,3 +420,32 @@ async def test_delete_room_kills_in_flight_tasks(client, deps):
         timeout=2.0,
     )
     assert killed
+
+
+@pytest.mark.asyncio
+async def test_auto_host_emits_system_notice_when_host_not_in_room(client, deps):
+    """auto_host 开了但 host_agent 不在 members 里时，不能静默忽略 — 应写一条 system 消息。"""
+
+    create = await client.post(
+        "/api/chatrooms",
+        json={
+            "title": "lonely",
+            "members": ["coder"],
+            "settings": {"auto_host": True, "host_agent": "planner"},
+        },
+    )
+    room_id = create.json()["data"]["id"]
+
+    resp = await client.post(
+        f"/api/chatrooms/{room_id}/messages",
+        json={"content": "没有 @ 任何人"},
+    )
+    body = resp.json()["data"]
+    assert body["mentions"] == []
+    assert body["dispatched_tasks"] == []
+
+    room = (await client.get(f"/api/chatrooms/{room_id}")).json()["data"]
+    notices = [m for m in room["messages"] if m["sender"] == "system"]
+    assert any("auto_host" in m["content"] for m in notices), (
+        f"没找到 auto_host 兜底 system 消息：{[m['content'] for m in notices]}"
+    )
