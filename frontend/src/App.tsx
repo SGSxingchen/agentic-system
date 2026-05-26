@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { OverviewPanel } from './components/OverviewPanel'
 import { ChatPanel } from './components/ChatPanel'
+import { ChatroomPanel } from './components/ChatroomPanel'
 import { WorkspacePanel } from './components/WorkspacePanel'
 import { AgentPanel } from './components/AgentPanel'
 import { RunsPanel } from './components/RunsPanel'
@@ -96,6 +97,8 @@ function AppContent() {
         return <OverviewPanel />
       case 'chat':
         return <ChatPanel />
+      case 'chatroom':
+        return <ChatroomPanel />
       case 'workspaces':
         return <WorkspacePanel />
       case 'agents':
@@ -120,6 +123,7 @@ function AppContent() {
   const titleByPanel: Record<string, string> = {
     overview: '总览',
     chat: '对话',
+    chatroom: '聊天室',
     workspaces: '工作区',
     agents: '智能体',
     runs: '运行',

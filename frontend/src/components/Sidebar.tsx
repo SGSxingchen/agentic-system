@@ -22,6 +22,13 @@ const Icon = {
       <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   ),
+  chatroom: (
+    <svg viewBox="0 0 24 24">
+      <circle cx="8" cy="9" r="3" />
+      <circle cx="16" cy="9" r="3" />
+      <circle cx="12" cy="15" r="3" />
+    </svg>
+  ),
   workspaces: (
     <svg viewBox="0 0 24 24">
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -89,6 +96,7 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
     items: [
       { key: 'overview', icon: Icon.overview, label: '总览' },
       { key: 'chat', icon: Icon.chat, label: '对话' },
+      { key: 'chatroom', icon: Icon.chatroom, label: '聊天室' },
       { key: 'workspaces', icon: Icon.workspaces, label: '工作区' },
     ],
   },

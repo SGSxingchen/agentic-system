@@ -7,6 +7,13 @@ import type {
   AgentSkillConfig,
   ChatSession,
   ChatSessionSummary,
+  Chatroom,
+  ChatroomCreatePayload,
+  ChatroomDispatchTicket,
+  ChatroomMessage,
+  ChatroomMessageCreateResult,
+  ChatroomSummary,
+  ChatroomUpdatePayload,
   Memory,
   MemoryStats,
   MemoryForgetResult,
@@ -641,4 +648,73 @@ export async function rollbackPersona(personaId: string, version: number, review
   const response = await post<Persona>(`/api/personas/${encodeURIComponent(personaId)}/rollback`, { version, reviewer, admin_approved: true })
   if (response.status === 'ok') invalidateGetCache('/api/personas')
   return response
+}
+
+// ===== 聊天室 API =====
+// 数据频繁变动，不走 getCached。
+
+export async function listChatrooms(): Promise<APIResponse<ChatroomSummary[]>> {
+  return get<ChatroomSummary[]>('/api/chatrooms')
+}
+
+export async function getChatroom(id: string): Promise<APIResponse<Chatroom>> {
+  return get<Chatroom>(`/api/chatrooms/${encodeURIComponent(id)}`)
+}
+
+export async function createChatroom(
+  payload: ChatroomCreatePayload
+): Promise<APIResponse<Chatroom>> {
+  return post<Chatroom>('/api/chatrooms', payload)
+}
+
+export async function updateChatroom(
+  id: string,
+  payload: ChatroomUpdatePayload
+): Promise<APIResponse<Chatroom>> {
+  return put<Chatroom>(`/api/chatrooms/${encodeURIComponent(id)}`, payload)
+}
+
+export async function deleteChatroom(id: string): Promise<APIResponse<void>> {
+  return del<void>(`/api/chatrooms/${encodeURIComponent(id)}`)
+}
+
+export async function listChatroomMessages(
+  id: string,
+  since?: string
+): Promise<APIResponse<{ messages: ChatroomMessage[] }>> {
+  const qs = since ? `?since=${encodeURIComponent(since)}` : ''
+  return get<{ messages: ChatroomMessage[] }>(
+    `/api/chatrooms/${encodeURIComponent(id)}/messages${qs}`
+  )
+}
+
+export async function postChatroomMessage(
+  id: string,
+  content: string
+): Promise<APIResponse<ChatroomMessageCreateResult>> {
+  return post<ChatroomMessageCreateResult>(
+    `/api/chatrooms/${encodeURIComponent(id)}/messages`,
+    { content }
+  )
+}
+
+export async function invokeChatroom(
+  id: string,
+  agent_name: string,
+  prompt?: string
+): Promise<APIResponse<ChatroomDispatchTicket>> {
+  const body: Record<string, unknown> = { agent_name }
+  if (prompt && prompt.trim()) body.prompt = prompt
+  return post<ChatroomDispatchTicket>(
+    `/api/chatrooms/${encodeURIComponent(id)}/invoke`,
+    body
+  )
+}
+
+export async function cancelChatroom(
+  id: string
+): Promise<APIResponse<{ cancelled: number }>> {
+  return post<{ cancelled: number }>(
+    `/api/chatrooms/${encodeURIComponent(id)}/cancel`
+  )
 }
