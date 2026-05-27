@@ -493,6 +493,8 @@ export interface ChatroomSettings {
   max_relay_depth: number
   max_members: number
   allow_agent_invite: boolean
+  allow_subagent_dispatch?: boolean
+  auto_memory?: boolean
   [key: string]: unknown
 }
 
@@ -554,12 +556,38 @@ export interface ChatroomGoalHistoryEntry {
   set_at: string
 }
 
+// Spec 2 §11 / Task 16 — Todo + GoalSubgoal 数据模型
+export type ChatroomTodoStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
+
+export interface ChatroomTodo {
+  id: string
+  content: string
+  status: ChatroomTodoStatus
+  assignee: string | null
+  created_at: string
+  updated_at: string
+  parent_dispatch_id: string | null
+  notes: string | null
+}
+
+export type ChatroomGoalSubgoalStatus = 'pending' | 'done'
+
+export interface ChatroomGoalSubgoal {
+  id: string
+  content: string
+  status: ChatroomGoalSubgoalStatus
+  created_at: string
+  done_at: string | null
+}
+
 export interface Chatroom {
   id: string
   title: string
   topic: string
   goal: string | null
   goal_history: ChatroomGoalHistoryEntry[]
+  goal_subgoals?: ChatroomGoalSubgoal[]
+  todos?: ChatroomTodo[]
   members: string[]
   dynamic_members: ChatroomMember[]
   workspace_id: string | null
