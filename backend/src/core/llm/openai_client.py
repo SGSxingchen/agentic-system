@@ -264,7 +264,14 @@ class OpenAIClient(BaseLLMClient):
 
     @classmethod
     def _convert_messages(cls, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """将中立消息格式转换为 OpenAI Chat Completions 可接受的格式。"""
+        """将中立消息格式转换为 OpenAI Chat Completions 可接受的格式。
+
+        Image content blocks (``{"type": "image", "mime_type": ..., "data": ...}``)
+        produced by the Agent for vision attachments are rewritten into the
+        OpenAI multimodal shape ``{"type": "image_url", "image_url": {"url": ...}}``
+        with a ``data:<mime>;base64,<data>`` URI. Empty/incomplete image blocks
+        are dropped silently — the text part still reaches the model.
+        """
         converted: List[Dict[str, Any]] = []
         for message in messages:
             normalized = dict(message)
@@ -273,8 +280,38 @@ class OpenAIClient(BaseLLMClient):
                 normalized["tool_calls"] = [
                     cls._convert_tool_call_message(tc) for tc in tool_calls
                 ]
+            content = normalized.get("content")
+            if isinstance(content, list):
+                normalized["content"] = cls._convert_content_parts(content)
             converted.append(normalized)
         return converted
+
+    @staticmethod
+    def _convert_content_parts(parts: List[Any]) -> List[Dict[str, Any]]:
+        """Translate neutral multipart content into OpenAI's expected shape."""
+
+        out: List[Dict[str, Any]] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type")
+            if ptype == "image":
+                data = part.get("data") or ""
+                url = part.get("url") or ""
+                if data:
+                    mime = part.get("mime_type") or "image/png"
+                    out.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{data}"},
+                        }
+                    )
+                elif url:
+                    out.append({"type": "image_url", "image_url": {"url": url}})
+                # else drop silently — caller may have produced an empty block.
+            else:
+                out.append(part)
+        return out
 
     @staticmethod
     def _convert_tool_call_message(tool_call: Any) -> Dict[str, Any]:

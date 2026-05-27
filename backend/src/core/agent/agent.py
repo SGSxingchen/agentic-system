@@ -397,7 +397,68 @@ class Agent:
         else:
             messages.append({"role": "user", "content": self._build_user_message(input_data)})
 
+        # B1 Plan 3 P3 Task 26 — 图片附件走 vision payload。把 attachment_images
+        # 列表里的项打包成中立 image block 追加到最后一条 user 消息上。LLM
+        # 客户端层负责把中立块翻译成 OpenAI image_url / Anthropic image source。
+        attachment_images = input_data.get("attachment_images")
+        if isinstance(attachment_images, list) and attachment_images:
+            self._append_image_blocks_to_last_user(messages, attachment_images)
+
         return messages
+
+    @staticmethod
+    def _append_image_blocks_to_last_user(
+        messages: List[Dict[str, Any]],
+        images: List[Dict[str, Any]],
+    ) -> None:
+        """Inject neutral image blocks into the most recent user message."""
+
+        target: Optional[Dict[str, Any]] = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                target = msg
+                break
+        if target is None:
+            target = {"role": "user", "content": ""}
+            messages.append(target)
+
+        existing = target.get("content")
+        if isinstance(existing, list):
+            parts: List[Any] = list(existing)
+        else:
+            text = str(existing or "").strip()
+            parts = [{"type": "text", "text": text}] if text else []
+
+        for img in images:
+            if not isinstance(img, dict):
+                continue
+            data = img.get("data") or ""
+            url = img.get("url") or ""
+            if not data and not url:
+                continue
+            block: Dict[str, Any] = {
+                "type": "image",
+                "mime_type": str(img.get("mime_type") or "image/png"),
+            }
+            if data:
+                block["data"] = str(data)
+            if url:
+                block["url"] = str(url)
+            parts.append(block)
+
+        if not parts:
+            return
+        # If we only ended up with a text part (no images survived), keep
+        # the original string form to avoid an unneeded shape change.
+        only_text = (
+            len(parts) == 1
+            and isinstance(parts[0], dict)
+            and parts[0].get("type") == "text"
+        )
+        if only_text:
+            target["content"] = str(parts[0].get("text") or "")
+        else:
+            target["content"] = parts
 
     @staticmethod
     def _coerce_conversation_messages(input_data: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -441,7 +502,7 @@ class Agent:
         input_data = {
             key: value
             for key, value in input_data.items()
-            if key not in {"messages", "history", "memory_context", "attachment_context", "workspace_root", "_trusted_workspace_root"}
+            if key not in {"messages", "history", "memory_context", "attachment_context", "attachment_images", "workspace_root", "_trusted_workspace_root"}
         }
         if not input_data:
             return ""

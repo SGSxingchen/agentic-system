@@ -240,21 +240,20 @@ def _attach_workspace(payload: Dict[str, Any], workspace_id: Optional[str]) -> N
 def _attach_chatroom_attachment_context(
     payload: Dict[str, Any], room_snapshot: Dict[str, Any]
 ) -> None:
-    """B1 Plan 3 P3 Task 25 — chat room 非图片附件挂入工作区 + system reminder.
+    """B1 Plan 3 P3 Task 25/26 — chat room 附件挂入 payload.
 
     Picks the most recent user-authored message that carries ``attachments``
-    (in case earlier @-mentions trail the user one), materializes each
-    non-image file under ``<workspace_root>/.attachments/<id>/<name>`` and
-    drops the resulting ``<attached_files>`` block into ``attachment_context``
-    on the payload. ``Agent.run`` will append it to the system prompt.
+    and forks two paths:
 
-    No-op when the workspace root or store cannot be resolved — failure here
+    * Non-image (text/PDF/...): require ``_trusted_workspace_root`` so we can
+      materialize the file under ``<workspace_root>/.attachments/<id>/<name>``
+      and drop the ``<attached_files>`` block into ``attachment_context``.
+    * Image: read bytes directly into ``payload["attachment_images"]`` so the
+      LLM clients can ship them as multimodal content.
+
+    Failures are non-fatal — a missing store / unreadable image / link error
     must not block the speak task.
     """
-
-    workspace_root = payload.get("_trusted_workspace_root")
-    if not workspace_root:
-        return
 
     messages = room_snapshot.get("messages") or []
     attachment_ids: list[str] = []
@@ -273,6 +272,7 @@ def _attach_chatroom_attachment_context(
 
     try:
         from core.attachment_message_context import (
+            build_attachment_image_blocks,
             build_attachment_reminder,
             get_default_attachment_store,
         )
@@ -282,20 +282,37 @@ def _attach_chatroom_attachment_context(
     store = get_default_attachment_store()
     if store is None:
         return
+
+    workspace_root = payload.get("_trusted_workspace_root")
+    if workspace_root:
+        try:
+            block = build_attachment_reminder(
+                attachment_ids=attachment_ids,
+                workspace_root=workspace_root,
+                store=store,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("attachment reminder build failed: %s", exc)
+            block = ""
+        if block:
+            existing = str(payload.get("attachment_context") or "")
+            payload["attachment_context"] = (
+                f"{existing}\n\n{block}".strip() if existing else block
+            )
+
     try:
-        block = build_attachment_reminder(
-            attachment_ids=attachment_ids,
-            workspace_root=workspace_root,
-            store=store,
+        images = build_attachment_image_blocks(
+            attachment_ids=attachment_ids, store=store
         )
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("attachment reminder build failed: %s", exc)
-        return
-    if block:
-        existing = str(payload.get("attachment_context") or "")
-        payload["attachment_context"] = (
-            f"{existing}\n\n{block}".strip() if existing else block
-        )
+        logger.warning("attachment image build failed: %s", exc)
+        images = []
+    if images:
+        existing_imgs = payload.get("attachment_images")
+        if isinstance(existing_imgs, list):
+            existing_imgs.extend(images)
+        else:
+            payload["attachment_images"] = list(images)
 
 
 def _maybe_set_workspace_root(

@@ -1054,11 +1054,11 @@ def _attach_attachment_context(payload: dict[str, Any]) -> None:
     if not raw_ids:
         return
     workspace_root = payload.get("_trusted_workspace_root")
-    if not workspace_root:
-        return
+    # workspace_root 仅决定非图片路径是否能挂；图片附件可独立走 vision payload。
 
     try:
         from core.attachment_message_context import (
+            build_attachment_image_blocks,
             build_attachment_reminder,
             get_default_attachment_store,
         )
@@ -1069,19 +1069,38 @@ def _attach_attachment_context(payload: dict[str, Any]) -> None:
     if store is None:
         return
 
+    ids = [str(i) for i in raw_ids if i]
+
+    # Non-image: needs the workspace root because the Agent will read_file by
+    # workspace path. Skip when no workspace was resolved.
+    if workspace_root:
+        try:
+            block = build_attachment_reminder(
+                attachment_ids=ids,
+                workspace_root=workspace_root,
+                store=store,
+            )
+        except Exception:  # pragma: no cover — defensive
+            block = ""
+        if block:
+            existing = str(payload.get("attachment_context") or "")
+            payload["attachment_context"] = (
+                f"{existing}\n\n{block}".strip() if existing else block
+            )
+
+    # B1 Plan 3 P3 Task 26 — 图片附件单独走 vision 通道：读 bytes 转 base64，
+    # 塞进 payload["attachment_images"]，Agent._build_messages 会把它挂到最后
+    # 一条 user 消息上，LLM 客户端再翻成 provider 的多模态格式。
     try:
-        block = build_attachment_reminder(
-            attachment_ids=[str(i) for i in raw_ids if i],
-            workspace_root=workspace_root,
-            store=store,
-        )
+        images = build_attachment_image_blocks(attachment_ids=ids, store=store)
     except Exception:  # pragma: no cover — defensive
-        return
-    if block:
-        existing = str(payload.get("attachment_context") or "")
-        payload["attachment_context"] = (
-            f"{existing}\n\n{block}".strip() if existing else block
-        )
+        images = []
+    if images:
+        existing_imgs = payload.get("attachment_images")
+        if isinstance(existing_imgs, list):
+            existing_imgs.extend(images)
+        else:
+            payload["attachment_images"] = list(images)
 
 
 @router.post("/{name}/invoke", response_model=APIResponse)

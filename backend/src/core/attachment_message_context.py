@@ -14,6 +14,8 @@ types here, where the Agent reads bytes via ``read_file``.
 
 from __future__ import annotations
 
+import base64
+import logging
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -21,7 +23,22 @@ from .attachment import Attachment, AttachmentStore
 from .attachment_workspace import link_attachment_to_workspace
 
 
-__all__ = ["build_attachment_reminder", "non_image_attachments"]
+__all__ = [
+    "build_attachment_reminder",
+    "build_attachment_image_blocks",
+    "non_image_attachments",
+    "image_attachments",
+    "get_default_attachment_store",
+]
+
+
+logger = logging.getLogger(__name__)
+
+
+# B1 Plan 3 P3 Task 26 — guard against shipping huge images inline. Anthropic
+# accepts up to 5MB per image and OpenAI up to ~20MB; we cap conservatively
+# at 4MB so we leave room for other context.
+_MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024
 
 
 def _xml_escape(value: str) -> str:
@@ -41,6 +58,76 @@ def non_image_attachments(
     return [
         att for att in attachments if not (att.mime_type or "").lower().startswith("image/")
     ]
+
+
+def image_attachments(
+    attachments: Iterable[Attachment],
+) -> list[Attachment]:
+    """Keep only ``image/*`` MIME types."""
+
+    return [
+        att for att in attachments if (att.mime_type or "").lower().startswith("image/")
+    ]
+
+
+def build_attachment_image_blocks(
+    *,
+    attachment_ids: Iterable[str],
+    store: AttachmentStore,
+    max_bytes: int = _MAX_INLINE_IMAGE_BYTES,
+) -> list[dict]:
+    """Materialize image attachments into neutral inline image blocks.
+
+    Returns a list of dicts shaped like
+    ``{"mime_type": ..., "data": <base64>, "name": ...}``  — Agent._build_messages
+    appends them as multipart user content; LLM clients translate them into
+    OpenAI ``image_url`` / Anthropic ``image`` source.
+
+    Files larger than ``max_bytes`` or that cannot be read are skipped (logged
+    at WARNING). The function is forgiving: a missing record just drops out.
+    """
+
+    ids = [str(i) for i in attachment_ids if i]
+    if not ids:
+        return []
+
+    out: list[dict] = []
+    for att_id in ids:
+        att = store.get(att_id)
+        if att is None:
+            continue
+        mime = (att.mime_type or "").lower()
+        if not mime.startswith("image/"):
+            continue
+        if att.size_bytes and att.size_bytes > max_bytes:
+            logger.warning(
+                "skip image attachment %s: size %s > cap %s",
+                att.id,
+                att.size_bytes,
+                max_bytes,
+            )
+            continue
+        try:
+            raw = Path(att.storage_path).read_bytes()
+        except OSError as exc:
+            logger.warning("read image attachment %s failed: %s", att.id, exc)
+            continue
+        if len(raw) > max_bytes:
+            logger.warning(
+                "skip image attachment %s: read %s bytes > cap %s",
+                att.id,
+                len(raw),
+                max_bytes,
+            )
+            continue
+        out.append(
+            {
+                "mime_type": att.mime_type,
+                "data": base64.b64encode(raw).decode("ascii"),
+                "name": att.filename or att.id,
+            }
+        )
+    return out
 
 
 def build_attachment_reminder(
