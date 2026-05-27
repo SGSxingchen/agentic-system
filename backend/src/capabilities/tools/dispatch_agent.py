@@ -26,8 +26,12 @@ from core.task import (
     get_dispatch_depth,
     get_notification_box,
     get_parent_task_id,
+    reset_current_room_id,
+    reset_current_speaker_name,
     reset_dispatch_depth,
     reset_workspace_root_override,
+    set_current_room_id,
+    set_current_speaker_name,
     set_dispatch_depth,
     set_workspace_root_override,
 )
@@ -213,6 +217,10 @@ async def _run_subagent(
 ) -> None:
     """子 Agent 协程：跑 subagent_cap.execute → 终态写 TaskRegistry + 父 box + transcript。"""
     depth_token = set_dispatch_depth(_MAX_DEPTH)  # 子 Agent 不能再嵌套派生
+    # 子 Agent 跑在独立 task 上，与可能存在的聊天室上下文隔离：
+    # 否则子 Agent 调 chatroom_invite 等工具会污染父房间。
+    room_token = set_current_room_id(None)
+    speaker_token = set_current_speaker_name(None)
     wsr_token = (
         set_workspace_root_override(worktree_path) if worktree_path else None
     )
@@ -270,6 +278,8 @@ async def _run_subagent(
 
     finally:
         reset_dispatch_depth(depth_token)
+        reset_current_speaker_name(speaker_token)
+        reset_current_room_id(room_token)
         if wsr_token is not None:
             reset_workspace_root_override(wsr_token)
 

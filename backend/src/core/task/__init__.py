@@ -25,6 +25,15 @@ from .context import (
     get_dispatch_depth,
     set_dispatch_depth,
     reset_dispatch_depth,
+    get_current_room_id,
+    set_current_room_id,
+    reset_current_room_id,
+    get_current_speaker_name,
+    set_current_speaker_name,
+    reset_current_speaker_name,
+    get_current_create_counter,
+    set_current_create_counter,
+    reset_current_create_counter,
 )
 
 __all__ = [
@@ -50,4 +59,13 @@ __all__ = [
     "get_dispatch_depth",
     "set_dispatch_depth",
     "reset_dispatch_depth",
+    "get_current_room_id",
+    "set_current_room_id",
+    "reset_current_room_id",
+    "get_current_speaker_name",
+    "set_current_speaker_name",
+    "reset_current_speaker_name",
+    "get_current_create_counter",
+    "set_current_create_counter",
+    "reset_current_create_counter",
 ]

@@ -409,6 +409,7 @@ export interface CapabilityInfo {
 export type PanelType =
   | 'overview'
   | 'chat'
+  | 'chatroom'
   | 'workspaces'
   | 'agents'
   | 'runs'
@@ -472,4 +473,132 @@ export interface PersonaBindings {
   precedence?: string[]
   base_persona_id?: string
   roles?: string[]
+}
+
+// ===== 聊天室（多 Agent 群聊） =====
+
+export interface ChatroomMember {
+  name: string
+  role_prompt?: string
+  base_agent?: string
+}
+
+export interface ChatroomSettings {
+  auto_host: boolean
+  host_agent: string
+  recent_n: number
+  summary_threshold_m: number
+  max_relay_depth: number
+  max_members: number
+  allow_agent_invite: boolean
+  [key: string]: unknown
+}
+
+export type ChatroomMessageStatus = 'pending' | 'streaming' | 'done' | 'failed' | string
+
+export interface ChatroomToolCallRecord {
+  tool_call_id: string
+  tool_name: string
+  args?: any
+  result_preview?: any
+  elapsed_ms?: number | null
+  status?: 'running' | 'success' | 'error' | string
+}
+
+export interface ChatroomMessageMeta {
+  error?: string
+  prompt?: string
+  elapsed_ms?: number
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; [key: string]: number | undefined }
+  tool_count?: number
+  mentions?: string[]
+  [key: string]: unknown
+}
+
+export interface ChatroomMessage {
+  id: string
+  room_id: string
+  sender: string
+  content: string
+  mentions: string[]
+  parent_message_id: string | null
+  status: ChatroomMessageStatus
+  task_id: string | null
+  meta: ChatroomMessageMeta
+  created_at: string
+  updated_at: string
+  // 前端运行时附加（不写回后端）
+  thinking_buffer?: string
+  tool_calls?: ChatroomToolCallRecord[]
+}
+
+export interface ChatroomGoalHistoryEntry {
+  goal: string
+  set_by: string
+  set_at: string
+}
+
+export interface Chatroom {
+  id: string
+  title: string
+  topic: string
+  goal: string | null
+  goal_history: ChatroomGoalHistoryEntry[]
+  members: string[]
+  dynamic_members: ChatroomMember[]
+  workspace_id: string | null
+  summary: string | null
+  summary_until_msg_id: string | null
+  settings: ChatroomSettings
+  messages: ChatroomMessage[]
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatroomSummary {
+  id: string
+  title: string
+  topic: string
+  goal: string | null
+  members: string[]
+  dynamic_members?: ChatroomMember[]
+  workspace_id: string | null
+  message_count: number
+  last_message_at: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ChatroomCreatePayload {
+  title: string
+  topic?: string
+  goal?: string | null
+  members?: string[]
+  dynamic_members?: ChatroomMember[]
+  workspace_id?: string | null
+  settings?: Partial<ChatroomSettings>
+}
+
+export interface ChatroomUpdatePayload {
+  title?: string
+  topic?: string
+  goal?: string | null
+  members?: string[]
+  dynamic_members?: ChatroomMember[]
+  workspace_id?: string | null
+  settings?: Partial<ChatroomSettings>
+}
+
+export interface ChatroomDispatchTicket {
+  task_id: string | null
+  message_id: string | null
+  agent_name?: string
+  error?: string
+  skipped?: string
+}
+
+export interface ChatroomMessageCreateResult {
+  message: ChatroomMessage
+  mentions: string[]
+  dispatched_tasks: ChatroomDispatchTicket[]
 }

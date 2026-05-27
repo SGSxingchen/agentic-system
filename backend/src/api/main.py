@@ -57,10 +57,12 @@ from .dependencies import (
     set_memory_retriever,
     set_memory_store,
     set_reload_agent_fn,
+    set_task_registry,
 )
 from .routes import (
     agents_router,
     chat_sessions_router,
+    chatrooms_router,
     config_router,
     evolution_router,
     memory_router,
@@ -79,6 +81,15 @@ from .websocket.handlers import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+# Phase 4: chatroom autonomy tools 默认对所有 Agent 开放，
+# 工具内部通过 ContextVar 检测是否在 chatroom 发言任务里，
+# 不在房间时直接返回 error，避免污染普通对话语义。
+_CHATROOM_AUTONOMY_TOOLS: tuple[str, ...] = (
+    "chatroom_invite",
+    "chatroom_create_agent",
+    "chatroom_set_goal",
+)
 
 bus: Optional[UnifiedBus] = None
 registry = AgentRegistry()
@@ -366,6 +377,17 @@ def _create_agents_from_config(
             project_root=PROJECT_ROOT,
         )
         tools.extend(mcp_proxy_tools)
+
+        # Phase 4: 把聊天室自治工具默认挂给每个 Agent。
+        # 工具内部用 current_room_id ContextVar 守护，房间外调用直接返错。
+        existing_tool_names = {tool.name for tool in tools}
+        for chatroom_tool_name in _CHATROOM_AUTONOMY_TOOLS:
+            if chatroom_tool_name in existing_tool_names:
+                continue
+            chatroom_tool = cap_registry.get(chatroom_tool_name)
+            if chatroom_tool is not None:
+                tools.append(chatroom_tool)
+                existing_tool_names.add(chatroom_tool_name)
         runtime_blocks = [
             block
             for block in (
@@ -492,6 +514,15 @@ async def reload_agents() -> None:
             "[OK] agents loaded "
             f"({llm_config.get('provider')} - {llm_config.get('model')}, {len(registry)} agents)"
         )
+
+        # Phase 4: chatroom dynamic_members 重启后需要按房间 spec 重新注册
+        try:
+            from capabilities.tools.chatroom_create_agent import (  # type: ignore
+                rebuild_chatroom_dynamic_agents,
+            )
+            rebuild_chatroom_dynamic_agents()
+        except Exception as exc:  # pragma: no cover — 不阻塞启动
+            print(f"[WARN] rebuild_chatroom_dynamic_agents failed: {exc}")
     except Exception as exc:
         print(f"[ERROR] failed to reload agents: {exc}")
         raise
@@ -515,6 +546,11 @@ async def lifespan(app: FastAPI):
     set_bus(bus)
     set_agent_registry(registry)
     set_reload_agent_fn(reload_agents)
+
+    # 把 routes/tasks.py 里已存在的进程级 TaskRegistry 暴露给依赖容器，
+    # 让 chatroom 编排器与 routes/tasks.py 共用同一个 task 图谱。
+    from .routes.tasks import get_task_registry as _legacy_get_task_registry
+    set_task_registry(_legacy_get_task_registry())
 
     await bus.start()
     register_bus_event_bridge(bus)
@@ -580,6 +616,7 @@ app.include_router(personas_router)
 app.include_router(config_router)
 app.include_router(evolution_router)
 app.include_router(chat_sessions_router)
+app.include_router(chatrooms_router)
 app.include_router(artifacts_router)
 app.include_router(workspaces_router)
 

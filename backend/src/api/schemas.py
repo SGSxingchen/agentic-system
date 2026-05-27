@@ -572,3 +572,60 @@ class ToolPromptUpdateRequest(BaseModel):
         min_length=1,
         description="暴露给 LLM 的 Tool 提示词/描述。JSON Schema 不允许通过该接口修改。",
     )
+
+
+# ========================
+# 聊天室（多 Agent 群聊）
+# ========================
+
+
+class ChatroomDynamicMember(BaseModel):
+    """房间内动态创建的 Agent 规格。"""
+
+    name: str = Field(..., min_length=1, description="动态成员名")
+    role_prompt: str = Field(default="", description="该成员的系统提示词")
+    base_agent: str = Field(default="generic", description="底层基础 Agent 名")
+
+
+class ChatroomCreateRequest(BaseModel):
+    """创建聊天室请求"""
+
+    title: str = Field(..., min_length=1, description="房间名")
+    topic: str = Field(default="", description="房间主题（长文本）")
+    goal: Optional[str] = Field(default=None, description="当前主要目标（单行）")
+    members: list[str] = Field(default_factory=list, description="静态成员名列表")
+    dynamic_members: list[ChatroomDynamicMember] = Field(
+        default_factory=list, description="动态成员列表"
+    )
+    workspace_id: Optional[str] = Field(default=None, description="可选绑定的工作区 ID")
+    settings: Optional[dict[str, Any]] = Field(
+        default=None, description="房间配置覆盖项（auto_host/recent_n 等）"
+    )
+
+
+class ChatroomUpdateRequest(BaseModel):
+    """更新聊天室请求（部分更新）"""
+
+    title: Optional[str] = None
+    topic: Optional[str] = None
+    goal: Optional[str] = None
+    members: Optional[list[str]] = None
+    dynamic_members: Optional[list[ChatroomDynamicMember]] = None
+    workspace_id: Optional[str] = None
+    settings: Optional[dict[str, Any]] = None
+
+
+class ChatroomMessageCreateRequest(BaseModel):
+    """房间内追加用户消息请求"""
+
+    content: str = Field(..., min_length=1, description="Markdown 文本")
+
+
+class ChatroomInvokeRequest(BaseModel):
+    """手动召唤某成员发言"""
+
+    agent_name: str = Field(..., min_length=1, description="目标 Agent 名")
+    prompt: Optional[str] = Field(
+        default=None,
+        description="可选附加提示词；不填走房间默认上下文",
+    )
