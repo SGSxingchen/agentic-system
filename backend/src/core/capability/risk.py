@@ -23,8 +23,7 @@ HIGH_RISK_TOOLS = frozenset({
 AGENT_MANAGEMENT_TOOLS = frozenset({
     "read_agent_config",
     "validate_agent_config_patch",
-    "propose_agent_config_patch",
-    "apply_agent_config_patch",
+    "update_agent_config",
 })
 
 

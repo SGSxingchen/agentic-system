@@ -663,7 +663,7 @@ async def test_agent_update_rejects_adding_management_tool(monkeypatch):
 
     response = await agent_routes.update_agent(
         "assistant",
-        AgentUpdateRequest(tools=["memory_search", "apply_agent_config_patch"]),
+        AgentUpdateRequest(tools=["memory_search", "update_agent_config"]),
     )
 
     assert response.status == "error"

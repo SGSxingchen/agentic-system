@@ -21,9 +21,8 @@ from capabilities.tools.evolution_config import (
     CreateDynamicToolConfigCapability,
 )
 from capabilities.tools.agent_management import (
-    ApplyAgentConfigPatchCapability,
-    ProposeAgentConfigPatchCapability,
     ReadAgentConfigCapability,
+    UpdateAgentConfigCapability,
     ValidateAgentConfigPatchCapability,
 )
 from capabilities.tools.file_search import FileSearchCapability
@@ -349,54 +348,12 @@ class TestAgentManagementCapabilities:
         assert result["agent"]["llm"]["api_key_set"] is True
 
     @pytest.mark.asyncio
-    async def test_propose_agent_config_patch_does_not_write_file(self, tmp_path, monkeypatch):
+    async def test_update_agent_config_writes_allowed_fields_and_preserves_masked_key(self, tmp_path, monkeypatch):
+        """Plan Task 9：UpdateAgentConfigCapability 替代 propose+apply 两段式。"""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         monkeypatch.setenv("AGENTIC_CONFIG_DIR", str(config_dir))
-        path = self._write_agents(
-            config_dir,
-            [{"name": "assistant", "description": "Old.", "system_prompt": "prompt"}],
-        )
-        before = path.read_text(encoding="utf-8")
 
-        result = await ProposeAgentConfigPatchCapability().execute(
-            agent_name="assistant",
-            patch={"description": "New.", "llm": {"api_key": "new-secret"}},
-            reason="test",
-        )
-
-        assert result["success"] is True
-        assert result["proposed_agent"]["description"] == "New."
-        assert result["patch_preview"]["llm"]["api_key_set"] is True
-        assert "api_key" not in result["patch_preview"]["llm"]
-        assert path.read_text(encoding="utf-8") == before
-
-    @pytest.mark.asyncio
-    async def test_apply_agent_config_patch_requires_admin_approval(self, tmp_path, monkeypatch):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        monkeypatch.setenv("AGENTIC_CONFIG_DIR", str(config_dir))
-        path = self._write_agents(
-            config_dir,
-            [{"name": "assistant", "description": "Old.", "system_prompt": "prompt"}],
-        )
-        before = path.read_text(encoding="utf-8")
-
-        result = await ApplyAgentConfigPatchCapability().execute(
-            agent_name="assistant",
-            patch={"description": "New."},
-            admin_approved=False,
-            reviewer="admin",
-        )
-
-        assert result["permission_denied"] is True
-        assert path.read_text(encoding="utf-8") == before
-
-    @pytest.mark.asyncio
-    async def test_apply_agent_config_patch_writes_allowed_fields_and_preserves_masked_key(self, tmp_path, monkeypatch):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        monkeypatch.setenv("AGENTIC_CONFIG_DIR", str(config_dir))
         async def reload_agents():
             return None
 
@@ -413,14 +370,12 @@ class TestAgentManagementCapabilities:
             ],
         )
 
-        result = await ApplyAgentConfigPatchCapability().execute(
+        result = await UpdateAgentConfigCapability().execute(
             agent_name="assistant",
             patch={
                 "description": "New.",
                 "llm": {"api_key": "********", "model": "new-model"},
             },
-            admin_approved=True,
-            reviewer="admin",
         )
 
         assert result["success"] is True
@@ -434,7 +389,7 @@ class TestAgentManagementCapabilities:
         assert assistant["llm"]["model"] == "new-model"
 
     @pytest.mark.asyncio
-    async def test_apply_agent_config_patch_rolls_back_when_reload_missing(self, tmp_path, monkeypatch):
+    async def test_update_agent_config_rolls_back_when_reload_missing(self, tmp_path, monkeypatch):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         monkeypatch.setenv("AGENTIC_CONFIG_DIR", str(config_dir))
@@ -445,49 +400,14 @@ class TestAgentManagementCapabilities:
         )
         before = path.read_text(encoding="utf-8")
 
-        result = await ApplyAgentConfigPatchCapability().execute(
+        result = await UpdateAgentConfigCapability().execute(
             agent_name="assistant",
             patch={"description": "New."},
-            admin_approved=True,
-            reviewer="admin",
         )
 
         assert result["success"] is False
         assert result["rolled_back"] is True
         assert path.read_text(encoding="utf-8") == before
-
-    @pytest.mark.asyncio
-    async def test_apply_agent_config_patch_requires_admin_token_when_configured(self, tmp_path, monkeypatch):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        monkeypatch.setenv("AGENTIC_CONFIG_DIR", str(config_dir))
-        monkeypatch.setenv("AGENT_MANAGER_ADMIN_TOKEN", "secret-token")
-        async def reload_agents():
-            return None
-
-        set_reload_agent_fn(reload_agents)
-        self._write_agents(
-            config_dir,
-            [{"name": "assistant", "description": "Old.", "system_prompt": "prompt"}],
-        )
-
-        denied = await ApplyAgentConfigPatchCapability().execute(
-            agent_name="assistant",
-            patch={"description": "New."},
-            admin_approved=True,
-            reviewer="admin",
-            admin_token="wrong",
-        )
-        allowed = await ApplyAgentConfigPatchCapability().execute(
-            agent_name="assistant",
-            patch={"description": "New."},
-            admin_approved=True,
-            reviewer="admin",
-            admin_token="secret-token",
-        )
-
-        assert denied["permission_denied"] is True
-        assert allowed["success"] is True
 
     @pytest.mark.asyncio
     async def test_validate_agent_config_patch_blocks_high_risk_tools_and_invalid_mcp(self, tmp_path, monkeypatch):
@@ -512,7 +432,7 @@ class TestAgentManagementCapabilities:
         assert any("MCP server 'bad'" in error for error in result["errors"])
 
     @pytest.mark.asyncio
-    async def test_apply_agent_config_patch_preserves_masked_mcp_env_values(self, tmp_path, monkeypatch):
+    async def test_update_agent_config_preserves_masked_mcp_env_values(self, tmp_path, monkeypatch):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         monkeypatch.setenv("AGENTIC_CONFIG_DIR", str(config_dir))
@@ -539,7 +459,7 @@ class TestAgentManagementCapabilities:
             ],
         )
 
-        result = await ApplyAgentConfigPatchCapability().execute(
+        result = await UpdateAgentConfigCapability().execute(
             agent_name="assistant",
             patch={
                 "mcp_servers": [
@@ -550,8 +470,6 @@ class TestAgentManagementCapabilities:
                     }
                 ]
             },
-            admin_approved=True,
-            reviewer="admin",
         )
 
         assert result["success"] is True
@@ -822,8 +740,7 @@ async def test_common_tools_register_in_capability_registry():
         CreateAgentConfigCapability(),
         ReadAgentConfigCapability(),
         ValidateAgentConfigPatchCapability(),
-        ProposeAgentConfigPatchCapability(),
-        ApplyAgentConfigPatchCapability(),
+        UpdateAgentConfigCapability(),
         JsonToolCapability(),
         TextProcessorCapability(),
         WebFetchCapability(),
@@ -840,8 +757,7 @@ async def test_common_tools_register_in_capability_registry():
         "create_agent_config",
         "read_agent_config",
         "validate_agent_config_patch",
-        "propose_agent_config_patch",
-        "apply_agent_config_patch",
+        "update_agent_config",
         "json_tool",
         "text_processor",
         "web_fetch",

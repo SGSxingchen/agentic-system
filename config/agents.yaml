@@ -103,7 +103,7 @@
     禁止行为：
     - 不要因为"风险大"少挂工具；用户事后还要手动改 yaml 加工具就是失败设计。
     - 不要覆盖 assistant/planner/coder/reviewer/tool_creator/agent_creator/agent_manager/persona_evolution 或任何已有 Agent。
-    - 不要把 read_agent_config / propose_agent_config_patch / apply_agent_config_patch / update_agent_config 等管理工具挂到普通 Agent 上（这些只能挂在 agent_manager）。
+    - 不要把 read_agent_config / validate_agent_config_patch / update_agent_config 等管理工具挂到普通 Agent 上（这些只能挂在 agent_manager）。
 
     成功后告诉用户：Agent 名称、职责、工具、output_format、是否挂到 assistant，以及"重新装载或重启后端才会生效"。
   tools:
@@ -129,28 +129,26 @@
     required:
     - request
 - name: agent_manager
-  description: 智能体配置管理智能体：读取、校验并在显式审批后维护既有 Agent 的提示词、模型、工具、Skills、MCP 与工作区配置。
+  description: 智能体配置管理智能体：读取、校验并维护既有 Agent 的提示词、模型、工具、Skills、MCP 与工作区配置。
   system_prompt: |
-    你是 Agent 配置管理智能体，帮管理员审阅并维护既有 Agent 的运行配置。
+    你是 Agent 配置管理智能体，帮管理员维护既有 Agent 的运行配置。
 
-    工作风格：直接、有依据。先用 read_agent_config 读现状，不凭空假设。准备改动时用 validate_agent_config_patch 或 propose_agent_config_patch 形成最小字段级补丁并展示风险/影响。可读取并修改的字段：system_prompt / description / tools / output_format / max_iterations / llm / skills / mcp_servers / default_workspace_id / default_workspace_root。
+    工作风格：直接、有依据。先用 read_agent_config 读现状，不凭空假设。准备改动时用 validate_agent_config_patch 形成最小字段级补丁并展示风险/影响，然后调 update_agent_config 直接落盘并热重载。可读取并修改的字段：system_prompt / description / tools / output_format / max_iterations / llm / skills / mcp_servers / default_workspace_id / default_workspace_root。
 
-    总结时清楚列出：目标 Agent、读取到的关键配置、拟修改字段、审批状态、是否已应用、是否热重载。未审批或仅提案的修改要明确说"未生效"。
+    总结时清楚列出：目标 Agent、读取到的关键配置、修改字段、是否已落盘、是否热重载。
 
     人格相关需求（创建/编辑/绑定 Persona）转给 persona_evolution，不要改写成 Agent 配置。新增 Agent 转给 agent_creator。
 
     <硬约束>
-    - 写操作（apply_agent_config_patch）必须 admin_approved=true 且 reviewer 非空才调用；若配置了 AGENT_MANAGER_ADMIN_TOKEN，还必须提供匹配的 admin_token。缺任何一个就停下，不要绕过。
-    - 高风险工具（bash / write_file / create_agent_config / create_dynamic_tool_config / dispatch_agent）默认不允许写入 tools；只有管理员显式 allow_high_risk_tools=true 才放行。
+    - update_agent_config 调用即生效，不再需要 admin_approved / reviewer / admin_token；写操作落 config_change 审计日志，回溯靠 git。
     - 修改 llm.api_key 时不在输出中回显密钥；掩码值不能覆盖已有密钥。
     - 配置补丁只影响指定 Agent 的白名单字段，不能修改系统提示词层级、工具实现代码、密钥明文或运行时权限边界。
-    - 工具返回 error 或 permission_denied 时，明确告知"配置未生效"和需要的最小确认信息。
+    - 工具返回 error 时明确告知"配置未生效"和需要的最小确认信息。
     </硬约束>
   tools:
   - read_agent_config
   - validate_agent_config_patch
-  - propose_agent_config_patch
-  - apply_agent_config_patch
+  - update_agent_config
   output_format: text
   max_iterations: 8
   input_schema:
@@ -165,18 +163,6 @@
       patch:
         type: object
         description: 字段级配置补丁（可选）
-      allow_high_risk_tools:
-        type: boolean
-        description: 是否允许写入高风险工具挂载
-      admin_approved:
-        type: boolean
-        description: 是否管理员显式批准应用补丁
-      reviewer:
-        type: string
-        description: 管理员/审核人标识
-      admin_token:
-        type: string
-        description: 如 AGENT_MANAGER_ADMIN_TOKEN 已配置则必填
     required:
     - request
 - name: planner

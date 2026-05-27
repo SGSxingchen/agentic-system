@@ -31,12 +31,11 @@ def test_high_risk_tools_is_single_source_of_truth():
 
 
 def test_agent_management_tools_is_single_source():
-    """AGENT_MANAGEMENT_TOOLS 必须列出旧的 propose/apply/读取系列。"""
+    """AGENT_MANAGEMENT_TOOLS 必须列出 A10 后的 read/validate/update 系列。"""
     expected = {
         "read_agent_config",
         "validate_agent_config_patch",
-        "propose_agent_config_patch",
-        "apply_agent_config_patch",
+        "update_agent_config",
     }
     assert expected.issubset(set(AGENT_MANAGEMENT_TOOLS))
 
