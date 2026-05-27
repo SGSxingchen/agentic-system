@@ -174,6 +174,7 @@ class ChatroomStore:
             "topic": str(topic or ""),
             "goal": str(goal).strip() if isinstance(goal, str) and goal.strip() else None,
             "goal_history": [],
+            "goal_subgoals": [],
             "members": [str(m).strip() for m in (members or []) if str(m).strip()],
             "dynamic_members": [
                 self._normalize_dynamic_member(item)
@@ -218,6 +219,7 @@ class ChatroomStore:
                 "topic",
                 "goal",
                 "goal_history",
+                "goal_subgoals",
                 "members",
                 "dynamic_members",
                 "workspace_id",
@@ -462,6 +464,13 @@ class ChatroomStore:
         if not isinstance(goal_history, list):
             goal_history = []
 
+        goal_subgoals_raw = raw.get("goal_subgoals")
+        goal_subgoals = (
+            [self._normalize_subgoal(item) for item in goal_subgoals_raw if isinstance(item, dict)]
+            if isinstance(goal_subgoals_raw, list)
+            else []
+        )
+
         return {
             "id": str(raw["id"]),
             "title": str(raw.get("title") or "新房间"),
@@ -472,6 +481,7 @@ class ChatroomStore:
                 else None
             ),
             "goal_history": list(goal_history),
+            "goal_subgoals": goal_subgoals,
             "members": members,
             "dynamic_members": dynamic_members,
             "workspace_id": (
@@ -510,6 +520,109 @@ class ChatroomStore:
             "role_prompt": str(item.get("role_prompt") or ""),
             "base_agent": str(item.get("base_agent") or "generic"),
         }
+
+    @staticmethod
+    def _normalize_subgoal(item: Dict[str, Any]) -> Dict[str, Any]:
+        sub_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:8]
+        status = str(item.get("status") or "pending").strip() or "pending"
+        if status not in ("pending", "done"):
+            status = "pending"
+        return {
+            "id": sub_id,
+            "content": str(item.get("content") or ""),
+            "status": status,
+            "created_at": str(item.get("created_at") or _utc_now()),
+            "done_at": (
+                str(item["done_at"])
+                if isinstance(item.get("done_at"), str) and item["done_at"]
+                else None
+            ),
+        }
+
+    def apply_goal_subgoal_op(
+        self,
+        room_id: str,
+        operation: str,
+        *,
+        content: Optional[str] = None,
+        subgoal_id: Optional[str] = None,
+        by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Apply ``add_subgoal`` / ``mark_done`` / ``remove_subgoal`` / ``revise``.
+
+        Returns ``{"ok": True, "subgoal": ..., "room": ...}`` on success or
+        ``{"error": "..."}`` on failure. ``revise`` archives the previous main
+        goal into ``goal_history`` and replaces ``room.goal``.
+        """
+
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return {"error": f"chatroom '{room_id}' not found"}
+
+            subs = list(room.get("goal_subgoals") or [])
+            now = _utc_now()
+            speaker = (by or "unknown").strip() or "unknown"
+
+            if operation == "add_subgoal":
+                if not (content or "").strip():
+                    return {"error": "content is required for add_subgoal"}
+                new_sub = {
+                    "id": uuid.uuid4().hex[:8],
+                    "content": content.strip(),
+                    "status": "pending",
+                    "created_at": now,
+                    "done_at": None,
+                }
+                subs.append(new_sub)
+                room["goal_subgoals"] = subs
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "subgoal": new_sub, "room": deepcopy(room)}
+
+            if operation == "mark_done":
+                if not subgoal_id:
+                    return {"error": "subgoal_id is required for mark_done"}
+                target = next((s for s in subs if s.get("id") == subgoal_id), None)
+                if target is None:
+                    return {"error": f"subgoal '{subgoal_id}' not found"}
+                target["status"] = "done"
+                target["done_at"] = now
+                room["goal_subgoals"] = subs
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "subgoal": deepcopy(target), "room": deepcopy(room)}
+
+            if operation == "remove_subgoal":
+                if not subgoal_id:
+                    return {"error": "subgoal_id is required for remove_subgoal"}
+                new_subs = [s for s in subs if s.get("id") != subgoal_id]
+                if len(new_subs) == len(subs):
+                    return {"error": f"subgoal '{subgoal_id}' not found"}
+                room["goal_subgoals"] = new_subs
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "removed": subgoal_id, "room": deepcopy(room)}
+
+            if operation == "revise":
+                if not (content or "").strip():
+                    return {"error": "content is required for revise"}
+                history = list(room.get("goal_history") or [])
+                previous = (room.get("goal") or "").strip()
+                history.append(
+                    {
+                        "goal": previous or None,
+                        "set_by": speaker,
+                        "set_at": now,
+                    }
+                )
+                room["goal"] = content.strip()
+                room["goal_history"] = history
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "goal": room["goal"], "room": deepcopy(room)}
+
+            return {"error": f"unknown operation '{operation}'"}
 
     @staticmethod
     def _normalize_message(message: Dict[str, Any], room_id: str) -> Dict[str, Any]:

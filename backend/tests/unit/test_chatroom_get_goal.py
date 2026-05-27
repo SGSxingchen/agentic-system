@@ -110,18 +110,9 @@ async def test_includes_goal_revisions_count(store, context_room, monkeypatch):
     assert result["goal_revisions"] == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="goal_subgoals data model added in Task 7; remove xfail once landed",
-)
 @pytest.mark.asyncio
 async def test_includes_goal_subgoals_when_set(store, context_room, monkeypatch):
-    """Task 7 / A9 增量更新引入 goal_subgoals；本测试确保 get_goal 能读出来。
-
-    Task 6 时 Chatroom 数据模型还没 goal_subgoals 字段（Task 7 会加），所以
-    暂时 xfail；Task 7 落地后会自动转 xpass，到时移除 xfail 标记并保留这条
-    断言（保护 get_goal 输出契约）。
-    """
+    """Task 7 / A9 增量更新引入 goal_subgoals；本测试确保 get_goal 能读出来。"""
 
     from capabilities.tools.chatroom_get_goal import ChatroomGetGoalCapability
 
