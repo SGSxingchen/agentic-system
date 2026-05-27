@@ -634,6 +634,46 @@ async def test_run_speaking_task_skips_reflection_when_auto_memory_false(
     assert calls == []
 
 
+# ─── A2: 闲聊文本契约覆盖 ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_speaking_task_forces_output_format_text(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    """A2 (a)：payload 强制 output_format=text（防御性，留口子待 capability
+    支持 input override 时生效）。当前 Agent 实现仅在构造时读 output_format，
+    所以这条字段对真实 Agent 无效，真正起作用的是 (b) system 块覆盖。"""
+
+    cap = StreamingEchoCapability("reviewer")
+    cap_registry.register_native(cap)
+
+    async def fake_build(query, *args, **kwargs):
+        return ("", 0)
+
+    monkeypatch.setattr("api.websocket.handlers.build_memory_context", fake_build)
+    monkeypatch.setattr(
+        "api.websocket.handlers.schedule_memory_reflection",
+        lambda **kw: None,
+    )
+
+    room = _make_room(store, members=["reviewer"])
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "reviewer", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    assert cap.calls, "capability 应被调用"
+    assert cap.calls[0].get("output_format") == "text"
+
+
 # ─── 摘要触发 ──────────────────────────────────────────────
 
 

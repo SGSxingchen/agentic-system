@@ -620,6 +620,11 @@ async def _run_speaking_task(
                     if memory_context:
                         payload["memory_context"] = memory_context
 
+        # ── A2: 强制群聊文本输出（防御性，当前 Agent 仅在构造时读 output_format，
+        # 留 key 待 capability 支持 payload override 时生效；
+        # 真正起作用的是下面的 system override 块） ──
+        payload["output_format"] = "text"
+
         _attach_workspace(payload, room_snapshot.get("workspace_id"))
 
         stream_fn = getattr(cap, "execute_stream", None)
