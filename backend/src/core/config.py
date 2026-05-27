@@ -164,6 +164,18 @@ class AgentCreationConfig(BaseModel):
     forbidden_tools: List[str] = Field(default_factory=list)
 
 
+class DispatchConfig(BaseModel):
+    """A10 Plan Task 11: dispatch_agent 嵌套深度配置。
+
+    默认 5（之前硬编码 1，几乎禁止嵌套派生）。部署方可通过 system.yaml
+    ``dispatch.max_depth`` 调整。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    max_depth: int = Field(default=5, ge=1, description="dispatch_agent 最大嵌套深度")
+
+
 class SystemConfig(BaseModel):
     """顶层系统配置。"""
 
@@ -175,6 +187,7 @@ class SystemConfig(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     agents: List[AgentConfig] = Field(default_factory=list)
     agent_creation: AgentCreationConfig = Field(default_factory=AgentCreationConfig)
+    dispatch: DispatchConfig = Field(default_factory=DispatchConfig)
 
 
 def _default_project_root() -> Path:

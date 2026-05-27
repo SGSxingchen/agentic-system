@@ -109,3 +109,9 @@ tools:
 #   forbidden_tools: [bash, dispatch_agent]
 agent_creation:
   forbidden_tools: []
+
+# dispatch_agent 嵌套深度上限 (A10 Plan Task 11)
+# 默认 5（>= 该值即拒绝再嵌套派生），从硬编码 1 放开。
+# 部署方可调小到 1~2 锁住嵌套，或调大到 10 让多 Agent 协作能更深委派。
+dispatch:
+  max_depth: 5
