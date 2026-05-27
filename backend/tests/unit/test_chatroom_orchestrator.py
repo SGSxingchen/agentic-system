@@ -831,3 +831,27 @@ def test_routes_chatrooms_no_host_prompt_injection():
     assert '"actions": [{"agent"' not in source, (
         "host_directive prompt injection should be deleted"
     )
+
+
+def test_chatroom_payload_includes_new_autonomy_tools():
+    """Task 10 — _CHATROOM_AUTONOMY_TOOLS 必须列出 dispatch/get_goal/update_goal/todo。
+
+    chatroom_todo 在 Task 11 加入；本 task 只检查前 3 个，todo 用 xfail。
+    """
+
+    from api.main import _CHATROOM_AUTONOMY_TOOLS
+
+    expected = {"chatroom_get_goal", "chatroom_update_goal", "chatroom_dispatch"}
+    actual = set(_CHATROOM_AUTONOMY_TOOLS)
+    missing = expected - actual
+    assert not missing, f"missing autonomy tools: {missing}"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="chatroom_todo added in Task 11; remove xfail once landed",
+)
+def test_chatroom_payload_includes_todo_tool():
+    from api.main import _CHATROOM_AUTONOMY_TOOLS
+
+    assert "chatroom_todo" in _CHATROOM_AUTONOMY_TOOLS

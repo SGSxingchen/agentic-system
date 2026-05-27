@@ -87,10 +87,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # Phase 4: chatroom autonomy tools 默认对所有 Agent 开放，
 # 工具内部通过 ContextVar 检测是否在 chatroom 发言任务里，
 # 不在房间时直接返回 error，避免污染普通对话语义。
+# Phase 4: chatroom autonomy tools 默认对所有 Agent 开放，
+# 工具内部通过 ContextVar 检测是否在 chatroom 发言任务里，
+# 不在房间时直接返回 error，避免污染普通对话语义。
 _CHATROOM_AUTONOMY_TOOLS: tuple[str, ...] = (
     "chatroom_invite",
     "chatroom_create_agent",
     "chatroom_set_goal",
+    "chatroom_get_goal",
+    "chatroom_update_goal",
+    "chatroom_dispatch",
 )
 
 bus: Optional[UnifiedBus] = None
