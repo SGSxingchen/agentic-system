@@ -601,6 +601,25 @@ async def _run_speaking_task(
             "message": prompt or "请发言",
             "task_id": task_id,
         }
+
+        # ── A1: 注入长期记忆（房间级 auto_memory，默认开） ──
+        auto_memory = bool((room_snapshot.get("settings") or {}).get("auto_memory", True))
+        if auto_memory:
+            try:
+                from api.websocket.handlers import build_memory_context  # type: ignore
+            except Exception:  # pragma: no cover — defensive
+                build_memory_context = None  # type: ignore
+            if build_memory_context is not None:
+                query = _build_memory_query(room_snapshot, prompt)
+                if query:
+                    try:
+                        memory_context, _ = await build_memory_context(query)
+                    except Exception as exc:  # pragma: no cover — defensive
+                        logger.warning("chatroom memory recall failed: %s", exc)
+                        memory_context = ""
+                    if memory_context:
+                        payload["memory_context"] = memory_context
+
         _attach_workspace(payload, room_snapshot.get("workspace_id"))
 
         stream_fn = getattr(cap, "execute_stream", None)

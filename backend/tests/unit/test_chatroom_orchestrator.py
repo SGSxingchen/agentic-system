@@ -484,6 +484,77 @@ async def test_dispatch_cancellation_marks_message_failed(
     assert cap.cancelled is True
 
 
+# ─── A1: memory_context 注入 ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_speaking_task_injects_memory_context_when_auto_memory_true(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    cap = StreamingEchoCapability("assistant")
+    cap_registry.register_native(cap)
+
+    async def fake_build(query, *args, **kwargs):
+        return ("[mem] foo bar", 1)
+
+    monkeypatch.setattr(
+        "api.websocket.handlers.build_memory_context",
+        fake_build,
+    )
+
+    room = _make_room(store, members=["assistant"])
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "assistant", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    assert cap.calls, "capability 应被调用"
+    assert cap.calls[0].get("memory_context") == "[mem] foo bar"
+
+
+@pytest.mark.asyncio
+async def test_run_speaking_task_skips_memory_when_auto_memory_false(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    cap = StreamingEchoCapability("assistant")
+    cap_registry.register_native(cap)
+
+    called: list[str] = []
+
+    async def spy(query, *args, **kwargs):
+        called.append(query)
+        return ("", 0)
+
+    monkeypatch.setattr("api.websocket.handlers.build_memory_context", spy)
+
+    room = _make_room(
+        store,
+        members=["assistant"],
+        settings={"auto_memory": False},
+    )
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "assistant", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    assert called == [], "auto_memory=False 时不应调 build_memory_context"
+    assert "memory_context" not in cap.calls[0]
+
+
 # ─── 摘要触发 ──────────────────────────────────────────────
 
 
