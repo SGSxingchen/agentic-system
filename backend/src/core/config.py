@@ -63,6 +63,35 @@ class BusConfig(BaseModel):
     history_size: int = Field(default=500, description="消息历史保留数量")
 
 
+class ServerConfig(BaseModel):
+    """FastAPI 服务器配置 (含 A11 全局密码门禁)。"""
+
+    host: str = Field(default="127.0.0.1", description="服务器绑定地址")
+    port: int = Field(default=8001, ge=1, le=65535, description="服务器端口")
+    cors_origins: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:3001",
+        ],
+        description="允许的前端来源",
+    )
+    # A11: 公网部署密码门禁 — 空字符串等于不开启门禁。
+    access_password: str = Field(
+        default="",
+        description="A11 全局访问密码；空字符串等于不开启门禁",
+    )
+    failed_login_max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description="同一 IP 在锁定窗口内允许的最大失败次数",
+    )
+    failed_login_lockout_seconds: int = Field(
+        default=60,
+        ge=1,
+        description="失败计数滑动窗口长度（秒）",
+    )
+
+
 class ContextConfig(BaseModel):
     """上下文管理配置。"""
 
@@ -141,6 +170,7 @@ class SystemConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     bus: BusConfig = Field(default_factory=BusConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     agents: List[AgentConfig] = Field(default_factory=list)
@@ -318,6 +348,29 @@ def load_system_config(config_path: Optional[Path] = None) -> SystemConfig:
         raw = _apply_env_overrides(raw)
 
     return SystemConfig(**raw)
+
+
+_system_config_cache: Optional[SystemConfig] = None
+
+
+def get_system_config(*, refresh: bool = False) -> SystemConfig:
+    """A11: 进程级缓存 SystemConfig，供中间件等热路径复用。
+
+    middleware 在每次请求都会读 ``server.access_password``，避免重复 IO。
+    需要热重载时调用 ``get_system_config(refresh=True)`` 或 ``clear_system_config_cache()``。
+    """
+
+    global _system_config_cache
+    if refresh or _system_config_cache is None:
+        _system_config_cache = load_system_config()
+    return _system_config_cache
+
+
+def clear_system_config_cache() -> None:
+    """清空 ``get_system_config`` 缓存。配置 yaml 改动后应调用一次。"""
+
+    global _system_config_cache
+    _system_config_cache = None
 
 
 def load_single_yaml(filename: str, config_dir: Optional[Path] = None) -> Dict[str, Any]:

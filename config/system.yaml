@@ -20,6 +20,11 @@ server:
   cors_origins:
     - "http://localhost:3000"
     - "http://localhost:3001"
+  # A11 全局访问密码门禁
+  # 空字符串等于不开启门禁；公网部署时建议配 HTTPS + 高熵密码
+  access_password: ""
+  failed_login_lockout_seconds: 60     # 失败计数滑动窗口（秒）
+  failed_login_max_attempts: 5         # 滑动窗口内最大失败次数，超过即锁定到下个窗口
 
 # LLM 默认配置
 # 可被环境变量覆盖:
