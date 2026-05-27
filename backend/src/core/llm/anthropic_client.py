@@ -2,7 +2,7 @@
 import json
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from .base import BaseLLMClient, LLMResponse, LLMStreamEvent, ToolCall
 
@@ -21,6 +21,9 @@ class AnthropicClient(BaseLLMClient):
         self.model = model
         self.base_url = base_url
         self.generation_config = generation_config or {}
+        # A6: LLM 调用重试配置（来自 system.yaml.llm.max_retries / retry_initial_delay）
+        self._max_retries = int(self.generation_config.get("max_retries", 3) or 0)
+        self._retry_initial_delay = float(self.generation_config.get("retry_initial_delay", 1.0))
         try:
             from anthropic import AsyncAnthropic
 
@@ -35,6 +38,7 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> LLMResponse:
         """发送聊天消息，支持 tool_use"""
         # 分离 system 消息
@@ -98,8 +102,15 @@ class AnthropicClient(BaseLLMClient):
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
 
+        from .retry import call_with_retry  # 局部 import 防循环
+
         start = time.perf_counter()
-        response = await self.client.messages.create(**kwargs)
+        response = await call_with_retry(
+            lambda: self.client.messages.create(**kwargs),
+            max_retries=getattr(self, "_max_retries", 3),
+            initial_delay=getattr(self, "_retry_initial_delay", 1.0),
+            on_retry=on_retry,
+        )
         parsed = self._parse_response(response)
         parsed.elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
         return parsed
@@ -166,10 +177,12 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """流式聊天 — 逐步 yield 文本片段和工具调用
 
-        使用 create(stream=True) 以兼容第三方代理。
+        使用 create(stream=True) 以兼容第三方代理。``on_retry`` 仅作用于建立流前的
+        瞬态错误；流中途断开走原有 non-stream 回退（spec §R2: 不静默重启流）。
         """
         # 复用消息转换逻辑
         system_msg = ""
@@ -215,7 +228,14 @@ class AnthropicClient(BaseLLMClient):
         start = time.perf_counter()
 
         try:
-            stream = await self.client.messages.create(**kwargs)
+            from .retry import call_with_retry  # 局部 import 防循环
+
+            stream = await call_with_retry(
+                lambda: self.client.messages.create(**kwargs),
+                max_retries=getattr(self, "_max_retries", 3),
+                initial_delay=getattr(self, "_retry_initial_delay", 1.0),
+                on_retry=on_retry,
+            )
             async for event in stream:
                 event_usage = None
                 if hasattr(event, "usage"):

@@ -80,8 +80,8 @@ class OpenAIClient(BaseLLMClient):
         start = time.perf_counter()
         response = await call_with_retry(
             lambda: self._create_with_compat_retry(kwargs),
-            max_retries=self._max_retries,
-            initial_delay=self._retry_initial_delay,
+            max_retries=getattr(self, "_max_retries", 3),
+            initial_delay=getattr(self, "_retry_initial_delay", 1.0),
             on_retry=on_retry,
         )
         parsed = self._parse_response(response)

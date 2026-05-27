@@ -128,3 +128,49 @@ async def test_openai_chat_stream_does_not_retry_mid_stream():
 
     # 建立流只有一次（spec §R2: 中途断开不重试）
     assert open_stream_calls == 1
+
+
+# ─── Anthropic ───────────────────────────────────────────
+
+
+class _RateLimit(Exception):
+    pass
+
+
+_RateLimit.__name__ = "RateLimitError"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_chat_retries_on_rate_limit():
+    """Anthropic 在 RateLimit 时按 max_retries 重试，最终成功。"""
+    from core.llm.anthropic_client import AnthropicClient
+
+    client = AnthropicClient.__new__(AnthropicClient)
+    client.model = "claude-3-5-sonnet-20241022"
+    client.generation_config = {}
+    client.client = MagicMock()
+    client._max_retries = 3
+    client._retry_initial_delay = 0.0
+
+    fake_block = MagicMock()
+    fake_block.type = "text"
+    fake_block.text = "ok"
+    fake_resp = MagicMock()
+    fake_resp.content = [fake_block]
+    fake_resp.usage = None
+
+    calls = 0
+
+    async def fake_create(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls < 2:
+            raise _RateLimit("slow down")
+        return fake_resp
+
+    client.client.messages.create = fake_create
+
+    out = await client.chat([{"role": "user", "content": "hi"}])
+    assert out.content == "ok"
+    assert calls == 2
+
