@@ -36,6 +36,50 @@ import type {
 const API_BASE = ''
 const DEFAULT_GET_CACHE_TTL_MS = 30_000
 
+// ===== A11 全局密码门禁：token 工具 =====
+// 后端配置 server.access_password 后，所有 /api/* 请求需带 Authorization: Bearer <token>，
+// WebSocket 走 ?token=<token>。token 持久化在 localStorage，登录页输入后写入；
+// 401 响应统一清掉并广播一个 auth-failed 事件给上层路由 → 跳回登录页。
+
+const AUTH_TOKEN_KEY = 'agentic.auth_token'
+export const AUTH_FAILED_EVENT = 'agentic:auth-failed'
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setAuthToken(token: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token)
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+export function clearAuthToken(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(AUTH_TOKEN_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+function dispatchAuthFailed() {
+  if (typeof window === 'undefined' || typeof CustomEvent !== 'function') return
+  try {
+    window.dispatchEvent(new CustomEvent(AUTH_FAILED_EVENT))
+  } catch {
+    // ignore
+  }
+}
+
 interface CachedResponse<T> {
   expiresAt: number
   response?: APIResponse<T>
@@ -92,13 +136,30 @@ async function fetchAPI<T>(
   options?: RequestInit
 ): Promise<APIResponse<T>> {
   try {
+    const headers = new Headers(options?.headers || {})
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+    // A11: 统一注入 Authorization: Bearer <token>
+    const token = getAuthToken()
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
       ...options,
+      headers,
     })
+
+    if (res.status === 401) {
+      // A11: token 失效或被踢出 → 清掉 + 通知 App 跳登录页
+      clearAuthToken()
+      dispatchAuthFailed()
+      const text = await res.text().catch(() => '')
+      return {
+        status: 'error',
+        message: `HTTP 401: ${text || 'unauthorized'}`,
+      }
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -126,10 +187,24 @@ async function fetchFormAPI<T>(
   formData: FormData
 ): Promise<APIResponse<T>> {
   try {
+    const headers = new Headers()
+    const token = getAuthToken()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
     const res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       body: formData,
+      headers,
     })
+
+    if (res.status === 401) {
+      clearAuthToken()
+      dispatchAuthFailed()
+      const text = await res.text().catch(() => '')
+      return {
+        status: 'error',
+        message: `HTTP 401: ${text || 'unauthorized'}`,
+      }
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '')

@@ -1,0 +1,115 @@
+/* A11 — 登录页样式。控制台基调：克制中性灰 + Claude 暖红强调。 */
+
+.login-page {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg, #f6f5f1);
+  padding: 24px;
+  z-index: 1000;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2dccf);
+  border-radius: 8px;
+  padding: 28px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: 0 6px 24px rgba(37, 34, 29, 0.06);
+}
+
+.login-header h1 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary, #25221d);
+}
+
+.login-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary, #5e574e);
+  line-height: 1.5;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #5e574e);
+}
+
+.login-field input {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border, #e2dccf);
+  border-radius: 6px;
+  background: var(--color-surface-soft, #fbfaf6);
+  font-size: 13px;
+  color: var(--color-text-primary, #25221d);
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.login-field input:focus {
+  border-color: var(--color-primary, #b85f3f);
+  background: #fff;
+}
+
+.login-field input:disabled {
+  background: var(--color-bg-tint, #efece4);
+  cursor: not-allowed;
+}
+
+.login-error {
+  margin: -4px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #8f472f;
+  background: var(--color-primary-light, rgba(184, 95, 63, 0.08));
+  border: 1px solid rgba(184, 95, 63, 0.25);
+  border-radius: 6px;
+}
+
+.login-submit {
+  height: 34px;
+  background: var(--color-primary, #b85f3f);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.login-submit:hover:not(:disabled) {
+  background: var(--color-primary-dark, #8f472f);
+}
+
+.login-submit:disabled {
+  background: var(--color-text-faint, #b8afa4);
+  cursor: not-allowed;
+}
+
+.login-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted, #948b80);
+  line-height: 1.6;
+}
+
+.login-hint code {
+  background: var(--color-bg-tint, #efece4);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}

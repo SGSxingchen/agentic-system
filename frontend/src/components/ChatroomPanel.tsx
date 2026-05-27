@@ -293,7 +293,10 @@ export function ChatroomPanel() {
   // ─── WebSocket（独立连接，不影响全局 ws）─────────────────
   const wsUrl = useMemo(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/ws`
+    // A11: 后端开了 access_password 时必须带 ?token=<password>，否则会被 close(4401)
+    const token = api.getAuthToken()
+    const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : ''
+    return `${protocol}//${window.location.host}/ws${tokenSuffix}`
   }, [])
 
   const handleWSMessage = useCallback((raw: unknown) => {
