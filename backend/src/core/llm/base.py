@@ -7,7 +7,7 @@ import json
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 
 @dataclass
@@ -70,21 +70,23 @@ class BaseLLMClient(ABC):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> LLMResponse:
-        """发送聊天消息，可选传入工具定义"""
+        """发送聊天消息，可选传入工具定义和重试回调。"""
         pass
 
     async def chat_stream(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """流式聊天 — 逐步 yield LLMStreamEvent
 
         默认实现: 回退到非流式 chat()，一次性 yield 完整结果。
-        子类可覆盖以实现真正的流式传输。
+        子类可覆盖以实现真正的流式传输。``on_retry`` 仅作用于建立流前的瞬态错误。
         """
-        response = await self.chat(messages, tools)
+        response = await self.chat(messages, tools, on_retry=on_retry)
         if response.content:
             yield LLMStreamEvent(type="text", content=response.content)
         for tc in response.tool_calls:
