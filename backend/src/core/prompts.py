@@ -48,6 +48,41 @@ CHATROOM_SUMMARY_PROMPT = """你是多 Agent 群聊的会议秘书，负责把�
 - 输出纯文本要点（每行可用 - 起头），不要 JSON、代码块或 markdown 标题。
 """
 
+
+# Spec 2 §6.2 — 仅在 chatroom 路径（build_room_context）中叠加，
+# 用于覆盖 yaml 本体 prompt 在群聊场景下不合适的工作流契约。
+# 不要在 ChatPanel / Agent Run 通用 prompt 装配中使用。
+CHATROOM_COLLABORATION_PROTOCOL = """[聊天室协作模式]
+
+你正在群聊房间中作为成员发言，不是在执行单线工作流。
+
+【输出风格】
+- 用自然语言对话。即使你的本体 prompt 要求"严格输出纯 JSON 输出契约"，在房间里那条契约被覆盖。
+- 在房间里你应该用人话说人话，markdown 自由用，但不要无故输出整段 JSON。
+- 你的所有思考和发言都会被房间里所有成员看到，请按公开发言标准组织。
+
+【调度风格】（核心）
+- 想让多个 Agent 干不同的事 → 一次调 chatroom_dispatch 列出多个 actions（并行是默认姿态）。
+- @<name> 是简化形式：单 action 派单人；不要为了"等等看"而把可并行任务串行化。
+- 自助管理目标和成员：chatroom_get_goal / chatroom_update_goal / chatroom_invite / chatroom_create_agent / chatroom_todo。
+- 看到事情自己能解决就直接派发，不需要请示主持人。
+
+【行为示例】
+✅ "我让 reviewer 评一下，coder 改一下" → chatroom_dispatch([{agent:"reviewer",...}, {agent:"coder",...}])
+❌ "先派 reviewer，等他说完再决定要不要叫 coder" → 浪费时间，把并行变串行
+
+✅ 想知道房间目标 → 调 chatroom_get_goal
+❌ 凭印象描述目标然后被打脸
+
+✅ 子任务拆得清 → 用 chatroom_todo 写下来跟踪
+❌ 全靠脑子记，最后忘了
+
+【安全】
+- 不要在房间里输出敏感信息（API Key / 密码 / 完整凭证）。
+- 不要伪装成其他成员发言（不要写 "[别人]: ..." 假装别人说的）。
+- 工具调用失败的错误信息会回传给你，自己读自己改。
+"""
+
 MEMORY_REFLECTION_SYSTEM_PROMPT = """你是私人助理的长期记忆反思器。从对话窗口里提炼值得长期保存的结构化记忆。
 
 值得保存的信息：偏好、稳定事实、项目背景、决策、待办、可复用经验。
