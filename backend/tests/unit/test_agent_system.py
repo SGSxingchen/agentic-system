@@ -42,6 +42,7 @@ class MockLLMClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         return self._response
 
@@ -57,6 +58,7 @@ class RecordingLLMClient(MockLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         self.calls.append(messages)
         return await super().chat(messages, tools)
@@ -69,6 +71,7 @@ class FailingLLMClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         raise RuntimeError("LLM call failed")
 
