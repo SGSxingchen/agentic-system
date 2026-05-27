@@ -853,3 +853,82 @@ def test_chatroom_payload_includes_todo_tool():
     from api.main import _CHATROOM_AUTONOMY_TOOLS
 
     assert "chatroom_todo" in _CHATROOM_AUTONOMY_TOOLS
+
+
+# ─── A21: 默认屏蔽 dispatch_agent ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chatroom_default_blocks_dispatch_agent(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    """默认 settings 下，房间发言时 payload._excluded_tools 包含 dispatch_agent。"""
+
+    cap = StreamingEchoCapability("planner")
+    cap_registry.register_native(cap)
+
+    async def fake_build(query, *args, **kwargs):
+        return ("", 0)
+
+    monkeypatch.setattr("api.websocket.handlers.build_memory_context", fake_build)
+    monkeypatch.setattr(
+        "api.websocket.handlers.schedule_memory_reflection", lambda **kw: None
+    )
+
+    room = _make_room(store, members=["planner"])
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "planner", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    excluded = cap.calls[0].get("_excluded_tools") or []
+    assert "dispatch_agent" in excluded, (
+        f"chatroom default should block dispatch_agent; got excluded={excluded}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chatroom_with_allow_subagent_dispatch_includes_dispatch_agent(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    """settings.allow_subagent_dispatch=True 时不再屏蔽 dispatch_agent。"""
+
+    cap = StreamingEchoCapability("planner")
+    cap_registry.register_native(cap)
+
+    async def fake_build(query, *args, **kwargs):
+        return ("", 0)
+
+    monkeypatch.setattr("api.websocket.handlers.build_memory_context", fake_build)
+    monkeypatch.setattr(
+        "api.websocket.handlers.schedule_memory_reflection", lambda **kw: None
+    )
+
+    room = _make_room(
+        store,
+        members=["planner"],
+        settings={"allow_subagent_dispatch": True},
+    )
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "planner", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    excluded = cap.calls[0].get("_excluded_tools") or []
+    assert "dispatch_agent" not in excluded, (
+        f"opt-in flag should re-enable dispatch_agent; got excluded={excluded}"
+    )
