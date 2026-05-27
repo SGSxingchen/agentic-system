@@ -742,6 +742,27 @@
   font-size: 11.5px;
 }
 
+.chatroom-settings__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chatroom-settings__label > span {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chatroom-settings__hint {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-size: 10.5px;
+  line-height: 1.35;
+  font-weight: 400;
+}
+
 .chatroom-settings__row input[type='number'] {
   text-align: right;
   font-size: 12px;

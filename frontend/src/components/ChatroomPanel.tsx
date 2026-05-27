@@ -12,6 +12,7 @@ import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { Select } from './Select'
+import { getSettingLabel } from './chatroomSettingsLabels'
 import type {
   AgentInfo,
   Chatroom,
@@ -1456,10 +1457,22 @@ function SettingsForm({
   const apply = (patch: Partial<ChatroomSettings>) => {
     onUpdate({ settings: { ...settings, ...patch } })
   }
+  const autoHostMeta = getSettingLabel('auto_host')
+  const hostAgentMeta = getSettingLabel('host_agent')
+  const recentNMeta = getSettingLabel('recent_n')
+  const summaryMeta = getSettingLabel('summary_threshold_m')
+  const relayMeta = getSettingLabel('max_relay_depth')
+  const membersMeta = getSettingLabel('max_members')
+  const inviteMeta = getSettingLabel('allow_agent_invite')
   return (
     <div className="chatroom-settings">
       <label className="chatroom-settings__row">
-        <span>auto_host</span>
+        <div className="chatroom-settings__label">
+          <span>{autoHostMeta.label}</span>
+          {autoHostMeta.hint && (
+            <small className="chatroom-settings__hint">{autoHostMeta.hint}</small>
+          )}
+        </div>
         <input
           type="checkbox"
           checked={settings.auto_host}
@@ -1467,7 +1480,12 @@ function SettingsForm({
         />
       </label>
       <label className="chatroom-settings__row">
-        <span>host_agent</span>
+        <div className="chatroom-settings__label">
+          <span>{hostAgentMeta.label}</span>
+          {hostAgentMeta.hint && (
+            <small className="chatroom-settings__hint">{hostAgentMeta.hint}</small>
+          )}
+        </div>
         <Select
           size="sm"
           fullWidth={false}
@@ -1482,27 +1500,36 @@ function SettingsForm({
         />
       </label>
       <NumberSetting
-        label="recent_n"
+        label={recentNMeta.label}
+        hint={recentNMeta.hint}
         value={settings.recent_n}
         onChange={(v) => apply({ recent_n: v })}
       />
       <NumberSetting
-        label="summary_threshold_m"
+        label={summaryMeta.label}
+        hint={summaryMeta.hint}
         value={settings.summary_threshold_m}
         onChange={(v) => apply({ summary_threshold_m: v })}
       />
       <NumberSetting
-        label="max_relay_depth"
+        label={relayMeta.label}
+        hint={relayMeta.hint}
         value={settings.max_relay_depth}
         onChange={(v) => apply({ max_relay_depth: v })}
       />
       <NumberSetting
-        label="max_members"
+        label={membersMeta.label}
+        hint={membersMeta.hint}
         value={settings.max_members}
         onChange={(v) => apply({ max_members: v })}
       />
       <label className="chatroom-settings__row">
-        <span>allow_agent_invite</span>
+        <div className="chatroom-settings__label">
+          <span>{inviteMeta.label}</span>
+          {inviteMeta.hint && (
+            <small className="chatroom-settings__hint">{inviteMeta.hint}</small>
+          )}
+        </div>
         <input
           type="checkbox"
           checked={settings.allow_agent_invite}
@@ -1515,10 +1542,12 @@ function SettingsForm({
 
 function NumberSetting({
   label,
+  hint,
   value,
   onChange,
 }: {
   label: string
+  hint?: string
   value: number
   onChange: (v: number) => void
 }) {
@@ -1528,7 +1557,10 @@ function NumberSetting({
   }, [value])
   return (
     <label className="chatroom-settings__row">
-      <span>{label}</span>
+      <div className="chatroom-settings__label">
+        <span>{label}</span>
+        {hint && <small className="chatroom-settings__hint">{hint}</small>}
+      </div>
       <input
         type="number"
         value={draft}
