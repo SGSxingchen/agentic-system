@@ -184,23 +184,12 @@ async def post_chatroom_user_message(
         if bool(settings.get("auto_host")):
             host_agent = str(settings.get("host_agent") or "planner").strip()
             if host_agent and host_agent in valid_names:
-                # 给 host 注入一段提示，鼓励它输出结构化 host_directive JSON。
-                # 解析在 chatroom_orchestrator._parse_host_directive 完成；
-                # 解析失败会自动回退到 mention 接力，所以注入是非阻塞性的。
-                others = [n for n in valid_names if n != host_agent]
-                host_prompt = (
-                    "你正在以主持人身份调度群聊。请先简要说明你的安排，"
-                    "然后**在回复末尾给出一个 JSON 代码块**，格式如下：\n"
-                    "```json\n"
-                    '{"actions": [{"agent": "成员名", "prompt": "给该成员的具体指令"}]}\n'
-                    "```\n"
-                    f"可选成员（不要选 你自己）：{', '.join(others) or '(无其他成员)'}。"
-                    "若你认为不需要任何人发言，输出 `{\"actions\": []}` 即可。"
-                )
+                # Spec 2 §5.4 / Task 8 — host_directive 文本协议已删除。
+                # 这里只是默认让 host_agent 接话；host 自己用 chatroom_dispatch
+                # 工具决定是否多人调度，不再注入 JSON 格式 prompt。
                 ticket = dispatch_speaking_task(
                     room_id,
                     host_agent,
-                    prompt=host_prompt,
                     parent_message_id=message["id"],
                     store=store,
                 )

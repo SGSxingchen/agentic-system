@@ -27,9 +27,7 @@ in ``api/routes/chatrooms.py`` is the only synchronous entry point for now.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
@@ -57,21 +55,6 @@ from .task import (
 
 
 logger = logging.getLogger(__name__)
-
-
-# A2: 聊天室协作模式 system 块。强插到 messages[0]，覆盖 yaml 中
-# planner / coder / reviewer 的"严格 JSON 输出"契约 —— 在群聊里要自然语言。
-# 不动 yaml 本体保护工作流（/api/agents/{name}/invoke、Agent Run）路径。
-_CHATROOM_OVERRIDE_PROMPT = (
-    "【聊天室协作模式】\n"
-    "你正在多 Agent 群聊里发言，不是在跑工作流任务。请遵守以下规则，"
-    "它们覆盖你原始 system prompt 中的输出契约：\n"
-    "- 用普通自然语言回复，markdown 自由用。\n"
-    "- 不要输出纯 JSON、不要包结构化字段（除非另一成员明确要求结构化结果）。\n"
-    "- 想接力就用 `@成员名`；不想接力就别 @。\n"
-    "- 保持简洁，一两段话足够，避免长篇大论。\n"
-    "- 例外：你若是该房间主持人（auto_host），按已有 host_directive 协议在末尾给 JSON 代码块。"
-)
 
 
 # ─── 依赖适配器 ─────────────────────────────────────────────
@@ -608,14 +591,10 @@ async def _run_speaking_task(
         )
 
         # ── 拼上下文 ──────────────────────────────────────
+        # build_room_context 已在 system 块里嵌入 CHATROOM_COLLABORATION_PROTOCOL，
+        # 不再额外强插旧版 _CHATROOM_OVERRIDE_PROMPT（Spec 2 §6 / Task 4）。
         room_snapshot = store.get_room(room_id) or {}
         context_messages = build_room_context(room_snapshot, agent_name)
-        # A2: 在 messages[0] 强插聊天室协作模式 system 块，覆盖 yaml 中
-        # 严格 JSON 输出契约。详见 _CHATROOM_OVERRIDE_PROMPT 注释。
-        context_messages.insert(
-            0,
-            {"role": "system", "content": _CHATROOM_OVERRIDE_PROMPT},
-        )
 
         payload: Dict[str, Any] = {
             "messages": context_messages,
@@ -824,32 +803,9 @@ async def _run_speaking_task(
                     logger.warning("chatroom memory reflection failed: %s", exc)
 
         # ── 接力派发 ──────────────────────────────────────
-        # host_directive 优先：如果发言者是 auto_host 模式下的 host_agent，
-        # 优先尝试把回复解析为结构化指令，按指令派发；否则回退到 mention 接力。
-        directive_actions = _parse_host_directive(
-            final_text,
-            room_after,
-            speaker=agent_name,
-        )
-        if directive_actions:
-            await _broadcast(
-                room_id,
-                "chatroom_host_directive",
-                {
-                    "room_id": room_id,
-                    "host": agent_name,
-                    "actions": directive_actions,
-                },
-            )
-            for action in directive_actions:
-                dispatch_speaking_task(
-                    room_id,
-                    action["agent"],
-                    prompt=action.get("prompt"),
-                    parent_message_id=message_id,
-                    store=store,
-                )
-        elif mentions:
+        # mention 接力：发言里 @ 了某成员就给该成员派 speaking task。
+        # （旧版的 host_directive JSON 文本协议已删除，spec §5.4，Task 8）
+        if mentions:
             for relay_target in mentions:
                 dispatch_speaking_task(
                     room_id,
@@ -915,101 +871,3 @@ __all__ = [
     "dispatch_speaking_task",
     "maybe_schedule_summary",
 ]
-
-
-# ─── host_directive 解析 ──────────────────────────────────
-
-
-def _parse_host_directive(
-    final_text: str,
-    room: Dict[str, Any],
-    *,
-    speaker: str,
-) -> Optional[List[Dict[str, Any]]]:
-    """从主持人 Agent 的回复里解析结构化调度指令。
-
-    仅当：(a) 房间 auto_host=True，(b) speaker 与 settings.host_agent 一致，
-    (c) 文本里能找到一段可解析的 JSON ``{"actions":[{"agent":...,"prompt":...}]}``，
-    才返回 actions 列表（每项已校验 agent 在房间成员里）。
-    其余情况返回 None，调用方回退到 mention 解析。
-    """
-
-    if not final_text:
-        return None
-    settings = room.get("settings") or {}
-    if not bool(settings.get("auto_host")):
-        return None
-    host_agent = str(settings.get("host_agent") or "").strip()
-    if not host_agent or speaker != host_agent:
-        return None
-
-    payload = _extract_json_object(final_text)
-    if not isinstance(payload, dict):
-        return None
-    actions = payload.get("actions")
-    if not isinstance(actions, list) or not actions:
-        return None
-
-    valid_names = set(_all_member_names(room)) - {speaker}
-    cleaned: List[Dict[str, Any]] = []
-    for raw in actions:
-        if not isinstance(raw, dict):
-            continue
-        agent_name = str(raw.get("agent") or "").strip()
-        if not agent_name or agent_name not in valid_names:
-            continue
-        prompt = raw.get("prompt")
-        if prompt is not None and not isinstance(prompt, str):
-            prompt = str(prompt)
-        cleaned.append({"agent": agent_name, "prompt": prompt})
-    return cleaned or None
-
-
-def _extract_json_object(text: str) -> Optional[Any]:
-    """从一段自由文本里抽出第一个完整 JSON 对象。
-
-    优先匹配 ``json``/`json` 代码围栏，其次扫描首个 ``{`` 起到平衡的 ``}``。
-    出错全部静默返回 None，让调用方回退。
-    """
-
-    # 1) 围栏块 ```json ... ```
-    fence = re.search(
-        r"```(?:json)?\s*([\s\S]+?)\s*```",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if fence:
-        try:
-            return json.loads(fence.group(1))
-        except (ValueError, TypeError):
-            pass
-
-    # 2) 首个 { 起的平衡块（朴素括号配对，能处理嵌套）
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_str:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start : i + 1])
-                except (ValueError, TypeError):
-                    return None
-    return None

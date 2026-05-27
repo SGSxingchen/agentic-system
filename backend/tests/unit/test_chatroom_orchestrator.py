@@ -681,8 +681,9 @@ async def test_run_speaking_task_inserts_chatroom_override_system(
     task_registry: TaskRegistry,
     monkeypatch,
 ):
-    """A2 (b)：messages[0] 强插聊天室协作模式 system 块覆盖 yaml JSON 契约。
-    build_room_context 原本的 system 块（topic / goal）应仍存在于后续 systems。"""
+    """Spec 2 §6 / Task 4：聊天室协作模式现在通过 build_room_context 的 XML
+    system 块直接嵌入（<protocol>），不再单独 messages.insert(0, ...)。
+    要求 messages[0] 是 <chatroom_context> XML 块且内含 [聊天室协作模式]。"""
 
     cap = StreamingEchoCapability("reviewer")
     cap_registry.register_native(cap)
@@ -708,10 +709,10 @@ async def test_run_speaking_task_inserts_chatroom_override_system(
 
     msgs = cap.calls[0]["messages"]
     assert msgs[0]["role"] == "system"
-    assert "聊天室协作模式" in msgs[0]["content"]
-    # build_room_context 后续 system 块（XML 化后是 <chatroom_context>...）
-    body_systems = [m for m in msgs[1:] if m.get("role") == "system"]
-    assert any("<chatroom_context>" in (m.get("content") or "") for m in body_systems)
+    sys0 = msgs[0]["content"]
+    # 一条 XML 化的 chatroom_context 块包含协议
+    assert "<chatroom_context>" in sys0
+    assert "[聊天室协作模式]" in sys0
 
 
 # ─── 摘要触发 ──────────────────────────────────────────────
@@ -806,79 +807,27 @@ async def test_dispatch_invalidates_disconnected_llm_gracefully(
 # =====================
 
 
-def test_parse_host_directive_extracts_fenced_json():
-    from core.chatroom_orchestrator import _parse_host_directive
+def test_legacy_host_directive_parser_removed():
+    """Task 8 — 文本协议被删除：_parse_host_directive / _extract_json_object 不再存在。"""
 
-    room = {
-        "members": ["planner", "coder", "reviewer"],
-        "settings": {"auto_host": True, "host_agent": "planner"},
-    }
-    text = (
-        "我先安排一下：让 coder 起草模块 A，让 reviewer 等草稿出来再审。\n\n"
-        "```json\n"
-        '{"actions": ['
-        '{"agent": "coder", "prompt": "起草模块 A 的 API 草案"},'
-        '{"agent": "reviewer", "prompt": "等草稿出来后审"}'
-        "]}\n"
-        "```"
+    import importlib
+
+    m = importlib.import_module("core.chatroom_orchestrator")
+    assert not hasattr(m, "_parse_host_directive"), (
+        "Task 8 should have deleted _parse_host_directive"
+    )
+    assert not hasattr(m, "_extract_json_object"), (
+        "Task 8 should have deleted _extract_json_object"
     )
 
-    actions = _parse_host_directive(text, room, speaker="planner")
-    assert actions is not None
-    assert [a["agent"] for a in actions] == ["coder", "reviewer"]
-    assert actions[0]["prompt"].startswith("起草")
 
+def test_routes_chatrooms_no_host_prompt_injection():
+    """routes/chatrooms.py 不应再注入 actions JSON 协议提示。"""
 
-def test_parse_host_directive_only_when_speaker_is_host():
-    from core.chatroom_orchestrator import _parse_host_directive
+    import inspect
+    from api.routes import chatrooms as chatrooms_route
 
-    room = {
-        "members": ["planner", "coder"],
-        "settings": {"auto_host": True, "host_agent": "planner"},
-    }
-    text = '{"actions": [{"agent": "coder", "prompt": "x"}]}'
-
-    # 不是 host 调用 → 返回 None
-    assert _parse_host_directive(text, room, speaker="coder") is None
-    # auto_host=False → 返回 None
-    room2 = {**room, "settings": {"auto_host": False, "host_agent": "planner"}}
-    assert _parse_host_directive(text, room2, speaker="planner") is None
-
-
-def test_parse_host_directive_filters_unknown_and_self():
-    from core.chatroom_orchestrator import _parse_host_directive
-
-    room = {
-        "members": ["planner", "coder"],
-        "settings": {"auto_host": True, "host_agent": "planner"},
-    }
-    text = (
-        '{"actions": ['
-        '{"agent": "coder", "prompt": "ok"},'
-        '{"agent": "planner", "prompt": "self mention should be dropped"},'
-        '{"agent": "ghost", "prompt": "unknown"}'
-        "]}"
-    )
-    actions = _parse_host_directive(text, room, speaker="planner")
-    assert actions == [{"agent": "coder", "prompt": "ok"}]
-
-
-def test_parse_host_directive_returns_none_for_garbage():
-    from core.chatroom_orchestrator import _parse_host_directive
-
-    room = {
-        "members": ["planner", "coder"],
-        "settings": {"auto_host": True, "host_agent": "planner"},
-    }
-    # 文本里没有 JSON
-    assert _parse_host_directive("不输出 JSON 啊", room, speaker="planner") is None
-    # JSON 不是对象
-    assert _parse_host_directive("[1,2,3]", room, speaker="planner") is None
-    # 没有 actions 字段
-    assert (
-        _parse_host_directive('{"plan": "..."}', room, speaker="planner") is None
-    )
-    # actions 为空 → 视为 None（让调用方走 mention 回退）
-    assert (
-        _parse_host_directive('{"actions": []}', room, speaker="planner") is None
+    source = inspect.getsource(chatrooms_route)
+    assert '"actions": [{"agent"' not in source, (
+        "host_directive prompt injection should be deleted"
     )
