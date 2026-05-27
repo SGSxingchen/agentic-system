@@ -38,6 +38,7 @@ from .chatroom import (
     should_summarize,
     summarize_room,
 )
+from .chatroom_reminders import build_system_reminders
 from .task import (
     TaskRegistry,
     TaskStatus,
@@ -600,6 +601,38 @@ async def _run_speaking_task(
         # 不再额外强插旧版 _CHATROOM_OVERRIDE_PROMPT（Spec 2 §6 / Task 4）。
         room_snapshot = store.get_room(room_id) or {}
         context_messages = build_room_context(room_snapshot, agent_name)
+
+        # Spec 2 §8 / Task 13 — 在 history 末尾追加 <system-reminder> user 消息，
+        # 把 goal 变化 / 新成员 / 你被 @ 等"鲜活"信号塞给 LM；不污染稳定的
+        # system 块（cache 友好）。
+        try:
+            reminder_text = build_system_reminders(
+                room_snapshot,
+                target_agent=agent_name,
+                parent_message_id=parent_message_id,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("build_system_reminders failed: %s", exc)
+            reminder_text = ""
+        if reminder_text:
+            context_messages.append(
+                {
+                    "role": "user",
+                    "content": f"<system-reminder>\n{reminder_text}\n</system-reminder>",
+                }
+            )
+            await _broadcast(
+                room_id,
+                "chatroom_system_reminder",
+                {
+                    "room_id": room_id,
+                    "task_id": task_id,
+                    "agent_name": agent_name,
+                    "reminders": [
+                        line for line in reminder_text.split("\n") if line.strip()
+                    ],
+                },
+            )
 
         payload: Dict[str, Any] = {
             "messages": context_messages,
