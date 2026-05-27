@@ -160,6 +160,26 @@ def _truncate(value: Any, limit: int = 500) -> str:
     return preview
 
 
+def _build_memory_query(room: Dict[str, Any], prompt: Optional[str]) -> str:
+    """拼接最近 3 条房间消息（任意 sender）+ prompt 作为记忆检索 query。
+
+    与 ChatPanel 单 query 相比，房间多人接力时单条消息上下文太薄；取最近 3 条
+    保证检索的语义粒度。done/streaming/pending 都计入——记忆系统自己不在乎完成度。
+    """
+    messages = room.get("messages") or []
+    tail = messages[-3:]
+    parts: List[str] = []
+    for msg in tail:
+        sender = str(msg.get("sender") or "")
+        text = str(msg.get("content") or "").strip()
+        if not text:
+            continue
+        parts.append(f"[{sender}] {text}")
+    if prompt and prompt.strip():
+        parts.append(prompt.strip())
+    return "\n".join(parts)
+
+
 def _relay_depth(messages: List[Dict[str, Any]], parent_message_id: Optional[str]) -> int:
     """Walk the parent_message_id chain backwards and count agent hops.
 

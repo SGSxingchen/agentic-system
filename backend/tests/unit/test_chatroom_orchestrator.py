@@ -18,6 +18,7 @@ from core.chatroom import ChatroomStore
 from core.chatroom_orchestrator import (
     dispatch_speaking_task,
     maybe_schedule_summary,
+    _build_memory_query,
     _relay_depth,
 )
 from core.task import TaskRegistry, TaskStatus, TaskType
@@ -226,6 +227,43 @@ def test_relay_depth_helper_counts_only_agent_chain(store: ChatroomStore):
     assert _relay_depth(msgs, parent_message_id=user_msg["id"]) == 0
     assert _relay_depth(msgs, parent_message_id=a1["id"]) == 1
     assert _relay_depth(msgs, parent_message_id=a2["id"]) == 2
+
+
+# ─── _build_memory_query (A1) ─────────────────────────────
+
+
+def test_build_memory_query_takes_last_three_messages():
+    room = {
+        "messages": [
+            {"sender": "user", "content": "old"},
+            {"sender": "user", "content": "msg1"},
+            {"sender": "agent:assistant", "content": "msg2"},
+            {"sender": "user", "content": "msg3"},
+        ],
+    }
+    query = _build_memory_query(room, prompt="follow up")
+    assert "msg1" in query
+    assert "msg2" in query
+    assert "msg3" in query
+    assert "old" not in query
+    assert "follow up" in query.splitlines()[-1]
+
+
+def test_build_memory_query_skips_blank_messages():
+    room = {
+        "messages": [
+            {"sender": "user", "content": "  "},
+            {"sender": "user", "content": "real"},
+        ]
+    }
+    query = _build_memory_query(room, prompt=None)
+    assert query.count("\n") == 0  # 单行
+    assert "real" in query
+
+
+def test_build_memory_query_handles_empty():
+    assert _build_memory_query({"messages": []}, None) == ""
+    assert _build_memory_query({}, None) == ""
 
 
 def test_dispatch_blocks_when_relay_depth_exceeded(
