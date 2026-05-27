@@ -449,3 +449,141 @@ async def test_auto_host_emits_system_notice_when_host_not_in_room(client, deps)
     assert any("auto_host" in m["content"] for m in notices), (
         f"没找到 auto_host 兜底 system 消息：{[m['content'] for m in notices]}"
     )
+
+
+# ─── Task 12: dispatch ↔ todo 自动联动 ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_auto_creates_pending_todos_with_parent_dispatch_id(client, deps):
+    """chatroom_dispatch 派发成功后，给每个 action 创建 pending todo。"""
+
+    from core.chatroom import ChatroomStore
+    from core.task import (
+        reset_current_parent_message_id,
+        reset_current_room_id,
+        reset_current_speaker_name,
+        set_current_parent_message_id,
+        set_current_room_id,
+        set_current_speaker_name,
+    )
+    from capabilities.tools.chatroom_dispatch import ChatroomDispatchCapability
+
+    # 注册 reviewer / coder capability，供 dispatch 校验时通过
+    deps["cap_registry"].register_native(
+        StreamingCap(
+            "reviewer",
+            [{"type": "done", "content": {"response": "ok"}}],
+        )
+    )
+    deps["cap_registry"].register_native(
+        StreamingCap(
+            "coder",
+            [{"type": "done", "content": {"response": "ok"}}],
+        )
+    )
+
+    create = await client.post(
+        "/api/chatrooms",
+        json={
+            "title": "todo-test",
+            "members": ["planner", "reviewer", "coder"],
+        },
+    )
+    room_id = create.json()["data"]["id"]
+
+    # 直接调工具（模拟 host 发言里发出工具调用）
+    rt = set_current_room_id(room_id)
+    st = set_current_speaker_name("planner")
+    pt = set_current_parent_message_id("placeholder-msg")
+    try:
+        result = await ChatroomDispatchCapability().execute(
+            actions=[{"agent": "reviewer"}, {"agent": "coder"}]
+        )
+    finally:
+        reset_current_parent_message_id(pt)
+        reset_current_speaker_name(st)
+        reset_current_room_id(rt)
+
+    dispatched = result.get("dispatched") or []
+    assert len(dispatched) == 2
+
+    # todos 应在房间数据里
+    fetched = ChatroomStore().get_room(room_id)
+    todos = fetched.get("todos") or []
+    assert len(todos) == 2
+    # parent_dispatch_id 必须等于派发出的 task_id
+    task_ids = {d["task_id"] for d in dispatched}
+    assignees = {t["assignee"] for t in todos}
+    assert assignees == {"reviewer", "coder"}
+    for todo in todos:
+        assert todo["parent_dispatch_id"] in task_ids
+        assert todo["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_speak_task_done_auto_completes_associated_todo(client, deps):
+    """被派发的 Agent 完成发言时，自动 mark associated todo as completed。"""
+
+    from core.chatroom import ChatroomStore
+    from core.task import (
+        TaskStatus,
+        reset_current_parent_message_id,
+        reset_current_room_id,
+        reset_current_speaker_name,
+        set_current_parent_message_id,
+        set_current_room_id,
+        set_current_speaker_name,
+    )
+    from capabilities.tools.chatroom_dispatch import ChatroomDispatchCapability
+
+    deps["cap_registry"].register_native(
+        StreamingCap(
+            "reviewer",
+            [{"type": "done", "content": {"response": "评审完毕"}}],
+        )
+    )
+
+    create = await client.post(
+        "/api/chatrooms",
+        json={
+            "title": "todo-complete-test",
+            "members": ["planner", "reviewer"],
+        },
+    )
+    room_id = create.json()["data"]["id"]
+
+    rt = set_current_room_id(room_id)
+    st = set_current_speaker_name("planner")
+    pt = set_current_parent_message_id("placeholder-msg")
+    try:
+        result = await ChatroomDispatchCapability().execute(
+            actions=[{"agent": "reviewer", "prompt": "评一下"}]
+        )
+    finally:
+        reset_current_parent_message_id(pt)
+        reset_current_speaker_name(st)
+        reset_current_room_id(rt)
+
+    task_id = result["dispatched"][0]["task_id"]
+    task_registry: TaskRegistry = deps["task_registry"]
+
+    # 等 speaking task 完成
+    completed = await _wait_for(
+        lambda: task_registry.get(task_id) is not None
+        and task_registry.get(task_id).status is TaskStatus.COMPLETED,
+        timeout=4.0,
+    )
+    assert completed, "speaking task should have completed"
+
+    # todo 也应该被自动标完成
+    def _todo_completed() -> bool:
+        fetched = ChatroomStore().get_room(room_id)
+        todos = fetched.get("todos") or []
+        return any(
+            t["parent_dispatch_id"] == task_id and t["status"] == "completed"
+            for t in todos
+        )
+
+    flipped = await _wait_for(_todo_completed, timeout=4.0)
+    assert flipped, "associated todo should auto-complete after speaking task done"

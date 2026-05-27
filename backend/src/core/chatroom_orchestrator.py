@@ -790,6 +790,29 @@ async def _run_speaking_task(
             },
         )
 
+        # Spec 2 §9.4 / Task 12 — 自动 mark associated todo as completed
+        try:
+            related_todos = store.find_todos_by_dispatch(room_id, task_id)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("find_todos_by_dispatch failed: %s", exc)
+            related_todos = []
+        for todo in related_todos:
+            if (todo.get("status") or "") == "completed":
+                continue
+            updated = store.update_todo(room_id, todo["id"], status="completed")
+            if updated:
+                await _broadcast(
+                    room_id,
+                    "chatroom_todo_completed",
+                    {
+                        "room_id": room_id,
+                        "todo_id": todo["id"],
+                        "todo": updated,
+                        "by": agent_name,
+                        "source": "auto",
+                    },
+                )
+
         # ── A1: 触发记忆反思（不阻塞接力派发） ──
         if auto_memory and final_text:
             try:

@@ -132,6 +132,7 @@ class ChatroomDispatchCapability(CapabilityBase):
 
         dispatched: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
+        created_todos: List[Dict[str, Any]] = []
 
         for action in actions:
             if not isinstance(action, dict):
@@ -174,6 +175,16 @@ class ChatroomDispatchCapability(CapabilityBase):
                 }
             )
 
+            # Spec 2 §9.4 / Task 12 — 自动创建一条 pending todo 关联到 dispatch task
+            todo = store.add_todo(
+                room_id,
+                content=(prompt or f"Speak as {agent_name}"),
+                assignee=agent_name,
+                parent_dispatch_id=task_id,
+            )
+            if todo:
+                created_todos.append(todo)
+
         # 广播事件供前端 surface "Host 派发了 N 人"提示
         await _broadcast(
             room_id,
@@ -188,5 +199,16 @@ class ChatroomDispatchCapability(CapabilityBase):
                 "failed": failed,
             },
         )
+        if created_todos:
+            await _broadcast(
+                room_id,
+                "chatroom_todo_added",
+                {
+                    "room_id": room_id,
+                    "todos": created_todos,
+                    "by": speaker,
+                    "source": "chatroom_dispatch",
+                },
+            )
 
         return {"dispatched": dispatched, "failed": failed}
