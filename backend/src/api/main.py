@@ -97,6 +97,7 @@ _CHATROOM_AUTONOMY_TOOLS: tuple[str, ...] = (
     "chatroom_get_goal",
     "chatroom_update_goal",
     "chatroom_dispatch",
+    "chatroom_todo",
 )
 
 bus: Optional[UnifiedBus] = None

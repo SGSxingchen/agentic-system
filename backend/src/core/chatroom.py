@@ -175,6 +175,7 @@ class ChatroomStore:
             "goal": str(goal).strip() if isinstance(goal, str) and goal.strip() else None,
             "goal_history": [],
             "goal_subgoals": [],
+            "todos": [],
             "members": [str(m).strip() for m in (members or []) if str(m).strip()],
             "dynamic_members": [
                 self._normalize_dynamic_member(item)
@@ -220,6 +221,7 @@ class ChatroomStore:
                 "goal",
                 "goal_history",
                 "goal_subgoals",
+                "todos",
                 "members",
                 "dynamic_members",
                 "workspace_id",
@@ -471,6 +473,13 @@ class ChatroomStore:
             else []
         )
 
+        todos_raw = raw.get("todos")
+        todos = (
+            [self._normalize_todo(item) for item in todos_raw if isinstance(item, dict)]
+            if isinstance(todos_raw, list)
+            else []
+        )
+
         return {
             "id": str(raw["id"]),
             "title": str(raw.get("title") or "新房间"),
@@ -482,6 +491,7 @@ class ChatroomStore:
             ),
             "goal_history": list(goal_history),
             "goal_subgoals": goal_subgoals,
+            "todos": todos,
             "members": members,
             "dynamic_members": dynamic_members,
             "workspace_id": (
@@ -623,6 +633,129 @@ class ChatroomStore:
                 return {"ok": True, "goal": room["goal"], "room": deepcopy(room)}
 
             return {"error": f"unknown operation '{operation}'"}
+
+    @staticmethod
+    def _normalize_todo(item: Dict[str, Any]) -> Dict[str, Any]:
+        todo_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:10]
+        status = str(item.get("status") or "pending").strip() or "pending"
+        if status not in ("pending", "in_progress", "completed", "blocked"):
+            status = "pending"
+        return {
+            "id": todo_id,
+            "content": str(item.get("content") or ""),
+            "status": status,
+            "assignee": (
+                str(item["assignee"]).strip()
+                if isinstance(item.get("assignee"), str) and item["assignee"].strip()
+                else None
+            ),
+            "created_at": str(item.get("created_at") or _utc_now()),
+            "updated_at": str(item.get("updated_at") or _utc_now()),
+            "parent_dispatch_id": (
+                str(item["parent_dispatch_id"])
+                if isinstance(item.get("parent_dispatch_id"), str)
+                and item["parent_dispatch_id"]
+                else None
+            ),
+            "notes": (
+                str(item["notes"])
+                if isinstance(item.get("notes"), str) and item["notes"]
+                else None
+            ),
+        }
+
+    def add_todo(
+        self,
+        room_id: str,
+        content: str,
+        *,
+        assignee: Optional[str] = None,
+        parent_dispatch_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return None
+            now = _utc_now()
+            todo = {
+                "id": uuid.uuid4().hex[:10],
+                "content": str(content or ""),
+                "status": "pending",
+                "assignee": str(assignee).strip() if assignee else None,
+                "created_at": now,
+                "updated_at": now,
+                "parent_dispatch_id": (
+                    str(parent_dispatch_id) if parent_dispatch_id else None
+                ),
+                "notes": None,
+            }
+            todos = list(room.get("todos") or [])
+            todos.append(todo)
+            room["todos"] = todos
+            room["updated_at"] = now
+            self._write_room(room)
+            return deepcopy(todo)
+
+    def update_todo(
+        self,
+        room_id: str,
+        todo_id: str,
+        **fields: Any,
+    ) -> Optional[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return None
+            todos = list(room.get("todos") or [])
+            target = next((t for t in todos if t.get("id") == todo_id), None)
+            if target is None:
+                return None
+            allowed = {"content", "status", "assignee", "notes"}
+            for key, value in fields.items():
+                if key not in allowed:
+                    continue
+                target[key] = value
+            target["updated_at"] = _utc_now()
+            room["todos"] = todos
+            room["updated_at"] = target["updated_at"]
+            self._write_room(room)
+            return deepcopy(target)
+
+    def list_todos(self, room_id: str) -> List[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return []
+            return deepcopy(room.get("todos") or [])
+
+    def delete_todo(self, room_id: str, todo_id: str) -> bool:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return False
+            todos = list(room.get("todos") or [])
+            new_todos = [t for t in todos if t.get("id") != todo_id]
+            if len(new_todos) == len(todos):
+                return False
+            room["todos"] = new_todos
+            room["updated_at"] = _utc_now()
+            self._write_room(room)
+            return True
+
+    def find_todos_by_dispatch(
+        self,
+        room_id: str,
+        parent_dispatch_id: str,
+    ) -> List[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return []
+            return [
+                deepcopy(t)
+                for t in (room.get("todos") or [])
+                if t.get("parent_dispatch_id") == parent_dispatch_id
+            ]
 
     @staticmethod
     def _normalize_message(message: Dict[str, Any], room_id: str) -> Dict[str, Any]:
