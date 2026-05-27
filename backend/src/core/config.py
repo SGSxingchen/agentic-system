@@ -32,6 +32,8 @@ class LLMConfig(BaseModel):
     top_p: Optional[float] = Field(default=None, ge=0, le=1, description="核采样概率")
     max_tokens: int = Field(default=4096, ge=1, description="最大输出 token 数")
     stop_sequences: List[str] = Field(default_factory=list, description="停止序列")
+    max_retries: int = Field(default=3, ge=0, description="LLM 调用瞬态错误最大重试次数（不含首发）")
+    retry_initial_delay: float = Field(default=1.0, ge=0, description="首次重试退避秒数；之后 ×2 + ±20% jitter")
     openai: Dict[str, Any] = Field(default_factory=dict, description="OpenAI 专属对话参数")
     anthropic: Dict[str, Any] = Field(default_factory=dict, description="Anthropic 专属对话参数")
 

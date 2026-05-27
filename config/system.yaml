@@ -37,6 +37,8 @@ llm:
   top_p: null
   max_tokens: 4096
   stop_sequences: []
+  max_retries: 3                # A6: 总重试次数（不含首发），仅瞬态错误才重试
+  retry_initial_delay: 1.0      # A6: 首次退避秒数；之后 ×2 + ±20% jitter
   openai:
     max_completion_tokens: null
     use_legacy_max_tokens: false # 兼容旧式 OpenAI 代理时可开启
