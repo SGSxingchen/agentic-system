@@ -674,6 +674,46 @@ async def test_run_speaking_task_forces_output_format_text(
     assert cap.calls[0].get("output_format") == "text"
 
 
+@pytest.mark.asyncio
+async def test_run_speaking_task_inserts_chatroom_override_system(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    """A2 (b)：messages[0] 强插聊天室协作模式 system 块覆盖 yaml JSON 契约。
+    build_room_context 原本的 system 块（topic / goal）应仍存在于后续 systems。"""
+
+    cap = StreamingEchoCapability("reviewer")
+    cap_registry.register_native(cap)
+
+    async def fake_build(query, *args, **kwargs):
+        return ("", 0)
+
+    monkeypatch.setattr("api.websocket.handlers.build_memory_context", fake_build)
+    monkeypatch.setattr(
+        "api.websocket.handlers.schedule_memory_reflection",
+        lambda **kw: None,
+    )
+
+    room = _make_room(store, members=["reviewer"])
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "reviewer", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    msgs = cap.calls[0]["messages"]
+    assert msgs[0]["role"] == "system"
+    assert "聊天室协作模式" in msgs[0]["content"]
+    # build_room_context 原本的 system 块应仍存在（topic / goal / 历史）
+    body_systems = [m for m in msgs[1:] if m.get("role") == "system"]
+    assert any("[房间主题]" in (m.get("content") or "") for m in body_systems)
+
+
 # ─── 摘要触发 ──────────────────────────────────────────────
 
 

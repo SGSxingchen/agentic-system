@@ -59,6 +59,21 @@ from .task import (
 logger = logging.getLogger(__name__)
 
 
+# A2: 聊天室协作模式 system 块。强插到 messages[0]，覆盖 yaml 中
+# planner / coder / reviewer 的"严格 JSON 输出"契约 —— 在群聊里要自然语言。
+# 不动 yaml 本体保护工作流（/api/agents/{name}/invoke、Agent Run）路径。
+_CHATROOM_OVERRIDE_PROMPT = (
+    "【聊天室协作模式】\n"
+    "你正在多 Agent 群聊里发言，不是在跑工作流任务。请遵守以下规则，"
+    "它们覆盖你原始 system prompt 中的输出契约：\n"
+    "- 用普通自然语言回复，markdown 自由用。\n"
+    "- 不要输出纯 JSON、不要包结构化字段（除非另一成员明确要求结构化结果）。\n"
+    "- 想接力就用 `@成员名`；不想接力就别 @。\n"
+    "- 保持简洁，一两段话足够，避免长篇大论。\n"
+    "- 例外：你若是该房间主持人（auto_host），按已有 host_directive 协议在末尾给 JSON 代码块。"
+)
+
+
 # ─── 依赖适配器 ─────────────────────────────────────────────
 
 
@@ -595,6 +610,12 @@ async def _run_speaking_task(
         # ── 拼上下文 ──────────────────────────────────────
         room_snapshot = store.get_room(room_id) or {}
         context_messages = build_room_context(room_snapshot, agent_name)
+        # A2: 在 messages[0] 强插聊天室协作模式 system 块，覆盖 yaml 中
+        # 严格 JSON 输出契约。详见 _CHATROOM_OVERRIDE_PROMPT 注释。
+        context_messages.insert(
+            0,
+            {"role": "system", "content": _CHATROOM_OVERRIDE_PROMPT},
+        )
 
         payload: Dict[str, Any] = {
             "messages": context_messages,
