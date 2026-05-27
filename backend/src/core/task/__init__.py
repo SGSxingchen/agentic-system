@@ -34,6 +34,9 @@ from .context import (
     get_current_create_counter,
     set_current_create_counter,
     reset_current_create_counter,
+    get_current_parent_message_id,
+    set_current_parent_message_id,
+    reset_current_parent_message_id,
 )
 
 __all__ = [
@@ -68,4 +71,7 @@ __all__ = [
     "get_current_create_counter",
     "set_current_create_counter",
     "reset_current_create_counter",
+    "get_current_parent_message_id",
+    "set_current_parent_message_id",
+    "reset_current_parent_message_id",
 ]

@@ -44,10 +44,12 @@ from .task import (
     TaskType,
     TranscriptWriter,
     reset_current_create_counter,
+    reset_current_parent_message_id,
     reset_current_room_id,
     reset_current_speaker_name,
     reset_workspace_root_override,
     set_current_create_counter,
+    set_current_parent_message_id,
     set_current_room_id,
     set_current_speaker_name,
     set_workspace_root_override,
@@ -545,6 +547,9 @@ async def _run_speaking_task(
 
     room_token = set_current_room_id(room_id)
     speaker_token = set_current_speaker_name(agent_name)
+    # Spec 2 §5 / Task 9 — 暴露当前发言占位 message_id；chatroom_dispatch 等
+    # 工具读它作为 child speaking task 的 parent_message_id。
+    parent_token = set_current_parent_message_id(message_id)
     create_counter: List[int] = [0]
     counter_token = set_current_create_counter(create_counter)
     workspace_token = _maybe_set_workspace_root(room_id, store=store)
@@ -863,6 +868,7 @@ async def _run_speaking_task(
         if workspace_token is not None:
             reset_workspace_root_override(workspace_token)
         reset_current_create_counter(counter_token)
+        reset_current_parent_message_id(parent_token)
         reset_current_speaker_name(speaker_token)
         reset_current_room_id(room_token)
 

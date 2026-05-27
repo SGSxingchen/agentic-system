@@ -39,6 +39,12 @@ _current_speaker_name_cv: ContextVar[Optional[str]] = ContextVar(
 _current_create_counter_cv: ContextVar[Optional[List[int]]] = ContextVar(
     "agentic_current_create_counter", default=None
 )
+# Spec 2 §5 / Task 9 — 当前发言任务的占位消息 id（chatroom_dispatch 在派发时
+# 把它挂到 child speaking task 的 parent_message_id 上，以便 LM 能在 XML
+# history 里追到 reply-thread 关系）。
+_current_parent_message_id_cv: ContextVar[Optional[str]] = ContextVar(
+    "agentic_current_parent_message_id", default=None
+)
 
 
 # ─── parent_task_id ────────────────────────────────────
@@ -144,3 +150,18 @@ def set_current_create_counter(counter: Optional[List[int]]) -> Token:
 
 def reset_current_create_counter(token: Token) -> None:
     _current_create_counter_cv.reset(token)
+
+
+# ─── current_parent_message_id（chatroom dispatch reply 链路）─────
+
+
+def get_current_parent_message_id() -> Optional[str]:
+    return _current_parent_message_id_cv.get()
+
+
+def set_current_parent_message_id(message_id: Optional[str]) -> Token:
+    return _current_parent_message_id_cv.set(message_id)
+
+
+def reset_current_parent_message_id(token: Token) -> None:
+    _current_parent_message_id_cv.reset(token)
