@@ -453,6 +453,97 @@ export function ChatroomPanel() {
         loadRooms()
         break
       }
+      // ─── Spec 2 §12 / Task 18 — dispatch / todo / subgoal / reminder ───
+      case 'chatroom_dispatch_called': {
+        // 调试用：在 console 留个面包屑，UI 不展示
+        console.info('[chatroom] dispatch called', data)
+        break
+      }
+      case 'chatroom_todo_added': {
+        const newTodos = (data && data.todos) || []
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const existing = prev.todos || []
+          // 按 id 去重
+          const seen = new Set(existing.map((t) => t.id))
+          const merged = [
+            ...existing,
+            ...newTodos.filter(
+              (t: ChatroomTodo) => t && t.id && !seen.has(t.id)
+            ),
+          ]
+          return { ...prev, todos: merged }
+        })
+        break
+      }
+      case 'chatroom_todo_updated':
+      case 'chatroom_todo_completed': {
+        const todo = data && data.todo
+        if (!todo || !todo.id) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const todos = (prev.todos || []).map((t) =>
+            t.id === todo.id ? { ...t, ...todo } : t
+          )
+          return { ...prev, todos }
+        })
+        break
+      }
+      case 'chatroom_todo_deleted': {
+        const todoId = data && data.todo_id
+        if (!todoId) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const todos = (prev.todos || []).filter((t) => t.id !== todoId)
+          return { ...prev, todos }
+        })
+        break
+      }
+      case 'chatroom_goal_subgoal_added': {
+        const subgoal = data && data.subgoal
+        if (!subgoal || !subgoal.id) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const existing = prev.goal_subgoals || []
+          if (existing.some((s) => s.id === subgoal.id)) {
+            return prev
+          }
+          return {
+            ...prev,
+            goal_subgoals: [...existing, subgoal],
+          }
+        })
+        break
+      }
+      case 'chatroom_goal_subgoal_done': {
+        const subgoalId = data && (data.subgoal_id || (data.subgoal && data.subgoal.id))
+        if (!subgoalId) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const subs = (prev.goal_subgoals || []).map((s) =>
+            s.id === subgoalId
+              ? { ...s, status: 'done' as const, done_at: data.done_at || s.done_at }
+              : s
+          )
+          return { ...prev, goal_subgoals: subs }
+        })
+        break
+      }
+      case 'chatroom_goal_subgoal_removed': {
+        const subgoalId = data && data.subgoal_id
+        if (!subgoalId) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const subs = (prev.goal_subgoals || []).filter((s) => s.id !== subgoalId)
+          return { ...prev, goal_subgoals: subs }
+        })
+        break
+      }
+      case 'chatroom_system_reminder': {
+        // 调试模式打印，不在 UI 显示
+        console.debug('[chatroom] system reminder', data)
+        break
+      }
       case 'subscribed':
       case 'unsubscribed':
       case 'pong':
