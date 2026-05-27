@@ -701,6 +701,14 @@ async def _run_speaking_task(
             "task_id": task_id,
         }
 
+        # Spec 2 §10.2 / Task 14 — 默认在房间里关掉 dispatch_agent，避免 Agent
+        # 私下派子 Agent（违背"围观一切"哲学）。settings.allow_subagent_dispatch
+        # 显式开启可放行。
+        room_settings = room_snapshot.get("settings") or {}
+        allow_subagent = bool(room_settings.get("allow_subagent_dispatch", False))
+        if not allow_subagent:
+            payload["_excluded_tools"] = ["dispatch_agent"]
+
         # ── A1: 注入长期记忆（房间级 auto_memory，默认开） ──
         auto_memory = bool((room_snapshot.get("settings") or {}).get("auto_memory", True))
         if auto_memory:
