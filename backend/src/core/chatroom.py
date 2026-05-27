@@ -25,6 +25,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from xml.sax.saxutils import escape as _xml_escape
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -577,12 +578,15 @@ def _format_history_message(
 ) -> Optional[Dict[str, str]]:
     """把房间内一条消息映射为 LLM messages 列表里的一项。
 
-    - ``user`` → role=user
-    - ``agent:<name>`` → role=assistant；正文加 ``[<name>]:`` 前缀，
-      让被叫的 agent 区分自己/他人。
-    - ``system`` → role=user，前缀 ``[system]:``（保险起见兜底为 user，
-      避免某些 LLM provider 多 system 消息时合并报错）。
+    Spec 2 §7.3 — 角色映射：
+    - 自己（target agent）→ ``role=assistant``，正文原样返回（这是模型自己说过的话）。
+    - 用户 → ``role=user``，包成 ``<msg id="" from="user" at="" mentions="">原文</msg>``。
+    - 别的 Agent → ``role=user``，包成 ``<msg id="" from="<agent>" at="" mentions="" parent="">原文</msg>``。
+    - 系统消息 → ``role=user``，包成 ``<system_event at="">原文</system_event>``。
+    - 未知 sender → ``role=user``，包成 ``<unknown_msg from="<sender>">原文</unknown_msg>``。
     - status != ``done`` 的消息直接跳过。
+
+    XML 仅转义内容中的 ``<`` ``>`` ``&``（属性值由我们生成，无需转义引号）。
     """
 
     if message.get("status") != "done":
@@ -593,17 +597,49 @@ def _format_history_message(
     if not content.strip():
         return None
 
+    # 自己的发言：原文回放（assistant role 只有自己说过的话，避免 LM 角色混淆）
+    if sender == f"agent:{target_agent_name}":
+        return {"role": "assistant", "content": content}
+
+    msg_id = str(message.get("id") or "")
+    sent_at = str(message.get("created_at") or "")
+    mentions_raw = message.get("mentions") or []
+    mentions = [str(m) for m in mentions_raw if str(m).strip()]
+    parent = str(message.get("parent_message_id") or "")
+    safe_content = _xml_escape(content)
+
     if sender == "user":
-        return {"role": "user", "content": content}
+        attrs = [f'id="{msg_id}"', 'from="user"', f'at="{sent_at}"']
+        if mentions:
+            attrs.append(f'mentions="{",".join(mentions)}"')
+        return {
+            "role": "user",
+            "content": f"<msg {' '.join(attrs)}>{safe_content}</msg>",
+        }
+
     if sender.startswith("agent:"):
         name = sender.split(":", 1)[1] or "agent"
-        if name == target_agent_name:
-            return {"role": "assistant", "content": content}
-        return {"role": "assistant", "content": f"[{name}]: {content}"}
+        attrs = [f'id="{msg_id}"', f'from="{name}"', f'at="{sent_at}"']
+        if mentions:
+            attrs.append(f'mentions="{",".join(mentions)}"')
+        if parent:
+            attrs.append(f'parent="{parent}"')
+        return {
+            "role": "user",
+            "content": f"<msg {' '.join(attrs)}>{safe_content}</msg>",
+        }
+
     if sender == "system":
-        return {"role": "user", "content": f"[system]: {content}"}
-    # 兜底：未知 sender 当 system 处理
-    return {"role": "user", "content": f"[{sender}]: {content}"}
+        return {
+            "role": "user",
+            "content": f'<system_event at="{sent_at}">{safe_content}</system_event>',
+        }
+
+    # 兜底：未知 sender 用 <unknown_msg>
+    return {
+        "role": "user",
+        "content": f'<unknown_msg from="{sender}">{safe_content}</unknown_msg>',
+    }
 
 
 def build_room_context(

@@ -307,12 +307,12 @@ def test_build_room_context_skips_pending_and_prefixes_others(store: ChatroomSto
     # pending 消息内容 "WIP" 不应出现
     assert all("WIP" not in c for c in contents)
 
-    # 自己的发言 (sender=agent:planner, "好的，我来安排") 不应带 [planner]: 前缀
+    # 自己的发言 (sender=agent:planner, "好的，我来安排") 直接原文返回，无 XML 包装
     assert any(c == "好的，我来安排" for c in contents)
-    # coder 的发言要带 [coder]: 前缀
-    assert any(c == "[coder]: 我准备实现" for c in contents)
-    # system 消息走 user 角色 + [system]: 前缀
-    assert any(c.startswith("[system]:") for c in contents)
+    # coder 的发言用 <msg from="coder" ...>...</msg> 包装
+    assert any('from="coder"' in c and "我准备实现" in c for c in contents)
+    # system 消息走 <system_event ...>...</system_event> 包装
+    assert any(c.startswith("<system_event") for c in contents)
 
 
 def test_build_room_context_recent_n_truncates(store: ChatroomStore):
@@ -327,7 +327,12 @@ def test_build_room_context_recent_n_truncates(store: ChatroomStore):
     messages = build_room_context(full_room, "planner", recent_n=5)
     history = messages[1:]
     assert len(history) == 5
-    assert [m["content"] for m in history] == [f"u{i}" for i in range(10, 15)]
+    # User 消息现在被包成 <msg ...>原文</msg>；只检查正文部分顺序
+    expected = [f">u{i}</msg>" for i in range(10, 15)]
+    actual_tails = [c.split('">')[-1] if '">' in c else c for c in (m["content"] for m in history)]
+    # 简化：直接检查每条 content 末尾包含 ">u{i}</msg>"
+    for i, msg in zip(range(10, 15), history):
+        assert f">u{i}</msg>" in msg["content"], msg["content"]
 
 
 def test_build_room_context_uses_settings_recent_n_by_default(store: ChatroomStore):
@@ -345,7 +350,9 @@ def test_build_room_context_uses_settings_recent_n_by_default(store: ChatroomSto
 
     messages = build_room_context(full_room, "planner")
     history = messages[1:]
-    assert [m["content"] for m in history] == ["u4", "u5"]
+    assert len(history) == 2
+    assert ">u4</msg>" in history[0]["content"]
+    assert ">u5</msg>" in history[1]["content"]
 
 
 def test_build_room_context_dynamic_members_in_others(store: ChatroomStore):
