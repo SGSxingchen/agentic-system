@@ -146,8 +146,7 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
         "manage_persona_definition",
         "manage_persona_binding",
         "record_persona_feedback",
-        "generate_persona_patch_proposal",
-        "apply_confirmed_persona_patch",
+        "update_persona",
         "list_persona_patch_history",
     }
     assert set(by_name["persona_evolution"]["tools"]) == persona_tools
