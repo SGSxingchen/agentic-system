@@ -22,7 +22,7 @@ class RecordingLLM(BaseLLMClient):
     def __init__(self) -> None:
         self.calls: List[List[Dict[str, Any]]] = []
 
-    async def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Any]] = None) -> LLMResponse:
+    async def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Any]] = None, **kwargs: Any) -> LLMResponse:
         self.calls.append(messages)
         return LLMResponse(content="ok", stop_reason="end_turn")
 

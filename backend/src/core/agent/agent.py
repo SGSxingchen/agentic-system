@@ -22,6 +22,7 @@ from ..task.context import (
     reset_notification_box,
     set_workspace_root_override,
     reset_workspace_root_override,
+    get_parent_task_id,
 )
 from ..task.notifications import make_user_message
 from ..workspace import WorkspaceNotFoundError, WorkspaceStore
@@ -119,10 +120,15 @@ class Agent:
 
             for iteration in range(self._max_iterations):
                 await self._drain_notifications(notification_box, messages)
+                # A6: 注入 on_retry 闭包推 progress.retry_count（仅当任务上下文存在）
+                on_retry_cb = self._build_on_retry_callback()
                 response = await self.llm.chat(
                     messages,
                     tools=tool_schemas if tool_schemas else None,
+                    on_retry=on_retry_cb,
                 )
+                # 调用成功 → 重置 retry_count（避免前端卡在"重试中"）
+                self._reset_retry_progress()
                 total_usage = self._merge_usage(total_usage, response.usage)
                 if response.elapsed_ms:
                     total_elapsed_ms += response.elapsed_ms
@@ -229,6 +235,7 @@ class Agent:
                 async for event in self.llm.chat_stream(
                     messages,
                     tools=tool_schemas if tool_schemas else None,
+                    on_retry=self._build_on_retry_callback(),
                 ):
                     if event.type == "text" and event.content:
                         full_text += event.content
@@ -240,6 +247,8 @@ class Agent:
                         total_usage = self._merge_usage(total_usage, event.usage)
                         if event.elapsed_ms:
                             total_elapsed_ms += event.elapsed_ms
+                # A6: 流式建立成功 → 重置 retry_count
+                self._reset_retry_progress()
 
                 # LLM 返回最终文本 → 结束
                 if stop_reason != "tool_use":
@@ -480,6 +489,61 @@ class Agent:
         notification_box.clear()
         for payload in pending:
             messages.append(make_user_message(payload))
+
+    # ─── A6: LLM 重试 → progress.retry_count 桥 ─────────────
+
+    def _build_on_retry_callback(self):
+        """构造 on_retry 闭包：把当前重试尝试号写到 TaskRegistry.progress。
+
+        仅当协程上下文中有 ``parent_task_id`` + 全局 ``task_registry`` 可用时返回回调；
+        否则返回 None，让 ``call_with_retry`` 跳过通知（不影响纯单元测试场景）。
+        """
+        try:
+            task_id = get_parent_task_id()
+        except Exception:
+            return None
+        if not task_id:
+            return None
+        try:
+            from api.dependencies import get_task_registry  # 延迟 import 防循环
+        except Exception:
+            return None
+        registry = get_task_registry()
+        if registry is None or task_id not in registry:
+            return None
+        max_retries = int(self._runtime_config.get("max_retries") or 3)
+
+        def _on_retry(attempt: int, exc: BaseException, sleep_for: float) -> None:
+            try:
+                registry.set_progress(
+                    task_id,
+                    retry_count=attempt,
+                    activity=f"重试中 ({attempt}/{max_retries})",
+                )
+            except Exception:  # pragma: no cover — 回调异常吞掉
+                pass
+
+        return _on_retry
+
+    def _reset_retry_progress(self) -> None:
+        """LLM 调用成功后把 retry_count 显式置 0（覆盖语义）。"""
+        try:
+            task_id = get_parent_task_id()
+        except Exception:
+            return
+        if not task_id:
+            return
+        try:
+            from api.dependencies import get_task_registry
+        except Exception:
+            return
+        registry = get_task_registry()
+        if registry is None or task_id not in registry:
+            return
+        # 仅当 retry_count > 0 时才写，避免每轮都打 set_progress 开销
+        state = registry.get(task_id)
+        if state and state.progress.retry_count > 0:
+            registry.set_progress(task_id, retry_count=0)
 
     # ─── Token 预算闸门 ────────────────────────────────────
 

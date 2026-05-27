@@ -36,7 +36,7 @@ class ScriptedLLM(BaseLLMClient):
         self._responses = list(responses)
         self.calls: List[List[Dict[str, Any]]] = []
 
-    async def chat(self, messages, tools=None) -> LLMResponse:
+    async def chat(self, messages, tools=None, **kwargs) -> LLMResponse:
         self.calls.append([dict(m) for m in messages])
         if not self._responses:
             return LLMResponse(content="(exhausted)", stop_reason="end_turn")
