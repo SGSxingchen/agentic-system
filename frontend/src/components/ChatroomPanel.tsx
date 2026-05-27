@@ -19,10 +19,12 @@ import type {
   Attachment,
   Chatroom,
   ChatroomCreatePayload,
+  ChatroomGoalSubgoal,
   ChatroomMessage,
   ChatroomMessageStatus,
   ChatroomSettings,
   ChatroomSummary,
+  ChatroomTodo,
   ChatroomToolCallRecord,
   ChatroomUpdatePayload,
   ManagedWorkspace,
@@ -848,6 +850,8 @@ export function ChatroomPanel() {
                 onToggle={() => setShowBannerDetails((v) => !v)}
               />
 
+              <TodoBanner room={activeRoom} />
+
               <div className="chatroom-transcript" ref={transcriptRef}>
                 {activeRoom.messages.length === 0 ? (
                   <div className="empty-state" style={{ padding: 60 }}>
@@ -1043,6 +1047,9 @@ function ChatroomBanner({
           {room.goal || '（未设定）'}
         </span>
       </div>
+      {room.goal_subgoals && room.goal_subgoals.length > 0 && (
+        <SubgoalList subgoals={room.goal_subgoals} />
+      )}
       {expanded && room.goal_history && room.goal_history.length > 0 && (
         <div className="chatroom-banner__history">
           <div className="chatroom-banner__label">目标历史</div>
@@ -1062,6 +1069,104 @@ function ChatroomBanner({
         </div>
       )}
     </header>
+  )
+}
+
+// ─── 子组件：子目标列表 (Spec 2 §3.4 / Task 17) ──────────
+
+function SubgoalList({ subgoals }: { subgoals: ChatroomGoalSubgoal[] }) {
+  if (!subgoals || subgoals.length === 0) {
+    return null
+  }
+  return (
+    <div className="chatroom-subgoals">
+      <span className="chatroom-banner__label">子目标</span>
+      <ul className="chatroom-subgoals__list">
+        {subgoals.map((sub) => (
+          <li
+            key={sub.id}
+            className={
+              'chatroom-subgoal' +
+              (sub.status === 'done' ? ' chatroom-subgoal--done' : '')
+            }
+          >
+            <span className="chatroom-subgoal__check">
+              {sub.status === 'done' ? '✔' : '☐'}
+            </span>
+            <span className="chatroom-subgoal__content">{sub.content}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// ─── 子组件：TodoBanner (Spec 2 §9.5 / Task 17) ─────────
+
+function TodoBanner({ room }: { room: Chatroom }) {
+  const todos = room.todos || []
+  if (todos.length === 0) {
+    return null
+  }
+  const grouped: Record<string, ChatroomTodo[]> = {
+    pending: [],
+    in_progress: [],
+    completed: [],
+    blocked: [],
+  }
+  for (const todo of todos) {
+    const key = todo.status in grouped ? todo.status : 'pending'
+    grouped[key].push(todo)
+  }
+  const totalActive = grouped.pending.length + grouped.in_progress.length
+  return (
+    <div className="chatroom-todos">
+      <div className="chatroom-todos__header">
+        <span className="chatroom-todos__title">📋 房间任务</span>
+        <span className="chatroom-todos__counts">
+          待完成 {totalActive} · 已完成 {grouped.completed.length}
+          {grouped.blocked.length > 0 ? ` · 阻塞 ${grouped.blocked.length}` : ''}
+        </span>
+      </div>
+      <ul className="chatroom-todos__list">
+        {grouped.pending.concat(grouped.in_progress).map((todo) => (
+          <TodoRow key={todo.id} todo={todo} />
+        ))}
+        {grouped.blocked.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} />
+        ))}
+        {grouped.completed.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function TodoRow({ todo }: { todo: ChatroomTodo }) {
+  const cls =
+    'chatroom-todo chatroom-todo--' + (todo.status || 'pending')
+  return (
+    <li className={cls}>
+      <span className="chatroom-todo__status-badge">
+        {todo.status === 'completed'
+          ? '✔'
+          : todo.status === 'blocked'
+            ? '⚠'
+            : todo.status === 'in_progress'
+              ? '⏵'
+              : '☐'}
+      </span>
+      {todo.assignee && (
+        <span className="chatroom-todo__assignee">{todo.assignee}</span>
+      )}
+      <span className="chatroom-todo__content">{todo.content}</span>
+      {todo.notes && (
+        <span className="chatroom-todo__notes" title={todo.notes}>
+          💭
+        </span>
+      )}
+    </li>
   )
 }
 

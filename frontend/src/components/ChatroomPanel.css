@@ -959,3 +959,121 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ─── Spec 2 §9.5 / Task 17：TodoBanner + Subgoal 列表 ─── */
+
+.chatroom-subgoals {
+  margin-top: 6px;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--color-border);
+}
+
+.chatroom-subgoals__list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chatroom-subgoal {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+}
+
+.chatroom-subgoal__check {
+  width: 14px;
+  display: inline-block;
+  text-align: center;
+}
+
+.chatroom-subgoal--done {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.chatroom-todos {
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-2, var(--color-bg-elevated, #f7f9fb));
+}
+
+.chatroom-todos__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+
+.chatroom-todos__title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.chatroom-todos__counts {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.chatroom-todos__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chatroom-todo {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 2px 0;
+}
+
+.chatroom-todo--completed {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.chatroom-todo--blocked {
+  color: var(--color-warning, #c97600);
+}
+
+.chatroom-todo--in_progress {
+  color: var(--color-primary-dark, #2d5fa6);
+}
+
+.chatroom-todo__status-badge {
+  width: 14px;
+  display: inline-block;
+  text-align: center;
+}
+
+.chatroom-todo__assignee {
+  display: inline-block;
+  background: var(--color-primary-light, #eaf2ff);
+  color: var(--color-primary-dark, #2d5fa6);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  margin-right: 2px;
+}
+
+.chatroom-todo__content {
+  flex: 1;
+  word-break: break-word;
+}
+
+.chatroom-todo__notes {
+  cursor: help;
+  color: var(--color-warning, #c97600);
+}
