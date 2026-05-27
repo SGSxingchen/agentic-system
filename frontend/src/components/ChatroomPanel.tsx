@@ -13,6 +13,7 @@ import { useAppStore } from '../store/appStore'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { Select } from './Select'
 import { getSettingLabel } from './chatroomSettingsLabels'
+import { senderToDisplay, agentMetaFromList, type AgentMetaMap } from './agentBadge'
 import type {
   AgentInfo,
   Chatroom,
@@ -46,13 +47,6 @@ function hashColor(name: string): string {
   }
   const idx = Math.abs(hash) % AGENT_HASH_COLORS.length
   return AGENT_HASH_COLORS[idx]
-}
-
-function senderDisplayName(sender: string): string {
-  if (sender === 'user') return '用户'
-  if (sender === 'system') return '系统'
-  if (sender.startsWith('agent:')) return sender.slice(6) || 'agent'
-  return sender || 'unknown'
 }
 
 function senderIsAgent(sender: string): boolean {
@@ -529,6 +523,11 @@ export function ChatroomPanel() {
     return names
   }, [activeRoom])
 
+  const agentMeta: AgentMetaMap = useMemo(
+    () => agentMetaFromList(agents),
+    [agents],
+  )
+
   const settings = activeRoom?.settings || DEFAULT_SETTINGS
 
   // ─── 输入框：@ 提及浮窗 ─────────────────────────────────
@@ -780,6 +779,7 @@ export function ChatroomPanel() {
                       key={message.id}
                       message={message}
                       onRetry={handleRetry}
+                      agentMeta={agentMeta}
                     />
                   ))
                 )}
@@ -978,15 +978,19 @@ function ChatroomBanner({
 function ChatroomMessageCard({
   message,
   onRetry,
+  agentMeta,
 }: {
   message: ChatroomMessage
   onRetry: (m: ChatroomMessage) => void
+  agentMeta: AgentMetaMap
 }) {
   const [expanded, setExpanded] = useState(false)
   const isAgent = senderIsAgent(message.sender)
   const isUser = message.sender === 'user'
   const isSystem = message.sender === 'system'
-  const displayName = senderDisplayName(message.sender)
+  const senderInfo = senderToDisplay(message.sender, agentMeta)
+  const displayName = senderInfo.name
+  const modelBadge = senderInfo.model
   const color = isAgent || (!isUser && !isSystem) ? hashColor(displayName) : undefined
   const meta: any = message.meta || {}
   const elapsedMs = meta.elapsed_ms
@@ -1020,6 +1024,11 @@ function ChatroomMessageCard({
         </div>
         <div className="chatroom-msg__head-text">
           <span className="chatroom-msg__name">{displayName}</span>
+          {modelBadge && (
+            <small className="agent-model-badge" title={`LLM 模型：${modelBadge}`}>
+              {modelBadge}
+            </small>
+          )}
           {statusLabel(message.status) && (
             <span
               className={`chatroom-msg__badge chatroom-msg__badge--${message.status}`}

@@ -10,6 +10,7 @@ import type {
   ChatSessionSummary,
 } from '../types'
 import { Select } from './Select'
+import { agentMetaFromList } from './agentBadge'
 import './ChatPanel.css'
 
 const SESSIONS_COLLAPSED_KEY = 'chat.sessionsCollapsed'
@@ -356,6 +357,8 @@ export function ChatPanel() {
     return workspace?.name || activeSession.workspace_id
   }, [activeSession, state.workspaces])
 
+  const agentMeta = useMemo(() => agentMetaFromList(agents), [agents])
+
   return (
     <div className="page chat-page">
       <div className="page__header">
@@ -565,6 +568,19 @@ export function ChatPanel() {
                         ? message.agent_name || 'assistant'
                         : '系统'}
                     </span>
+                    {message.type === 'assistant' &&
+                      (() => {
+                        const name = message.agent_name || 'assistant'
+                        const model = agentMeta[name]?.model
+                        return model ? (
+                          <small
+                            className="agent-model-badge"
+                            title={`LLM 模型：${model}`}
+                          >
+                            {model}
+                          </small>
+                        ) : null
+                      })()}
                     <span className="chat-msg__time">
                       {formatTime(message.timestamp)}
                     </span>
@@ -592,6 +608,14 @@ export function ChatPanel() {
               <div className="chat-msg chat-msg--assistant chat-msg--loading">
                 <div className="chat-msg__head">
                   <span className="chat-msg__role">{agentName}</span>
+                  {agentMeta[agentName]?.model && (
+                    <small
+                      className="agent-model-badge"
+                      title={`LLM 模型：${agentMeta[agentName]?.model}`}
+                    >
+                      {agentMeta[agentName]?.model}
+                    </small>
+                  )}
                   <span className="chat-msg__time">…</span>
                 </div>
                 <div className="chat-msg__body">
