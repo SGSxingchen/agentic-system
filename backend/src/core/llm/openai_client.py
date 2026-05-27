@@ -2,7 +2,7 @@
 import json
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from .base import BaseLLMClient, LLMResponse, LLMStreamEvent, ToolCall
@@ -45,6 +45,9 @@ class OpenAIClient(BaseLLMClient):
         self.model = model
         self.base_url = normalize_openai_base_url(base_url)
         self.generation_config = generation_config or {}
+        # A6: LLM 调用重试配置（来自 system.yaml.llm.max_retries / retry_initial_delay）
+        self._max_retries = int(self.generation_config.get("max_retries", 3) or 0)
+        self._retry_initial_delay = float(self.generation_config.get("retry_initial_delay", 1.0))
         try:
             from openai import AsyncOpenAI
 
@@ -59,6 +62,7 @@ class OpenAIClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> LLMResponse:
         """发送聊天消息，支持 function calling"""
         kwargs: Dict[str, Any] = {
@@ -71,8 +75,15 @@ class OpenAIClient(BaseLLMClient):
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
 
+        from .retry import call_with_retry  # 局部 import 防循环
+
         start = time.perf_counter()
-        response = await self._create_with_compat_retry(kwargs)
+        response = await call_with_retry(
+            lambda: self._create_with_compat_retry(kwargs),
+            max_retries=self._max_retries,
+            initial_delay=self._retry_initial_delay,
+            on_retry=on_retry,
+        )
         parsed = self._parse_response(response)
         parsed.elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
         return parsed
@@ -148,8 +159,13 @@ class OpenAIClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> AsyncIterator[LLMStreamEvent]:
-        """流式聊天 — 逐步 yield 文本片段和工具调用"""
+        """流式聊天 — 逐步 yield 文本片段和工具调用
+
+        ``on_retry`` 仅作用于建立流前的瞬态错误。流中途断开不重试
+        （spec §R2: 避免重复 token；调用方需提示用户手动重试）。
+        """
         kwargs: Dict[str, Any] = {
             "model": self.model,
             "messages": self._convert_messages(messages),
@@ -160,13 +176,24 @@ class OpenAIClient(BaseLLMClient):
             kwargs["tools"] = self._convert_tools(tools)
 
         kwargs["stream_options"] = {"include_usage": True}
+
+        from .retry import call_with_retry  # 局部 import 防循环
+
+        async def _open_stream():
+            try:
+                return await self._create_with_compat_retry(kwargs)
+            except Exception:
+                # 部分 OpenAI 兼容网关不支持 stream_options，回退一次
+                kwargs.pop("stream_options", None)
+                return await self._create_with_compat_retry(kwargs)
+
         start = time.perf_counter()
-        try:
-            stream = await self._create_with_compat_retry(kwargs)
-        except Exception:
-            # Some OpenAI-compatible gateways do not support stream_options.
-            kwargs.pop("stream_options", None)
-            stream = await self._create_with_compat_retry(kwargs)
+        stream = await call_with_retry(
+            _open_stream,
+            max_retries=self._max_retries,
+            initial_delay=self._retry_initial_delay,
+            on_retry=on_retry,
+        )
 
         # 累积工具调用片段
         tool_call_buffers: Dict[int, Dict[str, Any]] = {}
