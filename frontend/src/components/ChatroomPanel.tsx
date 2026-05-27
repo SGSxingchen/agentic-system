@@ -1092,7 +1092,14 @@ function ChatroomMessageCard({
       {message.status === 'failed' && (
         <div className="chatroom-msg__retry">
           <span className="chatroom-msg__error">
-            {(meta.error as string) || '调用失败'}
+            {/* A6/R2: 流式中断专属文案 — 区别于普通调用失败，告诉用户点击重试 */}
+            {(() => {
+              const err = (meta.error as string) || ''
+              if (/stream/i.test(err)) {
+                return '流式中断，请点击重试'
+              }
+              return err || '调用失败'
+            })()}
           </span>
           {isAgent && (
             <button type="button" className="btn-xs" onClick={() => onRetry(message)}>
