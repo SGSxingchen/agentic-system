@@ -237,6 +237,67 @@ def _attach_workspace(payload: Dict[str, Any], workspace_id: Optional[str]) -> N
     payload["_trusted_workspace_root"] = workspace.root_path
 
 
+def _attach_chatroom_attachment_context(
+    payload: Dict[str, Any], room_snapshot: Dict[str, Any]
+) -> None:
+    """B1 Plan 3 P3 Task 25 — chat room 非图片附件挂入工作区 + system reminder.
+
+    Picks the most recent user-authored message that carries ``attachments``
+    (in case earlier @-mentions trail the user one), materializes each
+    non-image file under ``<workspace_root>/.attachments/<id>/<name>`` and
+    drops the resulting ``<attached_files>`` block into ``attachment_context``
+    on the payload. ``Agent.run`` will append it to the system prompt.
+
+    No-op when the workspace root or store cannot be resolved — failure here
+    must not block the speak task.
+    """
+
+    workspace_root = payload.get("_trusted_workspace_root")
+    if not workspace_root:
+        return
+
+    messages = room_snapshot.get("messages") or []
+    attachment_ids: list[str] = []
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        if str(msg.get("sender") or "").strip() != "user":
+            continue
+        ids = msg.get("attachments")
+        if isinstance(ids, list) and ids:
+            attachment_ids = [str(i) for i in ids if i]
+            break
+
+    if not attachment_ids:
+        return
+
+    try:
+        from core.attachment_message_context import (
+            build_attachment_reminder,
+            get_default_attachment_store,
+        )
+    except Exception:  # pragma: no cover — defensive
+        return
+
+    store = get_default_attachment_store()
+    if store is None:
+        return
+    try:
+        block = build_attachment_reminder(
+            attachment_ids=attachment_ids,
+            workspace_root=workspace_root,
+            store=store,
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("attachment reminder build failed: %s", exc)
+        return
+    if block:
+        existing = str(payload.get("attachment_context") or "")
+        payload["attachment_context"] = (
+            f"{existing}\n\n{block}".strip() if existing else block
+        )
+
+
 def _maybe_set_workspace_root(
     room_id: str,
     *,
@@ -664,6 +725,7 @@ async def _run_speaking_task(
         payload["output_format"] = "text"
 
         _attach_workspace(payload, room_snapshot.get("workspace_id"))
+        _attach_chatroom_attachment_context(payload, room_snapshot)
 
         stream_fn = getattr(cap, "execute_stream", None)
         if stream_fn is None:

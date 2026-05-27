@@ -113,7 +113,15 @@ class Agent:
         workspace_token = self._maybe_set_workspace_root(input_data)
         try:
             messages = self._build_messages(input_data)
-            tool_schemas = [t.get_schema() for t in self._tools]
+            # Spec 2 §10.2 / Task 14 — 调用方可通过 input_data['_excluded_tools']
+            # 临时屏蔽部分工具（不修改 self._tools，仅影响本次 run）。
+            excluded = set(input_data.get("_excluded_tools") or [])
+            active_tools = (
+                [t for t in self._tools if t.name not in excluded]
+                if excluded
+                else list(self._tools)
+            )
+            tool_schemas = [t.get_schema() for t in active_tools]
             total_usage: Dict[str, int] = {}
             total_elapsed_ms = 0.0
             nudged = False
@@ -219,7 +227,14 @@ class Agent:
         workspace_token = self._maybe_set_workspace_root(input_data)
         try:
             messages = self._build_messages(input_data)
-            tool_schemas = [t.get_schema() for t in self._tools]
+            # Spec 2 §10.2 / Task 14 — 通过 input_data['_excluded_tools'] 临时屏蔽工具
+            excluded = set(input_data.get("_excluded_tools") or [])
+            active_tools = (
+                [t for t in self._tools if t.name not in excluded]
+                if excluded
+                else list(self._tools)
+            )
+            tool_schemas = [t.get_schema() for t in active_tools]
             total_usage: Dict[str, int] = {}
             total_elapsed_ms = 0.0
             nudged = False
@@ -365,6 +380,13 @@ class Agent:
         if memory_context:
             system_prompt = format_untrusted_memory_context(system_prompt, memory_context)
 
+        # B1 Plan 3 P3 Task 25 — 附件 system reminder。非图片附件由 routes 层
+        # 预先建好工作区软链/拷贝并拼好 <attached_files> 块；这里直接追加到
+        # system prompt 末尾，让 Agent 自助用 read_file 读取。
+        attachment_context = str(input_data.get("attachment_context") or "").strip()
+        if attachment_context:
+            system_prompt = f"{system_prompt}\n\n{attachment_context}"
+
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -419,7 +441,7 @@ class Agent:
         input_data = {
             key: value
             for key, value in input_data.items()
-            if key not in {"messages", "history", "memory_context", "workspace_root", "_trusted_workspace_root"}
+            if key not in {"messages", "history", "memory_context", "attachment_context", "workspace_root", "_trusted_workspace_root"}
         }
         if not input_data:
             return ""

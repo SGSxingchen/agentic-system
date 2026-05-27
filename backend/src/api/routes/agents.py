@@ -1029,6 +1029,61 @@ def _extract_agent_response_text(result: Any) -> str:
     return str(result)
 
 
+def _attach_attachment_context(payload: dict[str, Any]) -> None:
+    """Materialize non-image attachments into the workspace + inject reminder.
+
+    B1 Plan 3 P3 Task 25 — when the request payload carries ``attachments``
+    (list of ids) and a ``_trusted_workspace_root`` was resolved by
+    ``_attach_trusted_workspace_context``, this helper:
+
+    * Imports the AttachmentStore singleton from the routes module.
+    * Calls ``build_attachment_reminder`` which links files into
+      ``<workspace_root>/.attachments/<id>/<filename>`` and returns an
+      ``<attached_files>`` block referencing each file's *workspace path*.
+    * Stores the block under ``payload["attachment_context"]`` — Agent.run
+      appends it to the system prompt (see ``_build_messages``).
+
+    Image attachments are skipped here; they belong to the LLM vision payload
+    path (Task 26).
+
+    Failures are non-fatal: a missing store or invalid workspace simply skips
+    the reminder, leaving the chat turn untouched.
+    """
+
+    raw_ids = payload.get("attachments")
+    if not raw_ids:
+        return
+    workspace_root = payload.get("_trusted_workspace_root")
+    if not workspace_root:
+        return
+
+    try:
+        from core.attachment_message_context import (
+            build_attachment_reminder,
+            get_default_attachment_store,
+        )
+    except Exception:  # pragma: no cover — defensive
+        return
+
+    store = get_default_attachment_store()
+    if store is None:
+        return
+
+    try:
+        block = build_attachment_reminder(
+            attachment_ids=[str(i) for i in raw_ids if i],
+            workspace_root=workspace_root,
+            store=store,
+        )
+    except Exception:  # pragma: no cover — defensive
+        return
+    if block:
+        existing = str(payload.get("attachment_context") or "")
+        payload["attachment_context"] = (
+            f"{existing}\n\n{block}".strip() if existing else block
+        )
+
+
 @router.post("/{name}/invoke", response_model=APIResponse)
 async def invoke_agent(name: str, req: AgentInvokeRequest):
     """直接调用某个 Agent（通过 CapabilityRegistry）"""
@@ -1047,6 +1102,11 @@ async def invoke_agent(name: str, req: AgentInvokeRequest):
             memory_context, memories_used = await build_memory_context(message)
             if memory_context:
                 payload["memory_context"] = memory_context
+
+        # B1 Plan 3 P3 Task 25 — 把非图片附件挂入工作区并拼 system reminder。
+        # 图片走 vision payload（Task 26），不在这里处理。
+        _attach_attachment_context(payload)
+
         result = await cap_registry.execute(name, **payload)
         if message:
             response_text = _extract_agent_response_text(result)
