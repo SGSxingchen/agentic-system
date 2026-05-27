@@ -59,6 +59,7 @@ from .dependencies import (
     set_reload_agent_fn,
     set_task_registry,
 )
+from .middleware import AuthMiddleware
 from .routes import (
     agents_router,
     chat_sessions_router,
@@ -599,6 +600,11 @@ app = FastAPI(
     version=APP_CONFIG.get("system", {}).get("version", "0.3.0"),
     lifespan=lifespan,
 )
+
+# A11: 鉴权中间件先注册 → 在请求链上位于 CORS 之内（即 CORS 比 Auth 早执行）。
+# 这样 OPTIONS 预检由 CORS 直接放行；当 Auth 返回 401/429 时，CORS 也能给响应
+# 加上 Access-Control-Allow-Origin 头，前端 fetch 才不会被浏览器丢成 net error。
+app.add_middleware(AuthMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
