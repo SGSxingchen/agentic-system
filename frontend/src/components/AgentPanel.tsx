@@ -126,6 +126,10 @@ export function AgentPanel() {
   const [mcpImportFormat, setMcpImportFormat] = useState<'auto' | 'json' | 'yaml'>('auto')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // A8 — 重新装载动态能力 + Agent 工具挂载（POST /api/evolution/reload）
+  const [reloading, setReloading] = useState<boolean>(false)
+  const [lastReload, setLastReload] = useState<string | null>(null)
+  const [reloadError, setReloadError] = useState<string>('')
 
   const flashNotice = (message: string) => {
     setNotice(message)
@@ -142,6 +146,29 @@ export function AgentPanel() {
       setError(res.message || '加载智能体失败')
     }
   }, [])
+
+  // A8 — 点击"重新装载"按钮：刷新 capabilities.yaml 中的动态能力，并重建 Agent 工具栈
+  const handleReload = useCallback(async () => {
+    setReloading(true)
+    setReloadError('')
+    try {
+      const res = await api.reloadEvolutionExtensions()
+      if (res.status === 'ok') {
+        const ts = res.data?.reloaded_at
+          ? String(res.data.reloaded_at)
+          : new Date().toISOString()
+        setLastReload(ts)
+        flashNotice(res.message || '已重新装载')
+        await loadAgents()
+      } else {
+        setReloadError(res.message || '装载失败')
+      }
+    } catch (err) {
+      setReloadError(err instanceof Error ? err.message : '装载失败')
+    } finally {
+      setReloading(false)
+    }
+  }, [loadAgents])
 
   useEffect(() => {
     loadAgents()
@@ -691,6 +718,27 @@ export function AgentPanel() {
           </div>
         </div>
         <div className="page__actions">
+          <div className="agent-panel__reload">
+            <button
+              type="button"
+              className="agent-panel__reload-btn"
+              onClick={handleReload}
+              disabled={reloading}
+              title="重新加载动态能力 + Agent 工具挂载"
+            >
+              {reloading ? '装载中…' : '重新装载'}
+            </button>
+            {lastReload && !reloading && (
+              <small className="agent-panel__reload-meta text-muted">
+                上次装载：{new Date(lastReload).toLocaleString()}
+              </small>
+            )}
+            {reloadError && (
+              <small className="agent-panel__reload-error">
+                装载失败：{reloadError}
+              </small>
+            )}
+          </div>
           <button type="button" onClick={loadAgents}>
             刷新
           </button>

@@ -353,6 +353,24 @@ export async function deleteAgent(name: string): Promise<APIResponse<void>> {
   return response
 }
 
+// A8 — 重新装载动态能力 + 刷新 Agent 工具挂载（POST /api/evolution/reload）
+export interface EvolutionReloadResult {
+  loaded_dynamic_tools?: number
+  prompt_overrides?: number
+  reloaded_at?: string
+  [key: string]: unknown
+}
+
+export async function reloadEvolutionExtensions(): Promise<
+  APIResponse<EvolutionReloadResult>
+> {
+  const response = await post<EvolutionReloadResult>('/api/evolution/reload')
+  if (response.status === 'ok') {
+    invalidateGetCache('/api/agents')
+  }
+  return response
+}
+
 // ===== 能力 API =====
 
 export async function listCapabilities(): Promise<APIResponse<{ name: string; description: string; parameters?: any }[]>> {
