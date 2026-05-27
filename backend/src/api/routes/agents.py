@@ -32,6 +32,7 @@ from ..schemas import (
     AgentWorkspaceBinding,
 )
 from ..dependencies import get_agent_registry, get_capability_registry, reload_agent_fn
+from core.capability.risk import AGENT_MANAGEMENT_TOOLS, HIGH_RISK_TOOLS
 from core.chat_history import ChatHistoryStore
 from core.config import load_single_yaml, save_yaml_config
 from core.persona import BASE_PERSONA_ID, DEFAULT_BINDABLE_AGENT_ROLES, PersonaBindingService
@@ -62,19 +63,6 @@ PROTECTED_AGENT_NAMES = {
     "persona_evolution",
 }
 MASKED_SECRET_VALUES = {"********", "••••••••"}
-HIGH_RISK_TOOLS = {
-    "bash",
-    "write_file",
-    "create_agent_config",
-    "create_dynamic_tool_config",
-    "dispatch_agent",
-}
-AGENT_MANAGEMENT_TOOLS = {
-    "read_agent_config",
-    "validate_agent_config_patch",
-    "propose_agent_config_patch",
-    "apply_agent_config_patch",
-}
 
 
 class AgentPersonaBindRequest(BaseModel):

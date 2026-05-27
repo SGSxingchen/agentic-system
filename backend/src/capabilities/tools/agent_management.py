@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.capability.risk import AGENT_MANAGEMENT_TOOLS, HIGH_RISK_TOOLS
 from core.config import load_single_yaml, save_yaml_config
 from core.mcp import (
     build_mcp_capability_status,
@@ -36,19 +37,6 @@ ALLOWED_AGENT_FIELDS = {
     "mcp_servers",
     "default_workspace_id",
     "default_workspace_root",
-}
-HIGH_RISK_TOOLS = {
-    "bash",
-    "write_file",
-    "create_agent_config",
-    "create_dynamic_tool_config",
-    "dispatch_agent",
-}
-AGENT_MANAGEMENT_TOOLS = {
-    "read_agent_config",
-    "validate_agent_config_patch",
-    "propose_agent_config_patch",
-    "apply_agent_config_patch",
 }
 OUTPUT_FORMATS = {"text", "json"}
 MASKED_API_KEY_VALUES = {"********", "••••••••", "**********", "***", "masked", "<masked>"}

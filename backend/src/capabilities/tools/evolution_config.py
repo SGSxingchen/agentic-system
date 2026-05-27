@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.capability.risk import AGENT_MANAGEMENT_TOOLS, HIGH_RISK_TOOLS
 from core.config import load_single_yaml, save_yaml_config
 from core.prompts import get_tool_description
 
@@ -23,19 +24,6 @@ PROTECTED_AGENT_NAMES = {
     "agent_creator",
     "agent_manager",
     "persona_evolution",
-}
-HIGH_RISK_TOOLS = {
-    "bash",
-    "write_file",
-    "create_agent_config",
-    "create_dynamic_tool_config",
-    "dispatch_agent",
-}
-AGENT_MANAGEMENT_TOOLS = {
-    "read_agent_config",
-    "validate_agent_config_patch",
-    "propose_agent_config_patch",
-    "apply_agent_config_patch",
 }
 
 
