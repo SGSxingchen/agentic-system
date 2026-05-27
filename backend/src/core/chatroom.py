@@ -45,6 +45,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "max_members": 20,
     "allow_agent_invite": True,
     "auto_memory": True,
+    "allow_subagent_dispatch": False,
 }
 
 
