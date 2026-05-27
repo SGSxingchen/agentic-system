@@ -12,6 +12,7 @@ import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { Select } from './Select'
+import { AttachmentList } from './AttachmentChip'
 import { getSettingLabel } from './chatroomSettingsLabels'
 import { senderToDisplay, agentMetaFromList, type AgentMetaMap } from './agentBadge'
 import type {
@@ -1376,6 +1377,9 @@ function ChatroomMessageCard({
           </span>
         </div>
       ) : null}
+
+      {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}
+      <AttachmentList ids={message.attachments} />
 
       {message.status === 'failed' && (
         <div className="chatroom-msg__retry">

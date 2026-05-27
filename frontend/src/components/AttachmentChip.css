@@ -1,0 +1,65 @@
+/* B1 Plan 3 P3 Task 27 — 消息卡片附件展示组件 (AttachmentChip)。
+   样式与 ChatPanel 撰写区域 chip (.chat-main__composer-chip) 保持视觉一致，
+   但用独立类名以便在 ChatPanel / ChatroomPanel 复用。 */
+
+.attachment-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle, #ddd);
+  border-radius: 12px;
+  font-size: 12px;
+  background: var(--surface-2, #f6f6f7);
+  color: inherit;
+  text-decoration: none;
+  max-width: 240px;
+}
+
+.attachment-chip:hover {
+  background: var(--surface-3, #ececec);
+}
+
+.attachment-chip--image {
+  padding: 2px;
+  border-radius: 8px;
+  max-width: none;
+}
+
+.attachment-chip__thumb {
+  display: block;
+  max-width: 160px;
+  max-height: 120px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.attachment-chip__icon {
+  font-size: 14px;
+}
+
+.attachment-chip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.attachment-chip__size {
+  color: var(--text-muted, #888);
+  font-variant-numeric: tabular-nums;
+}
+
+.attachment-chip--loading,
+.attachment-chip--missing {
+  color: var(--text-muted, #888);
+  border-style: dashed;
+  cursor: default;
+}

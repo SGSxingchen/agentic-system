@@ -11,6 +11,7 @@ import type {
   ChatSessionSummary,
 } from '../types'
 import { Select } from './Select'
+import { AttachmentList } from './AttachmentChip'
 import { agentMetaFromList } from './agentBadge'
 import './ChatPanel.css'
 
@@ -682,6 +683,8 @@ export function ChatPanel() {
                     )}
                   </div>
                   <MessageBody content={message.content} />
+                  {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}
+                  <AttachmentList ids={message.attachments} />
                 </div>
               ))
             )}
