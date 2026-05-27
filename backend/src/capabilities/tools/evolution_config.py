@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.capability.base import CapabilityBase, CapabilitySchema
-from core.capability.risk import AGENT_MANAGEMENT_TOOLS, HIGH_RISK_TOOLS
-from core.config import load_single_yaml, save_yaml_config
+from core.capability.risk import AGENT_MANAGEMENT_TOOLS
+from core.config import SystemConfig, load_single_yaml, load_system_config, save_yaml_config
 from core.prompts import get_tool_description
+
+
+logger = logging.getLogger(__name__)
+
+
+def _get_system_config() -> SystemConfig:
+    """Indirection used by tests to monkeypatch system config."""
+
+    return load_system_config()
 
 
 NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -316,15 +326,23 @@ class CreateAgentConfigCapability(CapabilityBase):
                     + ", ".join(management_tools)
                 )
             }
-        high_risk_tools = sorted(set(tools) & HIGH_RISK_TOOLS)
-        if high_risk_tools:
-            return {
-                "error": (
-                    "create_agent_config cannot grant high-risk tools; use the "
-                    "controlled agent_manager review path: "
-                    + ", ".join(high_risk_tools)
-                )
-            }
+        # A4: HIGH_RISK_TOOLS 默认放开；只有 system.yaml 显式列入
+        # ``agent_creation.forbidden_tools`` 的工具才会被锁。
+        try:
+            forbidden = list(_get_system_config().agent_creation.forbidden_tools or [])
+        except Exception:  # pragma: no cover - defensive: bad config shouldn't deny ops
+            forbidden = []
+        forbidden_set = {item for item in forbidden if isinstance(item, str)}
+        if forbidden_set:
+            blocked = sorted(set(tools) & forbidden_set)
+            if blocked:
+                return {
+                    "error": (
+                        "以下工具被 system.yaml agent_creation.forbidden_tools 屏蔽："
+                        + ", ".join(blocked)
+                    ),
+                    "forbidden_tools": sorted(forbidden_set),
+                }
 
         data = _load_yaml_list("agents.yaml", "agents")
         agents: List[Dict[str, Any]] = data["agents"]
@@ -378,6 +396,16 @@ class CreateAgentConfigCapability(CapabilityBase):
 
         data["agents"] = agents
         _save_yaml("agents.yaml", data)
+
+        logger.info(
+            "config_change",
+            extra={
+                "action": "create_agent",
+                "agent": name,
+                "tools": list(tools),
+                "attached_to_assistant": assistant_attached,
+            },
+        )
 
         return {
             "success": True,

@@ -32,7 +32,7 @@ from ..schemas import (
     AgentWorkspaceBinding,
 )
 from ..dependencies import get_agent_registry, get_capability_registry, reload_agent_fn
-from core.capability.risk import AGENT_MANAGEMENT_TOOLS, HIGH_RISK_TOOLS
+from core.capability.risk import AGENT_MANAGEMENT_TOOLS
 from core.chat_history import ChatHistoryStore
 from core.config import load_single_yaml, save_yaml_config
 from core.persona import BASE_PERSONA_ID, DEFAULT_BINDABLE_AGENT_ROLES, PersonaBindingService
@@ -438,12 +438,25 @@ def _validate_tools_for_write(
     if agent_name != "agent_manager" and tool_set & AGENT_MANAGEMENT_TOOLS:
         blocked = ", ".join(sorted(tool_set & AGENT_MANAGEMENT_TOOLS))
         return f"Agent 管理工具只能挂载到 agent_manager: {blocked}"
-    if creating:
-        blocked = sorted(tool_set & HIGH_RISK_TOOLS)
-    else:
-        blocked = sorted((tool_set - set(existing_tools or [])) & HIGH_RISK_TOOLS)
-    if blocked:
-        return "普通 Agent API 不能新增高风险工具，请通过 agent_manager 审批: " + ", ".join(blocked)
+    # A4: HIGH_RISK_TOOLS 默认放开。仅 system.yaml ``agent_creation.forbidden_tools``
+    # 显式列出的工具会被拒绝。
+    try:
+        from core.config import load_system_config
+
+        forbidden = list(load_system_config().agent_creation.forbidden_tools or [])
+    except Exception:  # pragma: no cover - defensive
+        forbidden = []
+    forbidden_set = {item for item in forbidden if isinstance(item, str)}
+    if forbidden_set:
+        if creating:
+            blocked = sorted(tool_set & forbidden_set)
+        else:
+            blocked = sorted((tool_set - set(existing_tools or [])) & forbidden_set)
+        if blocked:
+            return (
+                "以下工具被 system.yaml agent_creation.forbidden_tools 屏蔽："
+                + ", ".join(blocked)
+            )
     return None
 
 

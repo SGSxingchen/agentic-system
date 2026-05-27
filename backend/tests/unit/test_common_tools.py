@@ -283,7 +283,8 @@ class TestEvolutionConfigCapabilities:
         assert agents["agents"] == [{"name": "researcher", "tools": ["web_fetch"]}]
 
     @pytest.mark.asyncio
-    async def test_create_agent_config_rejects_high_risk_and_management_tools(self, tmp_path, monkeypatch):
+    async def test_create_agent_config_blocks_management_but_allows_high_risk(self, tmp_path, monkeypatch):
+        """Plan Task 6 / A4: HIGH_RISK_TOOLS 默认放开；management 工具仍只限 agent_manager。"""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         monkeypatch.setenv("AGENTIC_CONFIG_DIR", str(config_dir))
@@ -306,10 +307,15 @@ class TestEvolutionConfigCapabilities:
             tools=["read_agent_config"],
         )
 
-        assert "high-risk" in high_risk["error"]
+        # bash 默认允许（A4：放开 HIGH_RISK_TOOLS）
+        assert high_risk.get("success") is True, high_risk
+        assert "bash" in high_risk["agent"]["tools"]
+        # 但 management 工具仍然只允许挂在 agent_manager
         assert "Agent management tools" in management["error"]
         agents = yaml.safe_load((config_dir / "agents.yaml").read_text())
-        assert [item["name"] for item in agents["agents"]] == ["assistant"]
+        names = sorted(item["name"] for item in agents["agents"])
+        assert "ops_agent" in names
+        assert "config_agent" not in names
 
 
 class TestAgentManagementCapabilities:

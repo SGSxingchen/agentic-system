@@ -595,7 +595,32 @@ async def test_agent_mcp_import_rejects_direct_agent_manager_apply(monkeypatch):
     assert saved is False
 
 
-async def test_agent_create_rejects_high_risk_tools_before_saving(monkeypatch):
+async def test_agent_create_allows_bash_with_default_forbidden_tools_empty(monkeypatch):
+    """Plan Task 6 / A4: HIGH_RISK_TOOLS 默认放开；bash 可挂载，写入会被尝试。"""
+    from api.routes import agents as agent_routes
+    from api.schemas import AgentCreateRequest
+
+    saved = False
+
+    async def record_save(*args, **kwargs):
+        nonlocal saved
+        saved = True
+
+    monkeypatch.setattr(agent_routes, "load_single_yaml", lambda name: {"agents": []})
+    monkeypatch.setattr(agent_routes, "_save_config_and_reload", record_save)
+
+    response = await agent_routes.create_agent(
+        AgentCreateRequest(name="unsafe_agent", tools=["bash"])
+    )
+
+    assert response.status == "ok", response
+    assert saved is True
+
+
+async def test_agent_create_rejects_when_forbidden_tools_lists_bash(monkeypatch):
+    """A4 escape hatch：system.yaml 列入 forbidden_tools 后仍能拒绝。"""
+    from types import SimpleNamespace
+
     from api.routes import agents as agent_routes
     from api.schemas import AgentCreateRequest
 
@@ -607,6 +632,12 @@ async def test_agent_create_rejects_high_risk_tools_before_saving(monkeypatch):
 
     monkeypatch.setattr(agent_routes, "load_single_yaml", lambda name: {"agents": []})
     monkeypatch.setattr(agent_routes, "_save_config_and_reload", fail_if_saved)
+    monkeypatch.setattr(
+        "core.config.load_system_config",
+        lambda: SimpleNamespace(
+            agent_creation=SimpleNamespace(forbidden_tools=["bash"])
+        ),
+    )
 
     response = await agent_routes.create_agent(
         AgentCreateRequest(name="unsafe_agent", tools=["bash"])
