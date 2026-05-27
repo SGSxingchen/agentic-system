@@ -555,6 +555,85 @@ async def test_run_speaking_task_skips_memory_when_auto_memory_false(
     assert "memory_context" not in cap.calls[0]
 
 
+@pytest.mark.asyncio
+async def test_run_speaking_task_schedules_reflection_on_done(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    cap = StreamingEchoCapability("assistant")
+    cap_registry.register_native(cap)
+
+    async def fake_build(query, *args, **kwargs):
+        return ("", 0)
+
+    monkeypatch.setattr("api.websocket.handlers.build_memory_context", fake_build)
+
+    calls: list[dict] = []
+
+    def spy_reflect(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        "api.websocket.handlers.schedule_memory_reflection", spy_reflect
+    )
+
+    room = _make_room(store, members=["assistant"])
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "assistant", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    assert len(calls) == 1
+    assert calls[0]["session_id"] == f"chatroom:{room['id']}"
+    assert calls[0]["source"] == "chatroom:assistant"
+    assert calls[0]["assistant_text"]
+
+
+@pytest.mark.asyncio
+async def test_run_speaking_task_skips_reflection_when_auto_memory_false(
+    store: ChatroomStore,
+    cap_registry: CapabilityRegistry,
+    task_registry: TaskRegistry,
+    monkeypatch,
+):
+    cap = StreamingEchoCapability("assistant")
+    cap_registry.register_native(cap)
+
+    async def fake_build(query, *args, **kwargs):
+        return ("", 0)
+
+    monkeypatch.setattr("api.websocket.handlers.build_memory_context", fake_build)
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "api.websocket.handlers.schedule_memory_reflection",
+        lambda **kw: calls.append(kw) or None,
+    )
+
+    room = _make_room(
+        store,
+        members=["assistant"],
+        settings={"auto_memory": False},
+    )
+    store.add_message(
+        room["id"], {"sender": "user", "content": "hi", "status": "done"}
+    )
+
+    ticket = dispatch_speaking_task(room["id"], "assistant", store=store)
+    background = task_registry._asyncio_tasks.get(ticket["task_id"])
+    assert background is not None
+    await asyncio.wait_for(background, timeout=2.0)
+
+    assert calls == []
+
+
 # ─── 摘要触发 ──────────────────────────────────────────────
 
 

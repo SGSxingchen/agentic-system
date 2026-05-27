@@ -780,6 +780,23 @@ async def _run_speaking_task(
             },
         )
 
+        # ── A1: 触发记忆反思（不阻塞接力派发） ──
+        if auto_memory and final_text:
+            try:
+                from api.websocket.handlers import schedule_memory_reflection  # type: ignore
+            except Exception:  # pragma: no cover — defensive
+                schedule_memory_reflection = None  # type: ignore
+            if schedule_memory_reflection is not None:
+                try:
+                    schedule_memory_reflection(
+                        user_message=_build_memory_query(room_after, prompt),
+                        assistant_text=final_text,
+                        source=f"chatroom:{agent_name}",
+                        session_id=f"chatroom:{room_id}",
+                    )
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.warning("chatroom memory reflection failed: %s", exc)
+
         # ── 接力派发 ──────────────────────────────────────
         # host_directive 优先：如果发言者是 auto_host 模式下的 host_agent，
         # 优先尝试把回复解析为结构化指令，按指令派发；否则回退到 mention 接力。
