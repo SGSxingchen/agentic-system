@@ -384,6 +384,14 @@ export function RunsPanel() {
                       {run.progress?.tool_count != null && (
                         <span>工具调用 {run.progress.tool_count}</span>
                       )}
+                      {/* A6: 仅当当前任务确实在重试 + 仍在运行时显示徽标 */}
+                      {run.progress?.retry_count != null
+                        && run.progress.retry_count > 0
+                        && run.status === 'running' && (
+                          <span className="run-card__retry-badge">
+                            重试中 {run.progress.retry_count}/3
+                          </span>
+                        )}
                     </div>
                   </button>
                 ))

@@ -164,6 +164,7 @@ export interface TaskProgress {
   last_tool?: string | null
   current_step?: string | null
   memory_count?: number
+  retry_count?: number  // A6: 当前重试尝试号；> 0 且 status=running 时显示徽标
 }
 
 export interface Task {
