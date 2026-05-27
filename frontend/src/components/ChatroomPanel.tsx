@@ -16,6 +16,7 @@ import { getSettingLabel } from './chatroomSettingsLabels'
 import { senderToDisplay, agentMetaFromList, type AgentMetaMap } from './agentBadge'
 import type {
   AgentInfo,
+  Attachment,
   Chatroom,
   ChatroomCreatePayload,
   ChatroomMessage,
@@ -213,6 +214,9 @@ export function ChatroomPanel() {
   const [showBannerDetails, setShowBannerDetails] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  // B1 — 待发送附件草稿
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
+  const [uploadingFiles, setUploadingFiles] = useState<number>(0)
   const [mentionPicker, setMentionPicker] = useState<{
     visible: boolean
     query: string
@@ -612,10 +616,15 @@ export function ChatroomPanel() {
   // ─── 发送消息 ───────────────────────────────────────────
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || !activeRoom || sending) return
+    const attachmentIds = pendingAttachments.map((a) => a.id)
+    if ((!text && attachmentIds.length === 0) || !activeRoom || sending) return
     setSending(true)
     setError('')
-    const res = await api.postChatroomMessage(activeRoom.id, text)
+    const res = await api.postChatroomMessage(
+      activeRoom.id,
+      text,
+      attachmentIds.length > 0 ? { attachments: attachmentIds } : undefined
+    )
     setSending(false)
     if (res.status !== 'ok' || !res.data) {
       setError(res.message || '发送失败')
@@ -628,8 +637,79 @@ export function ChatroomPanel() {
         : prev
     )
     setInput('')
+    setPendingAttachments([])
     setMentionPicker({ visible: false, query: '', position: 0 })
   }
+
+  // ─── B1 附件上传 ────────────────────────────────────────
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const composerWrapRef = useRef<HTMLDivElement | null>(null)
+
+  const handleUpload = useCallback(
+    async (files: File[]) => {
+      if (!files.length || !activeRoom) return
+      const scope = `chatroom:${activeRoom.id}`
+      setUploadingFiles((n) => n + files.length)
+      try {
+        for (const file of files) {
+          const res = await api.uploadAttachment(file, scope)
+          if (res.status === 'ok' && res.data) {
+            setPendingAttachments((prev) => [...prev, res.data as Attachment])
+          } else {
+            setError(res.message || `上传 ${file.name} 失败`)
+          }
+        }
+      } finally {
+        setUploadingFiles((n) => Math.max(0, n - files.length))
+      }
+    },
+    [activeRoom]
+  )
+
+  const handleRemovePending = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const onPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const items = Array.from(event.clipboardData?.items || [])
+      const files = items
+        .filter((i) => i.kind === 'file')
+        .map((i) => i.getAsFile())
+        .filter((f): f is File => f != null)
+      if (files.length > 0) {
+        event.preventDefault()
+        handleUpload(files)
+      }
+    },
+    [handleUpload]
+  )
+
+  const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (event.dataTransfer?.types?.includes('Files')) {
+      event.preventDefault()
+    }
+  }, [])
+
+  const onDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const files = Array.from(event.dataTransfer?.files || [])
+      if (files.length > 0) {
+        event.preventDefault()
+        handleUpload(files)
+      }
+    },
+    [handleUpload]
+  )
+
+  const onFilePicked = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || [])
+      event.target.value = ''
+      if (files.length > 0) await handleUpload(files)
+    },
+    [handleUpload]
+  )
 
   const onInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentionPicker.visible && event.key === 'Enter' && !event.shiftKey) {
@@ -800,6 +880,15 @@ export function ChatroomPanel() {
                 onPickMention={insertMention}
                 detectedMentions={detectedMentions}
                 autoHost={settings.auto_host}
+                pendingAttachments={pendingAttachments}
+                uploadingFiles={uploadingFiles}
+                fileInputRef={fileInputRef}
+                onPaste={onPaste}
+                onDragOver={onDragOver}
+                onDrop={onDrop}
+                onFilePicked={onFilePicked}
+                onRemovePending={handleRemovePending}
+                wrapRef={composerWrapRef}
               />
             </>
           ) : (
@@ -1199,6 +1288,16 @@ interface ComposerProps {
   onPickMention: (name: string) => void
   detectedMentions: string[]
   autoHost: boolean
+  // B1 附件相关
+  pendingAttachments: Attachment[]
+  uploadingFiles: number
+  fileInputRef: React.RefObject<HTMLInputElement>
+  onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
+  onDragOver: (event: React.DragEvent<HTMLDivElement>) => void
+  onDrop: (event: React.DragEvent<HTMLDivElement>) => void
+  onFilePicked: (event: React.ChangeEvent<HTMLInputElement>) => void
+  onRemovePending: (id: string) => void
+  wrapRef: React.RefObject<HTMLDivElement>
 }
 
 function ChatroomComposer({
@@ -1213,6 +1312,15 @@ function ChatroomComposer({
   onPickMention,
   detectedMentions,
   autoHost,
+  pendingAttachments,
+  uploadingFiles,
+  fileInputRef,
+  onPaste,
+  onDragOver,
+  onDrop,
+  onFilePicked,
+  onRemovePending,
+  wrapRef,
 }: ComposerProps) {
   const hint =
     detectedMentions.length === 0
@@ -1222,7 +1330,48 @@ function ChatroomComposer({
       : `将召唤 ${detectedMentions.map((n) => `@${n}`).join(' ')} 接力`
 
   return (
-    <div className="chatroom-composer">
+    <div
+      className="chatroom-composer"
+      ref={wrapRef}
+      onPaste={onPaste}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      {(pendingAttachments.length > 0 || uploadingFiles > 0) && (
+        <div className="chatroom-composer__attachments">
+          {pendingAttachments.map((att) => (
+            <span
+              key={att.id}
+              className="chatroom-composer__chip"
+              title={`${att.filename} · ${att.mime_type}`}
+            >
+              {att.mime_type.startsWith('image/') ? (
+                <img
+                  src={api.attachmentContentUrl(att.id)}
+                  alt={att.filename}
+                  className="chatroom-composer__chip-thumb"
+                />
+              ) : (
+                <span className="chatroom-composer__chip-icon">📎</span>
+              )}
+              <span className="chatroom-composer__chip-name">{att.filename}</span>
+              <button
+                type="button"
+                className="chatroom-composer__chip-remove"
+                onClick={() => onRemovePending(att.id)}
+                aria-label="移除附件"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+          {uploadingFiles > 0 && (
+            <span className="chatroom-composer__chip chatroom-composer__chip--uploading">
+              上传中… ({uploadingFiles})
+            </span>
+          )}
+        </div>
+      )}
       <div className="chatroom-composer__input-wrap">
         <textarea
           ref={inputRef}
@@ -1230,7 +1379,7 @@ function ChatroomComposer({
           value={value}
           onChange={onChange}
           onKeyDown={onKeyDown}
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行。@ 召唤成员"
+          placeholder="输入消息，Enter 发送，Shift+Enter 换行。@ 召唤成员；支持粘贴/拖拽附件"
           rows={3}
           disabled={sending}
         />
@@ -1255,7 +1404,23 @@ function ChatroomComposer({
           </div>
         )}
       </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={onFilePicked}
+      />
       <div className="chatroom-composer__actions">
+        <button
+          type="button"
+          className="btn-secondary chatroom-composer__attach-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={sending}
+          title="添加附件（也可粘贴/拖拽）"
+        >
+          📎 附件
+        </button>
         <span className="text-muted" style={{ fontSize: 11.5 }}>
           {hint}
         </span>
@@ -1263,7 +1428,11 @@ function ChatroomComposer({
           type="button"
           className="btn-primary"
           onClick={onSend}
-          disabled={!value.trim() || sending}
+          disabled={
+            (!value.trim() && pendingAttachments.length === 0) ||
+            sending ||
+            uploadingFiles > 0
+          }
         >
           {sending ? '发送中…' : '发送'}
         </button>

@@ -5,6 +5,7 @@ import type {
   AgentMCPServerConfig,
   AgentInfo,
   AgentSkillConfig,
+  Attachment,
   ChatSession,
   ChatSessionSummary,
   Chatroom,
@@ -638,6 +639,7 @@ export async function addChatSessionMessage(
     toolCalls?: Array<Record<string, unknown>>
     agent_name?: string
     error?: string
+    attachments?: string[]
   }
 ): Promise<APIResponse<ChatSession>> {
   return post<ChatSession>(
@@ -783,11 +785,16 @@ export async function listChatroomMessages(
 
 export async function postChatroomMessage(
   id: string,
-  content: string
+  content: string,
+  options?: { attachments?: string[] }
 ): Promise<APIResponse<ChatroomMessageCreateResult>> {
+  const body: Record<string, unknown> = { content }
+  if (options?.attachments && options.attachments.length > 0) {
+    body.attachments = options.attachments
+  }
   return post<ChatroomMessageCreateResult>(
     `/api/chatrooms/${encodeURIComponent(id)}/messages`,
-    { content }
+    body
   )
 }
 
@@ -811,3 +818,33 @@ export async function cancelChatroom(
     `/api/chatrooms/${encodeURIComponent(id)}/cancel`
   )
 }
+
+// ===== 附件 API（B1 Plan 3 P3） =====
+//
+// 单文件上传走 multipart/form-data；scope 用 ``chat_session:<id>`` /
+// ``chatroom:<id>`` 两类来源串。复用 fetchFormAPI 注入 Authorization header。
+// 上传成功返回 Attachment 元数据，调用方拿 id 后塞进 send 请求。
+
+export async function uploadAttachment(
+  file: File,
+  scope: string,
+  uploaded_by: string = 'user'
+): Promise<APIResponse<Attachment>> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const path =
+    `/api/attachments?scope=${encodeURIComponent(scope)}` +
+    `&uploaded_by=${encodeURIComponent(uploaded_by)}`
+  return fetchFormAPI<Attachment>(path, formData)
+}
+
+export function attachmentContentUrl(id: string): string {
+  return `/api/attachments/${encodeURIComponent(id)}/content`
+}
+
+export async function getAttachmentMetadata(
+  id: string
+): Promise<APIResponse<Attachment>> {
+  return get<Attachment>(`/api/attachments/${encodeURIComponent(id)}`)
+}
+

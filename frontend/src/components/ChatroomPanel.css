@@ -581,6 +581,68 @@
   gap: 12px;
 }
 
+/* B1 — 待发送附件草稿条 */
+.chatroom-composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.chatroom-composer__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  font-size: 12px;
+  background: var(--color-surface-2, #f6f6f7);
+  max-width: 240px;
+}
+
+.chatroom-composer__chip-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.chatroom-composer__chip-icon {
+  font-size: 14px;
+}
+
+.chatroom-composer__chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+.chatroom-composer__chip-remove {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-secondary, #888);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.chatroom-composer__chip-remove:hover {
+  color: var(--color-danger, #c33);
+}
+
+.chatroom-composer__chip--uploading {
+  color: var(--color-text-secondary, #888);
+  background: transparent;
+  border-style: dashed;
+}
+
+.chatroom-composer__attach-btn {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
 .chatroom-mention-picker {
   position: absolute;
   bottom: calc(100% + 4px);

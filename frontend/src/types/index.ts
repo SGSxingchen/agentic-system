@@ -311,6 +311,7 @@ export interface ChatMessage {
   toolCalls?: ChatToolCallRecord[]
   agent_name?: string
   error?: string
+  attachments?: string[]
 }
 
 export interface ChatSessionSummary {
@@ -528,9 +529,23 @@ export interface ChatroomMessage {
   meta: ChatroomMessageMeta
   created_at: string
   updated_at: string
+  attachments?: string[]
   // 前端运行时附加（不写回后端）
   thinking_buffer?: string
   tool_calls?: ChatroomToolCallRecord[]
+}
+
+// ===== 附件（B1 Plan 3 P3） =====
+
+export interface Attachment {
+  id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  scope: string
+  uploaded_by: string
+  created_at: string
+  meta?: Record<string, unknown>
 }
 
 export interface ChatroomGoalHistoryEntry {

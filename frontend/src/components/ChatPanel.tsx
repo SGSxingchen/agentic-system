@@ -5,6 +5,7 @@ import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
 import type {
   AgentInfo,
+  Attachment,
   ChatMessage,
   ChatSession,
   ChatSessionSummary,
@@ -103,6 +104,9 @@ export function ChatPanel() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  // B1 — 待发送附件草稿。上传完成的文件先存这里，handleSend 时 attachments=ids。
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
+  const [uploadingFiles, setUploadingFiles] = useState<number>(0)
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [sessionsCollapsed, setSessionsCollapsed] = useState<boolean>(() => {
@@ -229,7 +233,9 @@ export function ChatPanel() {
 
   const handleSend = async () => {
     const value = input.trim()
-    if (!value || !agentName) return
+    const attachmentIds = pendingAttachments.map((a) => a.id)
+    if (!agentName) return
+    if (!value && attachmentIds.length === 0) return
 
     let session = activeSession
     if (!session) {
@@ -252,11 +258,13 @@ export function ChatPanel() {
       type: 'user',
       content: value,
       timestamp: new Date().toISOString(),
+      attachments: attachmentIds.length > 0 ? attachmentIds : undefined,
     }
     setActiveSession((prev) =>
       prev ? { ...prev, messages: [...prev.messages, userMessage] } : prev
     )
     setInput('')
+    setPendingAttachments([])
     setSending(true)
     setError('')
 
@@ -266,6 +274,7 @@ export function ChatPanel() {
       type: 'user',
       content: userMessage.content,
       timestamp: userMessage.timestamp,
+      attachments: userMessage.attachments,
     })
 
     const startedAt = Date.now()
@@ -348,6 +357,78 @@ export function ChatPanel() {
       handleSend()
     }
   }
+
+  // ─── B1 附件上传：paste / drop / 文件选择器三入口共用 ──────────────────
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const composerRef = useRef<HTMLDivElement | null>(null)
+
+  const handleUpload = useCallback(
+    async (files: File[]) => {
+      if (!files.length) return
+      // 用当前会话 id 当 scope；没会话用 draft，让消息发出后再追溯关联也无所谓——
+      // attachments 是 message 上的引用，scope 仅用于目录归类。
+      const scope = activeSession ? `chat_session:${activeSession.id}` : 'chat_session:draft'
+      setUploadingFiles((n) => n + files.length)
+      try {
+        for (const file of files) {
+          const res = await api.uploadAttachment(file, scope)
+          if (res.status === 'ok' && res.data) {
+            setPendingAttachments((prev) => [...prev, res.data as Attachment])
+          } else {
+            setError(res.message || `上传 ${file.name} 失败`)
+          }
+        }
+      } finally {
+        setUploadingFiles((n) => Math.max(0, n - files.length))
+      }
+    },
+    [activeSession]
+  )
+
+  const handleRemovePending = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const onPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const items = Array.from(event.clipboardData?.items || [])
+      const files = items
+        .filter((i) => i.kind === 'file')
+        .map((i) => i.getAsFile())
+        .filter((f): f is File => f != null)
+      if (files.length > 0) {
+        event.preventDefault()
+        handleUpload(files)
+      }
+    },
+    [handleUpload]
+  )
+
+  const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (event.dataTransfer?.types?.includes('Files')) {
+      event.preventDefault()
+    }
+  }, [])
+
+  const onDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const files = Array.from(event.dataTransfer?.files || [])
+      if (files.length > 0) {
+        event.preventDefault()
+        handleUpload(files)
+      }
+    },
+    [handleUpload]
+  )
+
+  const onFilePicked = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || [])
+      event.target.value = ''
+      if (files.length > 0) await handleUpload(files)
+    },
+    [handleUpload]
+  )
 
   const sessionWorkspaceName = useMemo(() => {
     if (!activeSession?.workspace_id) return ''
@@ -629,7 +710,13 @@ export function ChatPanel() {
             )}
           </div>
 
-          <div className="chat-main__composer">
+          <div
+            className="chat-main__composer"
+            ref={composerRef}
+            onPaste={onPaste}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+          >
             <div className="chat-main__composer-bar">
               <div className="chat-main__composer-field">
                 <span className="chat-main__composer-label">智能体</span>
@@ -653,6 +740,41 @@ export function ChatPanel() {
                 </span>
               )}
             </div>
+            {(pendingAttachments.length > 0 || uploadingFiles > 0) && (
+              <div className="chat-main__composer-attachments">
+                {pendingAttachments.map((att) => (
+                  <span
+                    key={att.id}
+                    className="chat-main__composer-chip"
+                    title={`${att.filename} · ${att.mime_type}`}
+                  >
+                    {att.mime_type.startsWith('image/') ? (
+                      <img
+                        src={api.attachmentContentUrl(att.id)}
+                        alt={att.filename}
+                        className="chat-main__composer-chip-thumb"
+                      />
+                    ) : (
+                      <span className="chat-main__composer-chip-icon">📎</span>
+                    )}
+                    <span className="chat-main__composer-chip-name">{att.filename}</span>
+                    <button
+                      type="button"
+                      className="chat-main__composer-chip-remove"
+                      onClick={() => handleRemovePending(att.id)}
+                      aria-label="移除附件"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+                {uploadingFiles > 0 && (
+                  <span className="chat-main__composer-chip chat-main__composer-chip--uploading">
+                    上传中… ({uploadingFiles})
+                  </span>
+                )}
+              </div>
+            )}
             <textarea
               className="chat-main__composer-input"
               value={input}
@@ -660,13 +782,29 @@ export function ChatPanel() {
               onKeyDown={onInputKeyDown}
               placeholder={
                 agents.length
-                  ? '输入消息，Enter 发送，Shift+Enter 换行'
+                  ? '输入消息，Enter 发送，Shift+Enter 换行（支持粘贴/拖拽附件）'
                   : '请先在「智能体」页注册一个智能体'
               }
               disabled={agents.length === 0 || sending}
               rows={3}
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={onFilePicked}
+            />
             <div className="chat-main__composer-actions">
+              <button
+                type="button"
+                className="btn-secondary chat-main__composer-attach-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                title="添加附件（也可粘贴/拖拽）"
+              >
+                📎 附件
+              </button>
               <span className="text-muted" style={{ fontSize: 11 }}>
                 调用 /api/agents/{agentName || '?'}/invoke
               </span>
@@ -674,7 +812,12 @@ export function ChatPanel() {
                 type="button"
                 className="btn-primary"
                 onClick={handleSend}
-                disabled={!input.trim() || sending || !agentName}
+                disabled={
+                  (!input.trim() && pendingAttachments.length === 0) ||
+                  sending ||
+                  !agentName ||
+                  uploadingFiles > 0
+                }
               >
                 {sending ? '发送中…' : '发送'}
               </button>
