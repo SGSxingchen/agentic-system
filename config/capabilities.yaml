@@ -83,6 +83,10 @@ capabilities:
   type: native
   class: capabilities.tools.agent_management.ApplyAgentConfigPatchCapability
   description: 受控 Agent 配置补丁应用工具：仅在 admin_approved=true、reviewer 非空且可选管理 token 匹配时修改白名单字段；热重载失败会回滚。
+- name: update_agent_config
+  type: native
+  class: capabilities.tools.agent_management.UpdateAgentConfigCapability
+  description: Agent 配置更新工具：直接合并 patch 到 config/agents.yaml 的目标 Agent，调用即生效，审计走 config_change 日志，回溯靠 git。
 - name: bash
   type: native
   class: capabilities.tools.bash.BashCapability

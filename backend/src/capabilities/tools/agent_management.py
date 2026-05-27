@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from importlib import import_module
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -24,6 +25,9 @@ from core.mcp import (
 )
 from core.prompts import get_tool_description
 from core.workspace import default_workspace_root, project_root, resolve_project_path
+
+
+logger = logging.getLogger(__name__)
 
 
 ALLOWED_AGENT_FIELDS = {
@@ -635,4 +639,110 @@ class ApplyAgentConfigPatchCapability(CapabilityBase):
                 "reviewer": str(kwargs.get("reviewer") or "").strip(),
                 "allow_high_risk_tools": bool(kwargs.get("allow_high_risk_tools", False)),
             },
+        }
+
+
+class UpdateAgentConfigCapability(CapabilityBase):
+    """A10：调用即生效的 Agent 配置更新工具。
+
+    替代旧的 ``propose_agent_config_patch`` + ``apply_agent_config_patch`` 两段
+    式审批流程。审计走 structlog ``config_change`` 日志，回溯靠 git。
+    """
+
+    @property
+    def name(self) -> str:
+        return "update_agent_config"
+
+    @property
+    def description(self) -> str:
+        return get_tool_description(
+            self.name,
+            "Agent 配置更新工具：直接合并 patch 到 config/agents.yaml 的目标 Agent，"
+            "调用即生效，不需要 admin_approved/reviewer。修改完会触发热重载，失败会回滚。",
+        )
+
+    def get_schema(self) -> CapabilitySchema:
+        return CapabilitySchema(
+            name=self.name,
+            description=self.description,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "agent_name": {
+                        "type": "string",
+                        "description": "目标 Agent 名称。",
+                    },
+                    "patch": {
+                        "type": "object",
+                        "description": (
+                            "字段级补丁；支持 description / system_prompt / tools / "
+                            "output_format / max_iterations / llm / skills / mcp_servers / "
+                            "default_workspace_id / default_workspace_root。"
+                        ),
+                    },
+                },
+                "required": ["agent_name", "patch"],
+            },
+            returns="写入结果、changed_fields、脱敏后的 Agent 配置和 reload 状态。",
+            is_read_only=False,
+            is_concurrency_safe=False,
+            max_result_size=20000,
+        )
+
+    async def execute(self, **kwargs: Any) -> Dict[str, Any]:
+        agent_name = str(kwargs.get("agent_name") or "").strip()
+        # A10：HIGH_RISK_TOOLS 放开 — allow_high_risk_tools=True 让 _validate_patch 不再
+        # 因为 bash/dispatch_agent 等工具拒绝写入；安全靠 system.yaml forbidden_tools。
+        patch, errors = _validate_patch(
+            kwargs.get("patch"),
+            allow_high_risk_tools=True,
+        )
+
+        data = _load_agents_yaml()
+        previous_data = deepcopy(data)
+        agents: List[Dict[str, Any]] = data.get("agents", [])
+        target_index = -1
+        for index, agent in enumerate(agents):
+            if isinstance(agent, dict) and agent.get("name") == agent_name:
+                target_index = index
+                break
+
+        if not agent_name:
+            errors.append("agent_name is required")
+        elif target_index < 0:
+            errors.append(f"agent '{agent_name}' not found")
+        errors.extend(_validate_agent_specific_patch(agent_name, patch))
+        if errors:
+            return {"success": False, "valid": False, "errors": errors}
+
+        updated_agent = _apply_patch_to_agent(agents[target_index], patch or {})
+        agents[target_index] = updated_agent
+        data["agents"] = agents
+
+        try:
+            reload_executed, reload_message = await _reload_or_rollback(data, previous_data)
+        except RuntimeError as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "rolled_back": True,
+            }
+
+        changed_fields = sorted((patch or {}).keys())
+        logger.info(
+            "config_change",
+            extra={
+                "action": "update_agent",
+                "agent": agent_name,
+                "changed_fields": changed_fields,
+            },
+        )
+
+        return {
+            "success": True,
+            "agent_name": agent_name,
+            "changed_fields": changed_fields,
+            "agent": _sanitize_agent_config(updated_agent),
+            "reload_executed": reload_executed,
+            "reload_message": reload_message,
         }
