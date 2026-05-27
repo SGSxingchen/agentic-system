@@ -68,6 +68,19 @@ def test_list_rooms_sorted_by_updated_at(store: ChatroomStore):
     assert summaries[0]["message_count"] == 0
 
 
+def test_default_settings_includes_auto_memory():
+    """A1: 房间默认开启 auto_memory，无需用户显式打开。"""
+    assert "auto_memory" in DEFAULT_SETTINGS
+    assert DEFAULT_SETTINGS["auto_memory"] is True
+
+
+def test_create_room_inherits_auto_memory_default(tmp_path):
+    """create_room 不传 settings 时，auto_memory 应来自 DEFAULT_SETTINGS。"""
+    store = ChatroomStore(root=tmp_path)
+    room = store.create_room(title="t1", topic="topic", goal="goal", members=[])
+    assert room["settings"]["auto_memory"] is True
+
+
 def test_update_and_delete_room(store: ChatroomStore):
     room = store.create_room(title="X", members=["planner"])
     updated = store.update_room(

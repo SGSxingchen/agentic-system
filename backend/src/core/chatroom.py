@@ -43,6 +43,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "max_relay_depth": 3,
     "max_members": 20,
     "allow_agent_invite": True,
+    "auto_memory": True,
 }
 
 
