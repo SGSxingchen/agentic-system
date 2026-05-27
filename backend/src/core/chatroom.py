@@ -650,14 +650,27 @@ def build_room_context(
 ) -> List[Dict[str, str]]:
     """拼装房间上下文为 OpenAI/Anthropic 通用 messages 列表。
 
-    第一条 system 块按 spec §3.3 顺序：房间主题 / 当前主要目标 /
-    房间背景摘要 / 当前任务说明（含其他成员名）。
+    Spec 2 §7.4 — 第一条 system 块改为 XML 结构::
+
+        <chatroom_context>
+          <topic>...</topic>
+          <goal current="...">...</goal>
+          <summary>...</summary>
+          <members self="<target>">name1,name2,...</members>
+          <protocol>{CHATROOM_COLLABORATION_PROTOCOL}</protocol>
+        </chatroom_context>
+
+    用户输入字段（topic / goal / summary / members CSV / target name）做 XML 转义；
+    协议常量是受信任文本，不做转义（避免破坏 markdown 风格的 ``✅`` / ``❌``）。
 
     Args:
         room: ``ChatroomStore.get_room(...)`` 返回的字典。
-        target_agent_name: 即将发言的 Agent 名（用于 history 前缀切换）。
+        target_agent_name: 即将发言的 Agent 名（用于 history 前缀切换 + self attr）。
         recent_n: 覆盖 ``settings.recent_n``；None 时使用房间设置。
     """
+
+    # 延迟导入避免循环依赖
+    from .prompts import CHATROOM_COLLABORATION_PROTOCOL
 
     settings = room.get("settings") or {}
     if recent_n is None:
@@ -673,30 +686,30 @@ def build_room_context(
         m.get("name") for m in (room.get("dynamic_members") or []) if m.get("name")
     ]
     all_members = list(dict.fromkeys(members + dynamic_names))
-    others = [name for name in all_members if name != target_agent_name]
 
-    topic = (room.get("topic") or "").strip() or "（未设定）"
-    goal = (room.get("goal") or "").strip() or "（未设定，请根据对话推断）"
-    summary = (room.get("summary") or "").strip() or "（暂无摘要）"
+    topic_raw = (room.get("topic") or "").strip() or "（未设定）"
+    goal_raw = (room.get("goal") or "").strip() or "（未设定，请根据对话推断）"
+    summary_raw = (room.get("summary") or "").strip() or "（暂无摘要）"
 
-    others_label = "、".join(others) if others else "（暂无）"
+    members_csv = ",".join(all_members)
+    safe_topic = _xml_escape(topic_raw)
+    safe_goal = _xml_escape(goal_raw)
+    safe_summary = _xml_escape(summary_raw)
+    safe_members_csv = _xml_escape(members_csv)
+    safe_target = _xml_escape(target_agent_name)
 
-    system_blocks = [
-        "[房间主题]",
-        topic,
-        "",
-        "[当前主要目标]",
-        goal,
-        "",
-        "[房间背景摘要]",
-        summary,
-        "",
-        "[当前任务]",
-        f"你是群聊成员 {target_agent_name}。请在该群聊中发言。",
-        f"其他成员：{others_label}。",
-        "你可以用 @<name> 来召唤成员接力发言。",
-    ]
-    system_message = {"role": "system", "content": "\n".join(system_blocks)}
+    system_text = (
+        "<chatroom_context>\n"
+        f"  <topic>{safe_topic}</topic>\n"
+        f"  <goal>{safe_goal}</goal>\n"
+        f"  <summary>{safe_summary}</summary>\n"
+        f'  <members self="{safe_target}">{safe_members_csv}</members>\n'
+        "  <protocol>\n"
+        f"{CHATROOM_COLLABORATION_PROTOCOL}\n"
+        "  </protocol>\n"
+        "</chatroom_context>"
+    )
+    system_message = {"role": "system", "content": system_text}
 
     messages: List[Dict[str, str]] = list(room.get("messages") or [])
     recent = messages[-recent_n:] if recent_n else []

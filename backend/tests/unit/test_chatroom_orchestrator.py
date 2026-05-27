@@ -709,9 +709,9 @@ async def test_run_speaking_task_inserts_chatroom_override_system(
     msgs = cap.calls[0]["messages"]
     assert msgs[0]["role"] == "system"
     assert "聊天室协作模式" in msgs[0]["content"]
-    # build_room_context 原本的 system 块应仍存在（topic / goal / 历史）
+    # build_room_context 后续 system 块（XML 化后是 <chatroom_context>...）
     body_systems = [m for m in msgs[1:] if m.get("role") == "system"]
-    assert any("[房间主题]" in (m.get("content") or "") for m in body_systems)
+    assert any("<chatroom_context>" in (m.get("content") or "") for m in body_systems)
 
 
 # ─── 摘要触发 ──────────────────────────────────────────────
