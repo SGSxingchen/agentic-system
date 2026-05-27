@@ -123,6 +123,18 @@ class ToolsConfig(BaseModel):
     custom: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
+class AgentCreationConfig(BaseModel):
+    """A4: Agent 创建/更新时的工具黑名单配置（escape hatch）。
+
+    HIGH_RISK_TOOLS 默认放开后，部署方仍可通过 ``forbidden_tools`` 显式锁
+    住特定工具。空列表表示"全放开"。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    forbidden_tools: List[str] = Field(default_factory=list)
+
+
 class SystemConfig(BaseModel):
     """顶层系统配置。"""
 
@@ -132,6 +144,7 @@ class SystemConfig(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     agents: List[AgentConfig] = Field(default_factory=list)
+    agent_creation: AgentCreationConfig = Field(default_factory=AgentCreationConfig)
 
 
 def _default_project_root() -> Path:

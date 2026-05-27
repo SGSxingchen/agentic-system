@@ -96,3 +96,11 @@ tools:
     enabled: false               # 默认关闭，避免任意命令执行
     timeout: 30
   custom: {}                     # 未来工具的 URL/Key/extra 参数，Key 不会通过 API 明文返回
+
+# Agent 创建 / 更新时的工具黑名单 (A4 escape hatch)
+# 默认空列表 = 不锁任何工具，HIGH_RISK_TOOLS 已全放开。
+# 部署方需要锁定时填上对应工具名，例如：
+# agent_creation:
+#   forbidden_tools: [bash, dispatch_agent]
+agent_creation:
+  forbidden_tools: []
