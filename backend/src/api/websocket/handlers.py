@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 from core.chat_history import ChatHistoryStore
+from core.config import get_system_config
 from core.memory import MemoryProcessor, should_reflect_early
 from core.workspace import (
     WorkspaceNotFoundError,
@@ -240,6 +241,16 @@ async def broadcast_monitor_event(
 
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Handle client WebSocket connections."""
+
+    # A11: 全局密码门禁。WS 协议无 Authorization header，约定走 ?token=<password>。
+    # 鉴权失败用 close code 4401（4000-4999 自定义区，约定 auth_invalid）。
+    # 这里在 accept 之前直接 close，浏览器会收到 onclose(code=4401)。
+    server_cfg = get_system_config().server
+    if server_cfg.access_password:
+        token = (websocket.query_params.get("token") or "").strip()
+        if token != server_cfg.access_password:
+            await websocket.close(code=4401, reason="auth_invalid")
+            return
 
     await manager.connect(websocket)
 
