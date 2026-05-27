@@ -228,3 +228,5 @@ class TaskRegistry:
             progress.last_tool = str(delta["last_tool"])
         if "current_step" in delta and delta["current_step"] is not None:
             progress.current_step = str(delta["current_step"])
+        if "retry_count" in delta and delta["retry_count"] is not None:
+            progress.retry_count = int(delta["retry_count"])  # A6: 覆盖（最新尝试号）
