@@ -629,6 +629,16 @@ export function ChatroomPanel() {
     [agents],
   )
 
+  // A27.B — 渲染前按 created_at 升序排序，避免 WS 到达顺序导致 user/agent
+  // 消息错位（后端已保证 created_at 严格单调，前端只需稳定排序）。
+  const sortedMessages = useMemo(() => {
+    const messages = activeRoom?.messages || []
+    return [...messages].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    )
+  }, [activeRoom?.messages])
+
   const settings = activeRoom?.settings || DEFAULT_SETTINGS
 
   // ─── 输入框：@ 提及浮窗 ─────────────────────────────────
@@ -953,7 +963,7 @@ export function ChatroomPanel() {
                     </span>
                   </div>
                 ) : (
-                  activeRoom.messages.map((message) => (
+                  sortedMessages.map((message) => (
                     <ChatroomMessageCard
                       key={message.id}
                       message={message}
