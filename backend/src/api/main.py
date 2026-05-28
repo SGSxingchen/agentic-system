@@ -333,6 +333,24 @@ def _public_llm_config(config: Dict[str, Any], *, overridden: bool) -> Dict[str,
     return public
 
 
+def _resolve_token_budget(
+    agent_def_value: Optional[int],
+    system_default: int = 300000,
+) -> int:
+    """A23.2: 解析 Agent token_budget。
+
+    Agent yaml 字段优先；缺失或非正数时回退到 ``system.yaml.agent_defaults.token_budget``
+    （由调用方传入）；该值默认 300000。
+    """
+
+    try:
+        if agent_def_value is not None and int(agent_def_value) > 0:
+            return int(agent_def_value)
+    except (TypeError, ValueError):
+        pass
+    return int(system_default) if system_default and system_default > 0 else 300000
+
+
 def _create_agents_from_config(
     agents_config: List[Dict[str, Any]],
     llm_client: Any,
@@ -344,6 +362,16 @@ def _create_agents_from_config(
     agent_names = {item["name"] for item in agents_config}
     agents: List[Agent] = []
     deferred_tools: List[tuple[Agent, List[str]]] = []
+
+    # A23.2: Agent yaml 未配 token_budget 时回退到 system.yaml.agent_defaults
+    try:
+        from core.config import get_system_config
+
+        system_token_budget_default = int(
+            get_system_config().agent_defaults.token_budget
+        )
+    except Exception:
+        system_token_budget_default = 300000
 
     for agent_def in agents_config:
         name = agent_def["name"]
@@ -431,7 +459,10 @@ def _create_agents_from_config(
             output_format=agent_def.get("output_format", "text"),
             max_iterations=agent_def.get("max_iterations", 10),
             description=agent_def.get("description", ""),
-            token_budget=agent_def.get("token_budget"),
+            token_budget=_resolve_token_budget(
+                agent_def.get("token_budget"),
+                system_token_budget_default,
+            ),
             token_budget_nudge_threshold=agent_def.get(
                 "token_budget_nudge_threshold", 0.85
             ),

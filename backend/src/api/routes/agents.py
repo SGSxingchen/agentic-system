@@ -57,11 +57,6 @@ from ..websocket.handlers import build_memory_context, schedule_memory_reflectio
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
-PROTECTED_AGENT_NAMES = {
-    *DEFAULT_BINDABLE_AGENT_ROLES,
-    "agent_manager",
-    "persona_evolution",
-}
 MASKED_SECRET_VALUES = {"********", "••••••••"}
 
 
@@ -783,9 +778,6 @@ async def create_agent(req: AgentCreateRequest):
 @router.put("/{name}", response_model=APIResponse)
 async def update_agent(name: str, req: AgentUpdateRequest):
     """更新 Agent 配置，写入 YAML 并热重载"""
-    if name == "agent_manager":
-        return APIResponse(status="error", message="agent_manager 只能通过受控 agent_manager 工具链修改")
-
     data = load_single_yaml("agents.yaml")
     previous_data = deepcopy(data)
     agents_list = data.get("agents", [])
@@ -905,8 +897,6 @@ async def import_agent_mcp_config(name: str, req: AgentMCPImportRequest):
     target = _find_agent_config(agents_list, name)
     if target is None:
         return APIResponse(status="error", message=f"Agent '{name}' 不存在")
-    if req.apply and name == "agent_manager":
-        return APIResponse(status="error", message="agent_manager 只能通过受控 agent_manager 工具链修改")
 
     parsed = parse_mcp_import_text(
         req.content,
@@ -959,9 +949,6 @@ async def import_agent_mcp_config(name: str, req: AgentMCPImportRequest):
 @router.delete("/{name}", response_model=APIResponse)
 async def delete_agent(name: str):
     """删除 Agent，写入 YAML 并热重载"""
-    if name in PROTECTED_AGENT_NAMES:
-        return APIResponse(status="error", message=f"Agent '{name}' 是内置关键 Agent，不能从管理页删除")
-
     data = load_single_yaml("agents.yaml")
     previous_data = deepcopy(data)
     agents_list = data.get("agents", [])

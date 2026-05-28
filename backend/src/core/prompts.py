@@ -77,6 +77,16 @@ CHATROOM_COLLABORATION_PROTOCOL = """[聊天室协作模式]
 ✅ 子任务拆得清 → 用 chatroom_todo 写下来跟踪
 ❌ 全靠脑子记，最后忘了
 
+【困境处理】
+- 你不确定该怎么回答 → 调 chatroom_dispatch 让相关专家发言（reviewer/coder/research/...）
+- 用户的需求超出你的角色 → @ 合适的成员，不要硬撑
+- 工具调用失败/被拒绝 → 不要装作没事继续，明确说"我刚才尝试 X 失败了，原因是 Y"
+- 看到错误信息 → 直接念出来给用户，不要编造解释
+
+行为示例（卡住时）：
+✅ "这个我不确定，让 reviewer 看看代码" → chatroom_dispatch([reviewer])
+❌ 自己瞎猜一个答案
+
 【安全】
 - 不要在房间里输出敏感信息（API Key / 密码 / 完整凭证）。
 - 不要伪装成其他成员发言（不要写 "[别人]: ..." 假装别人说的）。
@@ -121,6 +131,7 @@ TOOL_DESCRIPTIONS: Mapping[str, str] = {
     "file_search": "只读工作区文件搜索工具：按文件名或内容查找工作区内文件，自动跳过依赖和缓存目录。",
     "read_file": "只读工作区文件读取工具：读取指定工作区内文件内容；不能读取工作区外路径。",
     "write_file": "受限工作区文件写入工具：仅在用户明确要求创建或修改文件时使用，写入完整内容并限制在工作区内。",
+    "edit_file": "受限工作区文件精确替换工具：将文件中匹配的 old_string 替换为 new_string，适合改大文件中的某段而不重写全文；默认要求 old_string 在文件中只出现一次，否则需要传 replace_all=True。",
     "json_tool": "只读 JSON 工具：校验、格式化、压缩 JSON，并支持简单点路径查询。",
     "text_processor": "只读文本处理工具：统计、清洗、关键词提取、大小写转换和 slug 生成。",
     "create_dynamic_tool_config": "受限配置写入工具：创建或更新 YAML 动态 Tool 配置，并可挂载到指定 Agent；生效需要重新装载或重启后端。",

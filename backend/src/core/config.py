@@ -176,6 +176,22 @@ class DispatchConfig(BaseModel):
     max_depth: int = Field(default=5, ge=1, description="dispatch_agent 最大嵌套深度")
 
 
+class AgentDefaultsConfig(BaseModel):
+    """A23.2: Agent 全局默认值。
+
+    单 Agent yaml 未显式声明字段时回退到这里。当前仅暴露 ``token_budget``，
+    后续如需统一其它 Agent 默认值（max_iterations / nudge 阈值等）可继续扩展。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    token_budget: int = Field(
+        default=300000,
+        ge=1000,
+        description="单次 Agent 调用累计 token 预算上限（默认 300000）。Agent yaml 字段优先。",
+    )
+
+
 class SystemConfig(BaseModel):
     """顶层系统配置。"""
 
@@ -188,6 +204,7 @@ class SystemConfig(BaseModel):
     agents: List[AgentConfig] = Field(default_factory=list)
     agent_creation: AgentCreationConfig = Field(default_factory=AgentCreationConfig)
     dispatch: DispatchConfig = Field(default_factory=DispatchConfig)
+    agent_defaults: AgentDefaultsConfig = Field(default_factory=AgentDefaultsConfig)
 
 
 def _default_project_root() -> Path:

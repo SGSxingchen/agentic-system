@@ -116,6 +116,13 @@ agent_creation:
 dispatch:
   max_depth: 5
 
+# Agent 全局默认值 (A23.2)
+# 单 Agent yaml 没显式声明字段时回退到这里。
+# token_budget = 单次 Agent 调用累计 token 预算上限；超出会硬终止当前轮。
+# 聊天室主持人 / 长上下文 Agent 建议 300000+，纯短任务可降到 100000。
+agent_defaults:
+  token_budget: 300000
+
 # 附件上传配置 (B1 Plan 3 Phase P3)
 # REST 路由 /api/attachments 在落盘前用这两个字段做大小 + MIME 守门。
 # 留空 allowed_mime_prefixes ([]) 表示放开 MIME 校验（不推荐生产）。

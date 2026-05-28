@@ -5,6 +5,7 @@ export interface AgentDraft {
   system_prompt: string
   output_format: 'text' | 'json'
   max_iterations: number
+  token_budget: string
   tools: string[]
   skills: AgentSkillConfig | null
   mcp_servers: AgentMCPServerConfig[]
@@ -48,6 +49,7 @@ export function agentToDraft(agent: AgentInfo): AgentDraft {
     system_prompt: agent.system_prompt || '',
     output_format: agent.output_format === 'json' ? 'json' : 'text',
     max_iterations: agent.max_iterations || 10,
+    token_budget: agent.token_budget != null ? String(agent.token_budget) : '',
     tools: [...(agent.capabilities || [])],
     skills: cloneSkills(agent.skills),
     mcp_servers: cloneMcpServers(agent.mcp_servers),
@@ -85,6 +87,12 @@ export function buildAgentUpdatePayload(draft: AgentDraft): Record<string, unkno
     skills: draft.skills,
     mcp_servers: draft.mcp_servers,
     default_workspace_id: draft.default_workspace_id || null,
+  }
+
+  // A23.3: token_budget — 空字符串表示继承全局，正数表示显式覆盖。
+  const tokenBudget = parseOptionalNumber('token 预算上限', draft.token_budget)
+  if (tokenBudget !== undefined) {
+    payload.token_budget = tokenBudget
   }
 
   const llm: Record<string, unknown> = {}

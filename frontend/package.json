@@ -6,7 +6,7 @@
     "dev": "npx vite",
     "build": "tsc && npx vite build",
     "preview": "npx vite preview",
-    "test": "node tests/workspaceContract.test.mjs && node tests/agentFormLogic.test.mjs && node tests/skillMcpFormLogic.test.mjs && node tests/apiClientContract.test.mjs && node tests/chatroomSettingsLabels.test.mjs && node tests/agentBadge.test.mjs && node tests/agentPanelReload.test.mjs && node tests/authWiring.test.mjs && node tests/personaPanelHistory.test.mjs && node tests/attachmentInput.test.mjs"
+    "test": "node tests/workspaceContract.test.mjs && node tests/agentFormLogic.test.mjs && node tests/skillMcpFormLogic.test.mjs && node tests/apiClientContract.test.mjs && node tests/chatroomSettingsLabels.test.mjs && node tests/agentBadge.test.mjs && node tests/agentPanelReload.test.mjs && node tests/authWiring.test.mjs && node tests/personaPanelHistory.test.mjs && node tests/attachmentInput.test.mjs && node tests/attachmentChip.test.mjs && node tests/todoBannerCollapse.test.mjs && node tests/chatroomMessageOrder.test.mjs && node tests/agentTokenBudget.test.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",

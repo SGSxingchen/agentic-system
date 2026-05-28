@@ -38,7 +38,7 @@
   - persona_evolution
   output_format: text
   max_iterations: 10
-  token_budget: 120000
+  token_budget: 300000
   input_schema:
     type: object
     properties:
@@ -242,7 +242,7 @@
   - dispatch_agent
   output_format: json
   max_iterations: 15
-  token_budget: 200000
+  token_budget: 300000
   input_schema:
     type: object
     properties:

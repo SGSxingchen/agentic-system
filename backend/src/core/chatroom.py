@@ -22,7 +22,7 @@ import tempfile
 import threading
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from xml.sax.saxutils import escape as _xml_escape
@@ -54,6 +54,21 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(ts: str) -> Optional[datetime]:
+    """解析 ISO8601 时间戳。失败返回 None。"""
+
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return None
+    # 没带 tzinfo 的当成 UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _new_id() -> str:
@@ -133,6 +148,8 @@ class ChatroomStore:
         configured = root or os.getenv("CHATROOMS_DIR") or DEFAULT_STORE_DIR
         self.root = Path(configured)
         self.index_path = self.root / INDEX_FILENAME
+        # A27.A — 按 room_id 跟踪最后一条消息的 created_at，确保严格单调递增
+        self._last_message_times: Dict[str, datetime] = {}
 
     # ─── 公共 API ─────────────────────────────────────────
 
@@ -260,13 +277,36 @@ class ChatroomStore:
         room_id: str,
         message: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        """追加一条消息。返回写入后的 message dict。"""
+        """追加一条消息。返回写入后的 message dict。
+
+        A27.A — 同一房间内 created_at 严格单调递增：若提议时间戳 <= 上一条消息
+        的时间戳，则在上一条基础上 +1ms。这避免快速连续写入时（如用户消息
+        和 placeholder 同时落库）出现并列时间戳导致前端排序不稳定。
+        """
 
         with self._LOCK:
             room = self._read_room(room_id)
             if room is None:
                 return None
             normalized = self._normalize_message(message, room_id)
+            # A27.A — 单调递增钳制
+            proposed = _parse_iso(normalized["created_at"])
+            last = self._last_message_times.get(room_id)
+            if last is None:
+                # 启动后第一次写：用历史中已有最后一条消息作为基线
+                history = room.get("messages") or []
+                if history:
+                    last = _parse_iso(str(history[-1].get("created_at") or ""))
+            if proposed is not None and last is not None and proposed <= last:
+                proposed = last + timedelta(microseconds=1000)
+                ts = proposed.isoformat()
+                normalized["created_at"] = ts
+                # updated_at 与 created_at 对齐（仅在原值更早时）
+                cur_updated = _parse_iso(str(normalized.get("updated_at") or ""))
+                if cur_updated is None or cur_updated < proposed:
+                    normalized["updated_at"] = ts
+            if proposed is not None:
+                self._last_message_times[room_id] = proposed
             room["messages"].append(normalized)
             room["updated_at"] = normalized.get("updated_at") or _utc_now()
             self._write_room(room)

@@ -248,12 +248,37 @@ class TestAgentsAPI:
         assert "assistant" in names
         assert "requirement_checklist" in names
 
-    async def test_delete_protected_agent_returns_clear_error(self, client):
+    async def test_delete_protected_agent_no_longer_blocked(self, client, monkeypatch):
+        """A22 — REST 路由层不再硬保护内置 Agent；通过 stub yaml 验证 DELETE 走通。"""
+
+        from copy import deepcopy
+        from api.routes import agents as agent_routes
+
+        state = {
+            "data": {
+                "agents": [
+                    {"name": "assistant", "description": "原描述"},
+                ]
+            },
+            "saved": None,
+        }
+
+        def fake_load(_name):
+            return deepcopy(state["data"])
+
+        async def fake_save(data, previous_data):
+            state["saved"] = deepcopy(data)
+            state["data"] = deepcopy(data)
+
+        monkeypatch.setattr(agent_routes, "load_single_yaml", fake_load)
+        monkeypatch.setattr(agent_routes, "_save_config_and_reload", fake_save)
+
         resp = await client.delete("/api/agents/assistant")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["status"] == "error"
-        assert "内置关键 Agent" in body["message"]
+        assert body["status"] == "ok", f"DELETE 应被允许：{body.get('message')}"
+        assert state["saved"] is not None
+        assert "assistant" not in [a.get("name") for a in state["saved"]["agents"]]
 
 
 # ========================

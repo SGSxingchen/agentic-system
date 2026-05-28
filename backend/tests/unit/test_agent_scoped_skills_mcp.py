@@ -565,22 +565,23 @@ async def test_agent_mcp_import_preview_and_apply_merge_replace(monkeypatch):
     assert saved["agents"][0]["mcp_servers"][0]["env"] == {"TOKEN": "real-secret"}
 
 
-async def test_agent_mcp_import_rejects_direct_agent_manager_apply(monkeypatch):
+async def test_agent_mcp_import_allows_direct_agent_manager_apply(monkeypatch):
+    """A22 — agent_manager 在 REST 层不再硬保护，MCP import apply 应直接生效。"""
     from api.routes import agents as agent_routes
     from api.schemas import AgentMCPImportRequest
 
-    saved = False
+    saved = {}
 
-    async def fail_if_saved(*args, **kwargs):
-        nonlocal saved
-        saved = True
+    async def capture_save(data, previous_data):
+        saved.clear()
+        saved.update(data)
 
     monkeypatch.setattr(
         agent_routes,
         "load_single_yaml",
         lambda name: {"agents": [{"name": "agent_manager", "mcp_servers": []}]},
     )
-    monkeypatch.setattr(agent_routes, "_save_config_and_reload", fail_if_saved)
+    monkeypatch.setattr(agent_routes, "_save_config_and_reload", capture_save)
 
     response = await agent_routes.import_agent_mcp_config(
         "agent_manager",
@@ -590,9 +591,10 @@ async def test_agent_mcp_import_rejects_direct_agent_manager_apply(monkeypatch):
         ),
     )
 
-    assert response.status == "error"
-    assert "agent_manager" in response.message
-    assert saved is False
+    assert response.status == "ok"
+    assert saved, "MCP import 应触发 _save_config_and_reload"
+    target = next(a for a in saved["agents"] if a["name"] == "agent_manager")
+    assert any(s["name"] == "filesystem" for s in target.get("mcp_servers", []))
 
 
 async def test_agent_create_allows_bash_with_default_forbidden_tools_empty(monkeypatch):

@@ -629,6 +629,16 @@ export function ChatroomPanel() {
     [agents],
   )
 
+  // A27.B — 渲染前按 created_at 升序排序，避免 WS 到达顺序导致 user/agent
+  // 消息错位（后端已保证 created_at 严格单调，前端只需稳定排序）。
+  const sortedMessages = useMemo(() => {
+    const messages = activeRoom?.messages || []
+    return [...messages].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    )
+  }, [activeRoom?.messages])
+
   const settings = activeRoom?.settings || DEFAULT_SETTINGS
 
   // ─── 输入框：@ 提及浮窗 ─────────────────────────────────
@@ -953,7 +963,7 @@ export function ChatroomPanel() {
                     </span>
                   </div>
                 ) : (
-                  activeRoom.messages.map((message) => (
+                  sortedMessages.map((message) => (
                     <ChatroomMessageCard
                       key={message.id}
                       message={message}
@@ -1196,7 +1206,10 @@ function SubgoalList({ subgoals }: { subgoals: ChatroomGoalSubgoal[] }) {
 // ─── 子组件：TodoBanner (Spec 2 §9.5 / Task 17) ─────────
 
 function TodoBanner({ room }: { room: Chatroom }) {
+  // A25 — 默认折叠（hooks 必须在任何 return 之前调用）
+  const [expanded, setExpanded] = useState<boolean>(false)
   const todos = room.todos || []
+  // A25 — 空态完全隐藏（不渲染 banner）
   if (todos.length === 0) {
     return null
   }
@@ -1210,15 +1223,51 @@ function TodoBanner({ room }: { room: Chatroom }) {
     const key = todo.status in grouped ? todo.status : 'pending'
     grouped[key].push(todo)
   }
-  const totalActive = grouped.pending.length + grouped.in_progress.length
+  const pendingCount = grouped.pending.length
+  const inProgressCount = grouped.in_progress.length
+  const completedCount = grouped.completed.length
+  const blockedCount = grouped.blocked.length
+
+  if (!expanded) {
+    return (
+      <div
+        className="chatroom-todos chatroom-todo-banner__chip"
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setExpanded(true)
+          }
+        }}
+        title="点击查看任务清单"
+      >
+        <span className="chatroom-todo-banner__chip-text">
+          📋 {pendingCount} 个待办 / {inProgressCount} 进行中 / {completedCount} 已完成
+          {blockedCount > 0 ? ` · 阻塞 ${blockedCount}` : ''}
+        </span>
+      </div>
+    )
+  }
+
   return (
-    <div className="chatroom-todos">
+    <div className="chatroom-todos chatroom-todo-banner__expanded">
       <div className="chatroom-todos__header">
         <span className="chatroom-todos__title">📋 房间任务</span>
         <span className="chatroom-todos__counts">
-          待完成 {totalActive} · 已完成 {grouped.completed.length}
-          {grouped.blocked.length > 0 ? ` · 阻塞 ${grouped.blocked.length}` : ''}
+          待完成 {pendingCount + inProgressCount} · 已完成 {completedCount}
+          {blockedCount > 0 ? ` · 阻塞 ${blockedCount}` : ''}
         </span>
+        <button
+          type="button"
+          className="chatroom-todo-banner__close"
+          onClick={() => setExpanded(false)}
+          aria-label="折叠任务面板"
+          title="折叠"
+        >
+          ✕
+        </button>
       </div>
       <ul className="chatroom-todos__list">
         {grouped.pending.concat(grouped.in_progress).map((todo) => (
