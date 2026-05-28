@@ -7,7 +7,7 @@
 - 解析 subagent_type → CapabilityRegistry 中已注册的 AgentCapability
 - 通过 contextvars 取父 task_id / 父 notification_box（避免改 Agent 接口）
 - 可选 ``worktree=true``: 创建临时 git worktree 并设置 workspace_root_cv 隔离子 Agent 的文件操作
-- ``max_depth=1``: 子 Agent 内部再调 dispatch_agent 直接返错（防递归）
+- ``max_depth`` (默认 5)：嵌套层数 ≥ max_depth 时直接返错；可由 system.yaml ``dispatch.max_depth`` 调整。
 - 子任务异常 / cancel / 完成都会回写 TaskRegistry 状态 + 父 notification_box + transcript
 """
 from __future__ import annotations
@@ -43,7 +43,28 @@ from ._safety import get_workspace_root
 logger = logging.getLogger(__name__)
 
 _WORKTREES_DIRNAME = "worktrees"
-_MAX_DEPTH = 1
+_DEFAULT_MAX_DEPTH = 5
+
+
+def _get_max_depth() -> int:
+    """Read ``dispatch.max_depth`` from system.yaml; default 5.
+
+    Plan Task 11 / A10：把硬编码 max_depth=1 升到 5，并允许 system.yaml
+    ``dispatch.max_depth`` 在部署侧调整。错误时回退到默认值。
+    """
+
+    try:
+        from core.config import load_system_config
+
+        cfg = load_system_config()
+        dispatch_cfg = getattr(cfg, "dispatch", None)
+        if dispatch_cfg is not None:
+            value = getattr(dispatch_cfg, "max_depth", None)
+            if isinstance(value, int) and value > 0:
+                return value
+    except Exception:  # pragma: no cover - defensive
+        return _DEFAULT_MAX_DEPTH
+    return _DEFAULT_MAX_DEPTH
 
 
 class DispatchAgentCapability(CapabilityBase):
@@ -92,12 +113,13 @@ class DispatchAgentCapability(CapabilityBase):
 
     def check_permissions(self, **kwargs: Any) -> Dict[str, Any]:
         depth = get_dispatch_depth()
-        if depth >= _MAX_DEPTH:
+        max_depth = _get_max_depth()
+        if depth >= max_depth:
             return {
                 "decision": "deny",
                 "reason": (
                     f"nested dispatch_agent is not allowed "
-                    f"(current depth={depth}, max={_MAX_DEPTH})"
+                    f"(current depth={depth}, max={max_depth})"
                 ),
             }
         return {"decision": "allow"}
@@ -114,11 +136,12 @@ class DispatchAgentCapability(CapabilityBase):
             return {"error": "prompt is required"}
 
         # 嵌套深度二次校验（防止绕过 check_permissions 直接 execute）
-        if get_dispatch_depth() >= _MAX_DEPTH:
+        max_depth = _get_max_depth()
+        if get_dispatch_depth() >= max_depth:
             return {
                 "error": (
                     f"nested dispatch_agent is not allowed "
-                    f"(max_depth={_MAX_DEPTH})"
+                    f"(max_depth={max_depth})"
                 ),
                 "permission_denied": True,
             }
@@ -216,7 +239,8 @@ async def _run_subagent(
     writer: TranscriptWriter,
 ) -> None:
     """子 Agent 协程：跑 subagent_cap.execute → 终态写 TaskRegistry + 父 box + transcript。"""
-    depth_token = set_dispatch_depth(_MAX_DEPTH)  # 子 Agent 不能再嵌套派生
+    # 子 Agent 起跑时把深度推进 1 层，触底（>= max_depth）即拒绝再嵌套。
+    depth_token = set_dispatch_depth(get_dispatch_depth() + 1)
     # 子 Agent 跑在独立 task 上，与可能存在的聊天室上下文隔离：
     # 否则子 Agent 调 chatroom_invite 等工具会污染父房间。
     room_token = set_current_room_id(None)

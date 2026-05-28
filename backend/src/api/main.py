@@ -59,6 +59,7 @@ from .dependencies import (
     set_reload_agent_fn,
     set_task_registry,
 )
+from .middleware import AuthMiddleware
 from .routes import (
     agents_router,
     chat_sessions_router,
@@ -68,6 +69,7 @@ from .routes import (
     memory_router,
     personas_router,
     artifacts_router,
+    attachments_router,
     tasks_router,
     runs_router,
     workspaces_router,
@@ -85,10 +87,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # Phase 4: chatroom autonomy tools 默认对所有 Agent 开放，
 # 工具内部通过 ContextVar 检测是否在 chatroom 发言任务里，
 # 不在房间时直接返回 error，避免污染普通对话语义。
+# Phase 4: chatroom autonomy tools 默认对所有 Agent 开放，
+# 工具内部通过 ContextVar 检测是否在 chatroom 发言任务里，
+# 不在房间时直接返回 error，避免污染普通对话语义。
 _CHATROOM_AUTONOMY_TOOLS: tuple[str, ...] = (
     "chatroom_invite",
     "chatroom_create_agent",
     "chatroom_set_goal",
+    "chatroom_get_goal",
+    "chatroom_update_goal",
+    "chatroom_dispatch",
+    "chatroom_todo",
 )
 
 bus: Optional[UnifiedBus] = None
@@ -600,6 +609,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# A11: 鉴权中间件先注册 → 在请求链上位于 CORS 之内（即 CORS 比 Auth 早执行）。
+# 这样 OPTIONS 预检由 CORS 直接放行；当 Auth 返回 401/429 时，CORS 也能给响应
+# 加上 Access-Control-Allow-Origin 头，前端 fetch 才不会被浏览器丢成 net error。
+app.add_middleware(AuthMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -618,6 +632,7 @@ app.include_router(evolution_router)
 app.include_router(chat_sessions_router)
 app.include_router(chatrooms_router)
 app.include_router(artifacts_router)
+app.include_router(attachments_router)
 app.include_router(workspaces_router)
 
 

@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from importlib import import_module
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from core.capability.base import CapabilityBase, CapabilitySchema
+from core.capability.risk import AGENT_MANAGEMENT_TOOLS, HIGH_RISK_TOOLS
 from core.config import load_single_yaml, save_yaml_config
 from core.mcp import (
     build_mcp_capability_status,
@@ -23,6 +25,9 @@ from core.mcp import (
 )
 from core.prompts import get_tool_description
 from core.workspace import default_workspace_root, project_root, resolve_project_path
+
+
+logger = logging.getLogger(__name__)
 
 
 ALLOWED_AGENT_FIELDS = {
@@ -36,19 +41,6 @@ ALLOWED_AGENT_FIELDS = {
     "mcp_servers",
     "default_workspace_id",
     "default_workspace_root",
-}
-HIGH_RISK_TOOLS = {
-    "bash",
-    "write_file",
-    "create_agent_config",
-    "create_dynamic_tool_config",
-    "dispatch_agent",
-}
-AGENT_MANAGEMENT_TOOLS = {
-    "read_agent_config",
-    "validate_agent_config_patch",
-    "propose_agent_config_patch",
-    "apply_agent_config_patch",
 }
 OUTPUT_FORMATS = {"text", "json"}
 MASKED_API_KEY_VALUES = {"********", "••••••••", "**********", "***", "masked", "<masked>"}
@@ -119,21 +111,6 @@ def _sanitize_patch_preview(patch: Dict[str, Any]) -> Dict[str, Any]:
     if "mcp_servers" in preview:
         preview["mcp_servers"] = sanitize_mcp_servers_for_response(preview.get("mcp_servers"))
     return preview
-
-
-def _admin_decision(kwargs: Dict[str, Any], *, action: str) -> Dict[str, Any]:
-    if not bool(kwargs.get("admin_approved")):
-        return {
-            "decision": "deny",
-            "reason": f"admin_approved=true is required before {action}",
-        }
-    reviewer = str(kwargs.get("reviewer") or "").strip()
-    if not reviewer:
-        return {"decision": "deny", "reason": "reviewer is required"}
-    expected = os.getenv("AGENT_MANAGER_ADMIN_TOKEN", "").strip()
-    if expected and str(kwargs.get("admin_token") or "") != expected:
-        return {"decision": "deny", "reason": "valid admin_token is required"}
-    return {"decision": "allow"}
 
 
 def _is_masked_api_key(value: Any) -> bool:
@@ -478,18 +455,23 @@ class ValidateAgentConfigPatchCapability(CapabilityBase):
         }
 
 
-class ProposeAgentConfigPatchCapability(CapabilityBase):
-    """Preview a controlled Agent config patch without writing files."""
+class UpdateAgentConfigCapability(CapabilityBase):
+    """A10：调用即生效的 Agent 配置更新工具。
+
+    替代旧的 ``propose_agent_config_patch`` + ``apply_agent_config_patch`` 两段
+    式审批流程。审计走 structlog ``config_change`` 日志，回溯靠 git。
+    """
 
     @property
     def name(self) -> str:
-        return "propose_agent_config_patch"
+        return "update_agent_config"
 
     @property
     def description(self) -> str:
         return get_tool_description(
             self.name,
-            "只读 Agent 配置补丁提案工具：生成应用后的脱敏配置预览，不写入文件。",
+            "Agent 配置更新工具：直接合并 patch 到 config/agents.yaml 的目标 Agent，"
+            "调用即生效，不需要 admin_approved/reviewer。修改完会触发热重载，失败会回滚。",
         )
 
     def get_schema(self) -> CapabilitySchema:
@@ -499,113 +481,36 @@ class ProposeAgentConfigPatchCapability(CapabilityBase):
             parameters={
                 "type": "object",
                 "properties": {
-                    "agent_name": {"type": "string", "description": "目标 Agent 名称。"},
-                    "patch": {"type": "object", "description": "字段级补丁；只允许受控字段。"},
-                    "allow_high_risk_tools": {
-                        "type": "boolean",
-                        "description": "是否允许提案包含高风险工具。",
-                        "default": False,
+                    "agent_name": {
+                        "type": "string",
+                        "description": "目标 Agent 名称。",
                     },
-                    "reason": {"type": "string", "description": "可选，提案原因或审查说明。"},
+                    "patch": {
+                        "type": "object",
+                        "description": (
+                            "字段级补丁；支持 description / system_prompt / tools / "
+                            "output_format / max_iterations / llm / skills / mcp_servers / "
+                            "default_workspace_id / default_workspace_root。"
+                        ),
+                    },
                 },
                 "required": ["agent_name", "patch"],
             },
-            returns="补丁提案、脱敏后的当前配置和应用后配置预览。",
-            is_read_only=True,
-            is_concurrency_safe=True,
-            max_result_size=20000,
-        )
-
-    async def execute(self, **kwargs: Any) -> Dict[str, Any]:
-        agent_name = str(kwargs.get("agent_name") or "").strip()
-        patch, errors = _validate_patch(
-            kwargs.get("patch"),
-            allow_high_risk_tools=bool(kwargs.get("allow_high_risk_tools", False)),
-        )
-        data = _load_agents_yaml()
-        agent = _find_agent(data, agent_name) if agent_name else None
-        if not agent_name:
-            errors.append("agent_name is required")
-        elif not agent:
-            errors.append(f"agent '{agent_name}' not found")
-        errors.extend(_validate_agent_specific_patch(agent_name, patch))
-        if errors:
-            return {"success": False, "valid": False, "errors": errors}
-
-        proposed = _apply_patch_to_agent(agent, patch or {})
-        return {
-            "success": True,
-            "valid": True,
-            "agent_name": agent_name,
-            "reason": str(kwargs.get("reason") or "").strip(),
-            "changed_fields": sorted((patch or {}).keys()),
-            "patch_preview": _sanitize_patch_preview(patch or {}),
-            "current_agent": _sanitize_agent_config(agent),
-            "proposed_agent": _sanitize_agent_config(proposed),
-            "requires_admin_approval": True,
-            "apply_requirements": {
-                "admin_approved": True,
-                "reviewer": "non-empty string",
-            },
-        }
-
-
-class ApplyAgentConfigPatchCapability(CapabilityBase):
-    """Apply a controlled Agent config patch with explicit admin approval."""
-
-    @property
-    def name(self) -> str:
-        return "apply_agent_config_patch"
-
-    @property
-    def description(self) -> str:
-        return get_tool_description(
-            self.name,
-            "受控 Agent 配置补丁应用工具：仅修改 config/agents.yaml 的白名单字段，要求 admin_approved=true 和 reviewer，热重载失败会回滚。",
-        )
-
-    def get_schema(self) -> CapabilitySchema:
-        return CapabilitySchema(
-            name=self.name,
-            description=self.description,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "agent_name": {"type": "string", "description": "目标 Agent 名称。"},
-                    "patch": {"type": "object", "description": "字段级补丁；只允许受控字段。"},
-                    "allow_high_risk_tools": {
-                        "type": "boolean",
-                        "description": "是否允许写入 bash/write_file/create_agent_config/create_dynamic_tool_config/dispatch_agent。",
-                        "default": False,
-                    },
-                    "admin_approved": {"type": "boolean", "description": "必须显式为 true。", "default": False},
-                    "reviewer": {"type": "string", "description": "管理员/审核人标识，不能为空。"},
-                    "admin_token": {
-                        "type": "string",
-                        "description": "如果配置 AGENT_MANAGER_ADMIN_TOKEN，则必须提供匹配 token。",
-                    },
-                },
-                "required": ["agent_name", "patch", "admin_approved", "reviewer"],
-            },
-            returns="写入结果、脱敏后的 Agent 配置、审计信息和 reload 状态。",
+            returns="写入结果、changed_fields、脱敏后的 Agent 配置和 reload 状态。",
             is_read_only=False,
             is_concurrency_safe=False,
             max_result_size=20000,
         )
 
-    def check_permissions(self, **kwargs: Any) -> Dict[str, Any]:
-        return _admin_decision(kwargs, action="applying agent config patch")
-
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:
-        permit = self.check_permissions(**kwargs)
-        if permit.get("decision") != "allow":
-            return {"error": permit.get("reason"), "permission_denied": True}
-
         agent_name = str(kwargs.get("agent_name") or "").strip()
+        # A10：HIGH_RISK_TOOLS 放开 — allow_high_risk_tools=True 让 _validate_patch 不再
+        # 因为 bash/dispatch_agent 等工具拒绝写入；安全靠 system.yaml forbidden_tools。
         patch, errors = _validate_patch(
             kwargs.get("patch"),
-            allow_high_risk_tools=bool(kwargs.get("allow_high_risk_tools", False)),
+            allow_high_risk_tools=True,
         )
+
         data = _load_agents_yaml()
         previous_data = deepcopy(data)
         agents: List[Dict[str, Any]] = data.get("agents", [])
@@ -614,6 +519,7 @@ class ApplyAgentConfigPatchCapability(CapabilityBase):
             if isinstance(agent, dict) and agent.get("name") == agent_name:
                 target_index = index
                 break
+
         if not agent_name:
             errors.append("agent_name is required")
         elif target_index < 0:
@@ -635,16 +541,21 @@ class ApplyAgentConfigPatchCapability(CapabilityBase):
                 "rolled_back": True,
             }
 
+        changed_fields = sorted((patch or {}).keys())
+        logger.info(
+            "config_change",
+            extra={
+                "action": "update_agent",
+                "agent": agent_name,
+                "changed_fields": changed_fields,
+            },
+        )
+
         return {
             "success": True,
             "agent_name": agent_name,
-            "changed_fields": sorted((patch or {}).keys()),
+            "changed_fields": changed_fields,
             "agent": _sanitize_agent_config(updated_agent),
             "reload_executed": reload_executed,
             "reload_message": reload_message,
-            "audit": {
-                "admin_approved": True,
-                "reviewer": str(kwargs.get("reviewer") or "").strip(),
-                "allow_high_risk_tools": bool(kwargs.get("allow_high_risk_tools", False)),
-            },
         }

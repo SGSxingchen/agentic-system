@@ -301,3 +301,14 @@ class TestLoadConfig:
         result = load_config(config_path=tmp_path / "missing.yaml", config_dir=tmp_path / "missing-dir")
 
         assert result["tools"]["web_search"]["provider"] == "brave"
+
+
+def test_system_yaml_has_llm_retry_config():
+    """A6: system.yaml 应暴露重试配置。"""
+    root = Path(__file__).parent.parent.parent.parent
+    data = yaml.safe_load((root / "config" / "system.yaml").read_text(encoding="utf-8"))
+    llm_cfg = data.get("llm") or {}
+    assert "max_retries" in llm_cfg
+    assert isinstance(llm_cfg["max_retries"], int) and llm_cfg["max_retries"] >= 0
+    assert "retry_initial_delay" in llm_cfg
+    assert isinstance(llm_cfg["retry_initial_delay"], (int, float))

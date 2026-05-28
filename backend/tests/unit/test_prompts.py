@@ -133,8 +133,7 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
     agent_manager_tools = {
         "read_agent_config",
         "validate_agent_config_patch",
-        "propose_agent_config_patch",
-        "apply_agent_config_patch",
+        "update_agent_config",
     }
     assert set(by_name["agent_manager"]["tools"]) == agent_manager_tools
     for name, item in by_name.items():
@@ -147,8 +146,7 @@ def test_agent_yaml_prompts_follow_unified_sections_and_json_contracts():
         "manage_persona_definition",
         "manage_persona_binding",
         "record_persona_feedback",
-        "generate_persona_patch_proposal",
-        "apply_confirmed_persona_patch",
+        "update_persona",
         "list_persona_patch_history",
     }
     assert set(by_name["persona_evolution"]["tools"]) == persona_tools

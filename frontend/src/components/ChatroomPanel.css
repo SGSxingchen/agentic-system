@@ -298,6 +298,21 @@
   color: var(--color-text-primary);
 }
 
+.agent-model-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--color-border-subtle, rgba(0, 0, 0, 0.08));
+  border-radius: 4px;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .chatroom-msg__time {
   color: var(--color-text-faint);
   font-size: 11px;
@@ -566,6 +581,68 @@
   gap: 12px;
 }
 
+/* B1 — 待发送附件草稿条 */
+.chatroom-composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.chatroom-composer__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  font-size: 12px;
+  background: var(--color-surface-2, #f6f6f7);
+  max-width: 240px;
+}
+
+.chatroom-composer__chip-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.chatroom-composer__chip-icon {
+  font-size: 14px;
+}
+
+.chatroom-composer__chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+.chatroom-composer__chip-remove {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-secondary, #888);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.chatroom-composer__chip-remove:hover {
+  color: var(--color-danger, #c33);
+}
+
+.chatroom-composer__chip--uploading {
+  color: var(--color-text-secondary, #888);
+  background: transparent;
+  border-style: dashed;
+}
+
+.chatroom-composer__attach-btn {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
 .chatroom-mention-picker {
   position: absolute;
   bottom: calc(100% + 4px);
@@ -742,6 +819,27 @@
   font-size: 11.5px;
 }
 
+.chatroom-settings__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chatroom-settings__label > span {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chatroom-settings__hint {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-size: 10.5px;
+  line-height: 1.35;
+  font-weight: 400;
+}
+
 .chatroom-settings__row input[type='number'] {
   text-align: right;
   font-size: 12px;
@@ -860,4 +958,122 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ─── Spec 2 §9.5 / Task 17：TodoBanner + Subgoal 列表 ─── */
+
+.chatroom-subgoals {
+  margin-top: 6px;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--color-border);
+}
+
+.chatroom-subgoals__list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chatroom-subgoal {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+}
+
+.chatroom-subgoal__check {
+  width: 14px;
+  display: inline-block;
+  text-align: center;
+}
+
+.chatroom-subgoal--done {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.chatroom-todos {
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-2, var(--color-bg-elevated, #f7f9fb));
+}
+
+.chatroom-todos__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+
+.chatroom-todos__title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.chatroom-todos__counts {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.chatroom-todos__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chatroom-todo {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 2px 0;
+}
+
+.chatroom-todo--completed {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.chatroom-todo--blocked {
+  color: var(--color-warning, #c97600);
+}
+
+.chatroom-todo--in_progress {
+  color: var(--color-primary-dark, #2d5fa6);
+}
+
+.chatroom-todo__status-badge {
+  width: 14px;
+  display: inline-block;
+  text-align: center;
+}
+
+.chatroom-todo__assignee {
+  display: inline-block;
+  background: var(--color-primary-light, #eaf2ff);
+  color: var(--color-primary-dark, #2d5fa6);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  margin-right: 2px;
+}
+
+.chatroom-todo__content {
+  flex: 1;
+  word-break: break-word;
+}
+
+.chatroom-todo__notes {
+  cursor: help;
+  color: var(--color-warning, #c97600);
 }

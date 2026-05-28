@@ -25,6 +25,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from xml.sax.saxutils import escape as _xml_escape
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -43,6 +44,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "max_relay_depth": 3,
     "max_members": 20,
     "allow_agent_invite": True,
+    "auto_memory": True,
+    "allow_subagent_dispatch": False,
 }
 
 
@@ -172,6 +175,8 @@ class ChatroomStore:
             "topic": str(topic or ""),
             "goal": str(goal).strip() if isinstance(goal, str) and goal.strip() else None,
             "goal_history": [],
+            "goal_subgoals": [],
+            "todos": [],
             "members": [str(m).strip() for m in (members or []) if str(m).strip()],
             "dynamic_members": [
                 self._normalize_dynamic_member(item)
@@ -216,6 +221,8 @@ class ChatroomStore:
                 "topic",
                 "goal",
                 "goal_history",
+                "goal_subgoals",
+                "todos",
                 "members",
                 "dynamic_members",
                 "workspace_id",
@@ -460,6 +467,20 @@ class ChatroomStore:
         if not isinstance(goal_history, list):
             goal_history = []
 
+        goal_subgoals_raw = raw.get("goal_subgoals")
+        goal_subgoals = (
+            [self._normalize_subgoal(item) for item in goal_subgoals_raw if isinstance(item, dict)]
+            if isinstance(goal_subgoals_raw, list)
+            else []
+        )
+
+        todos_raw = raw.get("todos")
+        todos = (
+            [self._normalize_todo(item) for item in todos_raw if isinstance(item, dict)]
+            if isinstance(todos_raw, list)
+            else []
+        )
+
         return {
             "id": str(raw["id"]),
             "title": str(raw.get("title") or "新房间"),
@@ -470,6 +491,8 @@ class ChatroomStore:
                 else None
             ),
             "goal_history": list(goal_history),
+            "goal_subgoals": goal_subgoals,
+            "todos": todos,
             "members": members,
             "dynamic_members": dynamic_members,
             "workspace_id": (
@@ -508,6 +531,232 @@ class ChatroomStore:
             "role_prompt": str(item.get("role_prompt") or ""),
             "base_agent": str(item.get("base_agent") or "generic"),
         }
+
+    @staticmethod
+    def _normalize_subgoal(item: Dict[str, Any]) -> Dict[str, Any]:
+        sub_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:8]
+        status = str(item.get("status") or "pending").strip() or "pending"
+        if status not in ("pending", "done"):
+            status = "pending"
+        return {
+            "id": sub_id,
+            "content": str(item.get("content") or ""),
+            "status": status,
+            "created_at": str(item.get("created_at") or _utc_now()),
+            "done_at": (
+                str(item["done_at"])
+                if isinstance(item.get("done_at"), str) and item["done_at"]
+                else None
+            ),
+        }
+
+    def apply_goal_subgoal_op(
+        self,
+        room_id: str,
+        operation: str,
+        *,
+        content: Optional[str] = None,
+        subgoal_id: Optional[str] = None,
+        by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Apply ``add_subgoal`` / ``mark_done`` / ``remove_subgoal`` / ``revise``.
+
+        Returns ``{"ok": True, "subgoal": ..., "room": ...}`` on success or
+        ``{"error": "..."}`` on failure. ``revise`` archives the previous main
+        goal into ``goal_history`` and replaces ``room.goal``.
+        """
+
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return {"error": f"chatroom '{room_id}' not found"}
+
+            subs = list(room.get("goal_subgoals") or [])
+            now = _utc_now()
+            speaker = (by or "unknown").strip() or "unknown"
+
+            if operation == "add_subgoal":
+                if not (content or "").strip():
+                    return {"error": "content is required for add_subgoal"}
+                new_sub = {
+                    "id": uuid.uuid4().hex[:8],
+                    "content": content.strip(),
+                    "status": "pending",
+                    "created_at": now,
+                    "done_at": None,
+                }
+                subs.append(new_sub)
+                room["goal_subgoals"] = subs
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "subgoal": new_sub, "room": deepcopy(room)}
+
+            if operation == "mark_done":
+                if not subgoal_id:
+                    return {"error": "subgoal_id is required for mark_done"}
+                target = next((s for s in subs if s.get("id") == subgoal_id), None)
+                if target is None:
+                    return {"error": f"subgoal '{subgoal_id}' not found"}
+                target["status"] = "done"
+                target["done_at"] = now
+                room["goal_subgoals"] = subs
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "subgoal": deepcopy(target), "room": deepcopy(room)}
+
+            if operation == "remove_subgoal":
+                if not subgoal_id:
+                    return {"error": "subgoal_id is required for remove_subgoal"}
+                new_subs = [s for s in subs if s.get("id") != subgoal_id]
+                if len(new_subs) == len(subs):
+                    return {"error": f"subgoal '{subgoal_id}' not found"}
+                room["goal_subgoals"] = new_subs
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "removed": subgoal_id, "room": deepcopy(room)}
+
+            if operation == "revise":
+                if not (content or "").strip():
+                    return {"error": "content is required for revise"}
+                history = list(room.get("goal_history") or [])
+                previous = (room.get("goal") or "").strip()
+                history.append(
+                    {
+                        "goal": previous or None,
+                        "set_by": speaker,
+                        "set_at": now,
+                    }
+                )
+                room["goal"] = content.strip()
+                room["goal_history"] = history
+                room["updated_at"] = now
+                self._write_room(room)
+                return {"ok": True, "goal": room["goal"], "room": deepcopy(room)}
+
+            return {"error": f"unknown operation '{operation}'"}
+
+    @staticmethod
+    def _normalize_todo(item: Dict[str, Any]) -> Dict[str, Any]:
+        todo_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:10]
+        status = str(item.get("status") or "pending").strip() or "pending"
+        if status not in ("pending", "in_progress", "completed", "blocked"):
+            status = "pending"
+        return {
+            "id": todo_id,
+            "content": str(item.get("content") or ""),
+            "status": status,
+            "assignee": (
+                str(item["assignee"]).strip()
+                if isinstance(item.get("assignee"), str) and item["assignee"].strip()
+                else None
+            ),
+            "created_at": str(item.get("created_at") or _utc_now()),
+            "updated_at": str(item.get("updated_at") or _utc_now()),
+            "parent_dispatch_id": (
+                str(item["parent_dispatch_id"])
+                if isinstance(item.get("parent_dispatch_id"), str)
+                and item["parent_dispatch_id"]
+                else None
+            ),
+            "notes": (
+                str(item["notes"])
+                if isinstance(item.get("notes"), str) and item["notes"]
+                else None
+            ),
+        }
+
+    def add_todo(
+        self,
+        room_id: str,
+        content: str,
+        *,
+        assignee: Optional[str] = None,
+        parent_dispatch_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return None
+            now = _utc_now()
+            todo = {
+                "id": uuid.uuid4().hex[:10],
+                "content": str(content or ""),
+                "status": "pending",
+                "assignee": str(assignee).strip() if assignee else None,
+                "created_at": now,
+                "updated_at": now,
+                "parent_dispatch_id": (
+                    str(parent_dispatch_id) if parent_dispatch_id else None
+                ),
+                "notes": None,
+            }
+            todos = list(room.get("todos") or [])
+            todos.append(todo)
+            room["todos"] = todos
+            room["updated_at"] = now
+            self._write_room(room)
+            return deepcopy(todo)
+
+    def update_todo(
+        self,
+        room_id: str,
+        todo_id: str,
+        **fields: Any,
+    ) -> Optional[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return None
+            todos = list(room.get("todos") or [])
+            target = next((t for t in todos if t.get("id") == todo_id), None)
+            if target is None:
+                return None
+            allowed = {"content", "status", "assignee", "notes"}
+            for key, value in fields.items():
+                if key not in allowed:
+                    continue
+                target[key] = value
+            target["updated_at"] = _utc_now()
+            room["todos"] = todos
+            room["updated_at"] = target["updated_at"]
+            self._write_room(room)
+            return deepcopy(target)
+
+    def list_todos(self, room_id: str) -> List[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return []
+            return deepcopy(room.get("todos") or [])
+
+    def delete_todo(self, room_id: str, todo_id: str) -> bool:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return False
+            todos = list(room.get("todos") or [])
+            new_todos = [t for t in todos if t.get("id") != todo_id]
+            if len(new_todos) == len(todos):
+                return False
+            room["todos"] = new_todos
+            room["updated_at"] = _utc_now()
+            self._write_room(room)
+            return True
+
+    def find_todos_by_dispatch(
+        self,
+        room_id: str,
+        parent_dispatch_id: str,
+    ) -> List[Dict[str, Any]]:
+        with self._LOCK:
+            room = self._read_room(room_id)
+            if room is None:
+                return []
+            return [
+                deepcopy(t)
+                for t in (room.get("todos") or [])
+                if t.get("parent_dispatch_id") == parent_dispatch_id
+            ]
 
     @staticmethod
     def _normalize_message(message: Dict[str, Any], room_id: str) -> Dict[str, Any]:
@@ -576,12 +825,15 @@ def _format_history_message(
 ) -> Optional[Dict[str, str]]:
     """把房间内一条消息映射为 LLM messages 列表里的一项。
 
-    - ``user`` → role=user
-    - ``agent:<name>`` → role=assistant；正文加 ``[<name>]:`` 前缀，
-      让被叫的 agent 区分自己/他人。
-    - ``system`` → role=user，前缀 ``[system]:``（保险起见兜底为 user，
-      避免某些 LLM provider 多 system 消息时合并报错）。
+    Spec 2 §7.3 — 角色映射：
+    - 自己（target agent）→ ``role=assistant``，正文原样返回（这是模型自己说过的话）。
+    - 用户 → ``role=user``，包成 ``<msg id="" from="user" at="" mentions="">原文</msg>``。
+    - 别的 Agent → ``role=user``，包成 ``<msg id="" from="<agent>" at="" mentions="" parent="">原文</msg>``。
+    - 系统消息 → ``role=user``，包成 ``<system_event at="">原文</system_event>``。
+    - 未知 sender → ``role=user``，包成 ``<unknown_msg from="<sender>">原文</unknown_msg>``。
     - status != ``done`` 的消息直接跳过。
+
+    XML 仅转义内容中的 ``<`` ``>`` ``&``（属性值由我们生成，无需转义引号）。
     """
 
     if message.get("status") != "done":
@@ -592,17 +844,49 @@ def _format_history_message(
     if not content.strip():
         return None
 
+    # 自己的发言：原文回放（assistant role 只有自己说过的话，避免 LM 角色混淆）
+    if sender == f"agent:{target_agent_name}":
+        return {"role": "assistant", "content": content}
+
+    msg_id = str(message.get("id") or "")
+    sent_at = str(message.get("created_at") or "")
+    mentions_raw = message.get("mentions") or []
+    mentions = [str(m) for m in mentions_raw if str(m).strip()]
+    parent = str(message.get("parent_message_id") or "")
+    safe_content = _xml_escape(content)
+
     if sender == "user":
-        return {"role": "user", "content": content}
+        attrs = [f'id="{msg_id}"', 'from="user"', f'at="{sent_at}"']
+        if mentions:
+            attrs.append(f'mentions="{",".join(mentions)}"')
+        return {
+            "role": "user",
+            "content": f"<msg {' '.join(attrs)}>{safe_content}</msg>",
+        }
+
     if sender.startswith("agent:"):
         name = sender.split(":", 1)[1] or "agent"
-        if name == target_agent_name:
-            return {"role": "assistant", "content": content}
-        return {"role": "assistant", "content": f"[{name}]: {content}"}
+        attrs = [f'id="{msg_id}"', f'from="{name}"', f'at="{sent_at}"']
+        if mentions:
+            attrs.append(f'mentions="{",".join(mentions)}"')
+        if parent:
+            attrs.append(f'parent="{parent}"')
+        return {
+            "role": "user",
+            "content": f"<msg {' '.join(attrs)}>{safe_content}</msg>",
+        }
+
     if sender == "system":
-        return {"role": "user", "content": f"[system]: {content}"}
-    # 兜底：未知 sender 当 system 处理
-    return {"role": "user", "content": f"[{sender}]: {content}"}
+        return {
+            "role": "user",
+            "content": f'<system_event at="{sent_at}">{safe_content}</system_event>',
+        }
+
+    # 兜底：未知 sender 用 <unknown_msg>
+    return {
+        "role": "user",
+        "content": f'<unknown_msg from="{sender}">{safe_content}</unknown_msg>',
+    }
 
 
 def build_room_context(
@@ -613,14 +897,27 @@ def build_room_context(
 ) -> List[Dict[str, str]]:
     """拼装房间上下文为 OpenAI/Anthropic 通用 messages 列表。
 
-    第一条 system 块按 spec §3.3 顺序：房间主题 / 当前主要目标 /
-    房间背景摘要 / 当前任务说明（含其他成员名）。
+    Spec 2 §7.4 — 第一条 system 块改为 XML 结构::
+
+        <chatroom_context>
+          <topic>...</topic>
+          <goal current="...">...</goal>
+          <summary>...</summary>
+          <members self="<target>">name1,name2,...</members>
+          <protocol>{CHATROOM_COLLABORATION_PROTOCOL}</protocol>
+        </chatroom_context>
+
+    用户输入字段（topic / goal / summary / members CSV / target name）做 XML 转义；
+    协议常量是受信任文本，不做转义（避免破坏 markdown 风格的 ``✅`` / ``❌``）。
 
     Args:
         room: ``ChatroomStore.get_room(...)`` 返回的字典。
-        target_agent_name: 即将发言的 Agent 名（用于 history 前缀切换）。
+        target_agent_name: 即将发言的 Agent 名（用于 history 前缀切换 + self attr）。
         recent_n: 覆盖 ``settings.recent_n``；None 时使用房间设置。
     """
+
+    # 延迟导入避免循环依赖
+    from .prompts import CHATROOM_COLLABORATION_PROTOCOL
 
     settings = room.get("settings") or {}
     if recent_n is None:
@@ -636,30 +933,30 @@ def build_room_context(
         m.get("name") for m in (room.get("dynamic_members") or []) if m.get("name")
     ]
     all_members = list(dict.fromkeys(members + dynamic_names))
-    others = [name for name in all_members if name != target_agent_name]
 
-    topic = (room.get("topic") or "").strip() or "（未设定）"
-    goal = (room.get("goal") or "").strip() or "（未设定，请根据对话推断）"
-    summary = (room.get("summary") or "").strip() or "（暂无摘要）"
+    topic_raw = (room.get("topic") or "").strip() or "（未设定）"
+    goal_raw = (room.get("goal") or "").strip() or "（未设定，请根据对话推断）"
+    summary_raw = (room.get("summary") or "").strip() or "（暂无摘要）"
 
-    others_label = "、".join(others) if others else "（暂无）"
+    members_csv = ",".join(all_members)
+    safe_topic = _xml_escape(topic_raw)
+    safe_goal = _xml_escape(goal_raw)
+    safe_summary = _xml_escape(summary_raw)
+    safe_members_csv = _xml_escape(members_csv)
+    safe_target = _xml_escape(target_agent_name)
 
-    system_blocks = [
-        "[房间主题]",
-        topic,
-        "",
-        "[当前主要目标]",
-        goal,
-        "",
-        "[房间背景摘要]",
-        summary,
-        "",
-        "[当前任务]",
-        f"你是群聊成员 {target_agent_name}。请在该群聊中发言。",
-        f"其他成员：{others_label}。",
-        "你可以用 @<name> 来召唤成员接力发言。",
-    ]
-    system_message = {"role": "system", "content": "\n".join(system_blocks)}
+    system_text = (
+        "<chatroom_context>\n"
+        f"  <topic>{safe_topic}</topic>\n"
+        f"  <goal>{safe_goal}</goal>\n"
+        f"  <summary>{safe_summary}</summary>\n"
+        f'  <members self="{safe_target}">{safe_members_csv}</members>\n'
+        "  <protocol>\n"
+        f"{CHATROOM_COLLABORATION_PROTOCOL}\n"
+        "  </protocol>\n"
+        "</chatroom_context>"
+    )
+    system_message = {"role": "system", "content": system_text}
 
     messages: List[Dict[str, str]] = list(room.get("messages") or [])
     recent = messages[-recent_n:] if recent_n else []

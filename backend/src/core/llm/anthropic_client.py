@@ -2,7 +2,7 @@
 import json
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from .base import BaseLLMClient, LLMResponse, LLMStreamEvent, ToolCall
 
@@ -21,6 +21,9 @@ class AnthropicClient(BaseLLMClient):
         self.model = model
         self.base_url = base_url
         self.generation_config = generation_config or {}
+        # A6: LLM 调用重试配置（来自 system.yaml.llm.max_retries / retry_initial_delay）
+        self._max_retries = int(self.generation_config.get("max_retries", 3) or 0)
+        self._retry_initial_delay = float(self.generation_config.get("retry_initial_delay", 1.0))
         try:
             from anthropic import AsyncAnthropic
 
@@ -35,18 +38,69 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> LLMResponse:
         """发送聊天消息，支持 tool_use"""
-        # 分离 system 消息
-        system_msg = ""
-        api_messages = []
+        system_msg, api_messages = self._split_system_and_convert(messages)
 
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": api_messages,
+        }
+        kwargs.update(self._request_options())
+
+        if system_msg:
+            kwargs["system"] = system_msg
+
+        if tools:
+            kwargs["tools"] = self._convert_tools(tools)
+
+        from .retry import call_with_retry  # 局部 import 防循环
+
+        start = time.perf_counter()
+        response = await call_with_retry(
+            lambda: self.client.messages.create(**kwargs),
+            max_retries=getattr(self, "_max_retries", 3),
+            initial_delay=getattr(self, "_retry_initial_delay", 1.0),
+            on_retry=on_retry,
+        )
+        parsed = self._parse_response(response)
+        parsed.elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        return parsed
+
+    @classmethod
+    def _split_system_and_convert(
+        cls, messages: List[Dict[str, Any]]
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Split out the system message and convert the rest for the API."""
+
+        system_msg = ""
+        rest: List[Dict[str, Any]] = []
         for msg in messages:
-            if msg["role"] == "system":
-                system_msg = msg["content"]
-            elif msg["role"] == "tool":
-                # Anthropic 格式: tool_result content block
-                api_messages.append(
+            if msg.get("role") == "system":
+                system_msg = str(msg.get("content") or "")
+            else:
+                rest.append(msg)
+        return system_msg, cls._convert_messages_for_api(rest)
+
+    @classmethod
+    def _convert_messages_for_api(
+        cls, messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Translate neutral messages into Anthropic Messages API shape.
+
+        Handles three special cases:
+        * ``role="tool"``  →  ``user`` message with a ``tool_result`` block.
+        * Assistant turns with ``tool_calls``  →  ``tool_use`` content blocks.
+        * Multipart user content carrying neutral ``image`` blocks  →  Anthropic
+          image source (``base64`` when data is provided, ``url`` as fallback).
+        """
+
+        converted: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "tool":
+                converted.append(
                     {
                         "role": "user",
                         "content": [
@@ -58,9 +112,9 @@ class AnthropicClient(BaseLLMClient):
                         ],
                     }
                 )
-            elif msg["role"] == "assistant" and msg.get("tool_calls"):
-                # 将 tool_calls 转回 Anthropic 的 tool_use content block
-                content_blocks = []
+                continue
+            if role == "assistant" and msg.get("tool_calls"):
+                content_blocks: List[Dict[str, Any]] = []
                 if msg.get("content"):
                     content_blocks.append({"type": "text", "text": msg["content"]})
                 for tc in msg["tool_calls"]:
@@ -82,27 +136,53 @@ class AnthropicClient(BaseLLMClient):
                                 "input": tc.get("arguments", {}),
                             }
                         )
-                api_messages.append({"role": "assistant", "content": content_blocks})
+                converted.append({"role": "assistant", "content": content_blocks})
+                continue
+
+            content = msg.get("content")
+            if isinstance(content, list):
+                normalized = dict(msg)
+                normalized["content"] = cls._convert_content_parts(content)
+                converted.append(normalized)
             else:
-                api_messages.append(msg)
+                converted.append(msg)
+        return converted
 
-        kwargs: Dict[str, Any] = {
-            "model": self.model,
-            "messages": api_messages,
-        }
-        kwargs.update(self._request_options())
+    @staticmethod
+    def _convert_content_parts(parts: List[Any]) -> List[Dict[str, Any]]:
+        """Translate neutral multipart content into Anthropic's expected shape."""
 
-        if system_msg:
-            kwargs["system"] = system_msg
-
-        if tools:
-            kwargs["tools"] = self._convert_tools(tools)
-
-        start = time.perf_counter()
-        response = await self.client.messages.create(**kwargs)
-        parsed = self._parse_response(response)
-        parsed.elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        return parsed
+        out: List[Dict[str, Any]] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type")
+            if ptype == "image":
+                data = part.get("data") or ""
+                url = part.get("url") or ""
+                mime = part.get("mime_type") or "image/png"
+                if data:
+                    out.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime,
+                                "data": data,
+                            },
+                        }
+                    )
+                elif url:
+                    out.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": url},
+                        }
+                    )
+                # else drop — empty image block.
+            else:
+                out.append(part)
+        return out
 
     @staticmethod
     def _convert_tools(schemas: List[Any]) -> List[Dict[str, Any]]:
@@ -166,34 +246,15 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """流式聊天 — 逐步 yield 文本片段和工具调用
 
-        使用 create(stream=True) 以兼容第三方代理。
+        使用 create(stream=True) 以兼容第三方代理。``on_retry`` 仅作用于建立流前的
+        瞬态错误；流中途断开走原有 non-stream 回退（spec §R2: 不静默重启流）。
         """
         # 复用消息转换逻辑
-        system_msg = ""
-        api_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_msg = msg["content"]
-            elif msg["role"] == "tool":
-                api_messages.append({
-                    "role": "user",
-                    "content": [{"type": "tool_result", "tool_use_id": msg.get("tool_call_id", ""), "content": msg.get("content", "")}],
-                })
-            elif msg["role"] == "assistant" and msg.get("tool_calls"):
-                content_blocks = []
-                if msg.get("content"):
-                    content_blocks.append({"type": "text", "text": msg["content"]})
-                for tc in msg["tool_calls"]:
-                    if isinstance(tc, ToolCall):
-                        content_blocks.append({"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.arguments})
-                    elif isinstance(tc, dict):
-                        content_blocks.append({"type": "tool_use", "id": tc.get("id", ""), "name": tc.get("name", ""), "input": tc.get("arguments", {})})
-                api_messages.append({"role": "assistant", "content": content_blocks})
-            else:
-                api_messages.append(msg)
+        system_msg, api_messages = self._split_system_and_convert(messages)
 
         kwargs: Dict[str, Any] = {
             "model": self.model,
@@ -215,7 +276,14 @@ class AnthropicClient(BaseLLMClient):
         start = time.perf_counter()
 
         try:
-            stream = await self.client.messages.create(**kwargs)
+            from .retry import call_with_retry  # 局部 import 防循环
+
+            stream = await call_with_retry(
+                lambda: self.client.messages.create(**kwargs),
+                max_retries=getattr(self, "_max_retries", 3),
+                initial_delay=getattr(self, "_retry_initial_delay", 1.0),
+                on_retry=on_retry,
+            )
             async for event in stream:
                 event_usage = None
                 if hasattr(event, "usage"):

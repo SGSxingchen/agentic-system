@@ -68,6 +68,19 @@ def test_list_rooms_sorted_by_updated_at(store: ChatroomStore):
     assert summaries[0]["message_count"] == 0
 
 
+def test_default_settings_includes_auto_memory():
+    """A1: 房间默认开启 auto_memory，无需用户显式打开。"""
+    assert "auto_memory" in DEFAULT_SETTINGS
+    assert DEFAULT_SETTINGS["auto_memory"] is True
+
+
+def test_create_room_inherits_auto_memory_default(tmp_path):
+    """create_room 不传 settings 时，auto_memory 应来自 DEFAULT_SETTINGS。"""
+    store = ChatroomStore(root=tmp_path)
+    room = store.create_room(title="t1", topic="topic", goal="goal", members=[])
+    assert room["settings"]["auto_memory"] is True
+
+
 def test_update_and_delete_room(store: ChatroomStore):
     room = store.create_room(title="X", members=["planner"])
     updated = store.update_room(
@@ -267,23 +280,96 @@ def _make_room_with_messages(store: ChatroomStore):
 
 
 def test_build_room_context_system_block_layout(store: ChatroomStore):
+    """旧版"plain-text headers"已替换为 XML 结构（spec 2 §7.4）。"""
+
     room = _make_room_with_messages(store)
     messages = build_room_context(room, "planner", recent_n=10)
 
     assert messages[0]["role"] == "system"
     sys_text = messages[0]["content"]
-    # Order matters: topic → goal → summary → 当前任务
-    topic_idx = sys_text.index("[房间主题]")
-    goal_idx = sys_text.index("[当前主要目标]")
-    summary_idx = sys_text.index("[房间背景摘要]")
-    task_idx = sys_text.index("[当前任务]")
-    assert topic_idx < goal_idx < summary_idx < task_idx
+    assert sys_text.startswith("<chatroom_context>")
+    assert sys_text.endswith("</chatroom_context>")
+    # 旧 plain-text 标题保留向后语义可读性，不再依赖（仅检查关键字段）
     assert "主题文本" in sys_text
     assert "目标-A" in sys_text
-    assert "（暂无摘要）" in sys_text
-    assert "你是群聊成员 planner" in sys_text
-    # 其他成员里应该出现 coder，不应包含自己
+    # planner 是 target；coder 在成员里
+    assert 'self="planner"' in sys_text
     assert "coder" in sys_text
+
+
+def test_build_room_context_system_block_uses_chatroom_context_xml(store: ChatroomStore):
+    room = _make_room_with_messages(store)
+    messages = build_room_context(room, "coder", recent_n=10)
+
+    assert messages[0]["role"] == "system"
+    text = messages[0]["content"]
+    assert text.startswith("<chatroom_context>")
+    assert text.endswith("</chatroom_context>")
+
+
+def test_build_room_context_system_block_contains_protocol_section(store: ChatroomStore):
+    room = _make_room_with_messages(store)
+    messages = build_room_context(room, "coder")
+
+    text = messages[0]["content"]
+    assert "<protocol>" in text
+    assert "</protocol>" in text
+    # protocol 内必含 chatroom_dispatch（来自 CHATROOM_COLLABORATION_PROTOCOL）
+    proto_open = text.index("<protocol>") + len("<protocol>")
+    proto_close = text.index("</protocol>")
+    proto_body = text[proto_open:proto_close]
+    assert "chatroom_dispatch" in proto_body
+    assert "[聊天室协作模式]" in proto_body
+
+
+def test_build_room_context_system_block_lists_members_with_self_attribute(
+    store: ChatroomStore,
+):
+    room = _make_room_with_messages(store)
+    messages = build_room_context(room, "coder")
+
+    text = messages[0]["content"]
+    # <members self="coder">planner,coder</members> 之类
+    assert '<members self="coder"' in text
+    assert "planner" in text
+    assert "coder" in text
+
+
+def test_build_room_context_system_block_protocol_constant_unchanged_across_targets(
+    store: ChatroomStore,
+):
+    room = _make_room_with_messages(store)
+    msgs_a = build_room_context(room, "planner")
+    msgs_b = build_room_context(room, "coder")
+
+    text_a = msgs_a[0]["content"]
+    text_b = msgs_b[0]["content"]
+
+    proto_a = text_a[text_a.index("<protocol>") : text_a.index("</protocol>") + len("</protocol>")]
+    proto_b = text_b[text_b.index("<protocol>") : text_b.index("</protocol>") + len("</protocol>")]
+    assert proto_a == proto_b
+
+
+def test_build_room_context_system_block_uses_xml_escape_for_topic_goal(
+    store: ChatroomStore,
+):
+    """topic / goal 用户输入需 XML 转义（< > & 不能注入到 system 块）。"""
+
+    room = store.create_room(
+        title="t",
+        topic="A & B <test>",
+        goal="目标 <urgent> & live",
+        members=["planner"],
+    )
+    full_room = store.get_room(room["id"])
+
+    messages = build_room_context(full_room, "planner")
+    text = messages[0]["content"]
+
+    assert "A &amp; B &lt;test&gt;" in text
+    assert "目标 &lt;urgent&gt; &amp; live" in text
+    # 原始未转义片段不应出现（避免 XML 注入）
+    assert "A & B <test>" not in text
 
 
 def test_build_room_context_skips_pending_and_prefixes_others(store: ChatroomStore):
@@ -294,12 +380,12 @@ def test_build_room_context_skips_pending_and_prefixes_others(store: ChatroomSto
     # pending 消息内容 "WIP" 不应出现
     assert all("WIP" not in c for c in contents)
 
-    # 自己的发言 (sender=agent:planner, "好的，我来安排") 不应带 [planner]: 前缀
+    # 自己的发言 (sender=agent:planner, "好的，我来安排") 直接原文返回，无 XML 包装
     assert any(c == "好的，我来安排" for c in contents)
-    # coder 的发言要带 [coder]: 前缀
-    assert any(c == "[coder]: 我准备实现" for c in contents)
-    # system 消息走 user 角色 + [system]: 前缀
-    assert any(c.startswith("[system]:") for c in contents)
+    # coder 的发言用 <msg from="coder" ...>...</msg> 包装
+    assert any('from="coder"' in c and "我准备实现" in c for c in contents)
+    # system 消息走 <system_event ...>...</system_event> 包装
+    assert any(c.startswith("<system_event") for c in contents)
 
 
 def test_build_room_context_recent_n_truncates(store: ChatroomStore):
@@ -314,7 +400,12 @@ def test_build_room_context_recent_n_truncates(store: ChatroomStore):
     messages = build_room_context(full_room, "planner", recent_n=5)
     history = messages[1:]
     assert len(history) == 5
-    assert [m["content"] for m in history] == [f"u{i}" for i in range(10, 15)]
+    # User 消息现在被包成 <msg ...>原文</msg>；只检查正文部分顺序
+    expected = [f">u{i}</msg>" for i in range(10, 15)]
+    actual_tails = [c.split('">')[-1] if '">' in c else c for c in (m["content"] for m in history)]
+    # 简化：直接检查每条 content 末尾包含 ">u{i}</msg>"
+    for i, msg in zip(range(10, 15), history):
+        assert f">u{i}</msg>" in msg["content"], msg["content"]
 
 
 def test_build_room_context_uses_settings_recent_n_by_default(store: ChatroomStore):
@@ -332,7 +423,9 @@ def test_build_room_context_uses_settings_recent_n_by_default(store: ChatroomSto
 
     messages = build_room_context(full_room, "planner")
     history = messages[1:]
-    assert [m["content"] for m in history] == ["u4", "u5"]
+    assert len(history) == 2
+    assert ">u4</msg>" in history[0]["content"]
+    assert ">u5</msg>" in history[1]["content"]
 
 
 def test_build_room_context_dynamic_members_in_others(store: ChatroomStore):
@@ -348,9 +441,8 @@ def test_build_room_context_dynamic_members_in_others(store: ChatroomStore):
     messages = build_room_context(full_room, "planner")
     sys_text = messages[0]["content"]
     assert "writer" in sys_text
-    # planner 是 target，不应在 others 里
-    other_section = sys_text.split("其他成员：", 1)[1]
-    assert "planner" not in other_section
+    # planner 是 target，应通过 self="planner" 标识，不应出现在 members CSV 之外的 others slot
+    assert 'self="planner"' in sys_text
 
 
 # ─── 回归测试：未闭合代码块 ──────────────────────────────

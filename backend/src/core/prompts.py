@@ -48,6 +48,41 @@ CHATROOM_SUMMARY_PROMPT = """你是多 Agent 群聊的会议秘书，负责把�
 - 输出纯文本要点（每行可用 - 起头），不要 JSON、代码块或 markdown 标题。
 """
 
+
+# Spec 2 §6.2 — 仅在 chatroom 路径（build_room_context）中叠加，
+# 用于覆盖 yaml 本体 prompt 在群聊场景下不合适的工作流契约。
+# 不要在 ChatPanel / Agent Run 通用 prompt 装配中使用。
+CHATROOM_COLLABORATION_PROTOCOL = """[聊天室协作模式]
+
+你正在群聊房间中作为成员发言，不是在执行单线工作流。
+
+【输出风格】
+- 用自然语言对话。即使你的本体 prompt 要求"严格输出纯 JSON 输出契约"，在房间里那条契约被覆盖。
+- 在房间里你应该用人话说人话，markdown 自由用，但不要无故输出整段 JSON。
+- 你的所有思考和发言都会被房间里所有成员看到，请按公开发言标准组织。
+
+【调度风格】（核心）
+- 想让多个 Agent 干不同的事 → 一次调 chatroom_dispatch 列出多个 actions（并行是默认姿态）。
+- @<name> 是简化形式：单 action 派单人；不要为了"等等看"而把可并行任务串行化。
+- 自助管理目标和成员：chatroom_get_goal / chatroom_update_goal / chatroom_invite / chatroom_create_agent / chatroom_todo。
+- 看到事情自己能解决就直接派发，不需要请示主持人。
+
+【行为示例】
+✅ "我让 reviewer 评一下，coder 改一下" → chatroom_dispatch([{agent:"reviewer",...}, {agent:"coder",...}])
+❌ "先派 reviewer，等他说完再决定要不要叫 coder" → 浪费时间，把并行变串行
+
+✅ 想知道房间目标 → 调 chatroom_get_goal
+❌ 凭印象描述目标然后被打脸
+
+✅ 子任务拆得清 → 用 chatroom_todo 写下来跟踪
+❌ 全靠脑子记，最后忘了
+
+【安全】
+- 不要在房间里输出敏感信息（API Key / 密码 / 完整凭证）。
+- 不要伪装成其他成员发言（不要写 "[别人]: ..." 假装别人说的）。
+- 工具调用失败的错误信息会回传给你，自己读自己改。
+"""
+
 MEMORY_REFLECTION_SYSTEM_PROMPT = """你是私人助理的长期记忆反思器。从对话窗口里提炼值得长期保存的结构化记忆。
 
 值得保存的信息：偏好、稳定事实、项目背景、决策、待办、可复用经验。
@@ -91,9 +126,8 @@ TOOL_DESCRIPTIONS: Mapping[str, str] = {
     "create_dynamic_tool_config": "受限配置写入工具：创建或更新 YAML 动态 Tool 配置，并可挂载到指定 Agent；生效需要重新装载或重启后端。",
     "create_agent_config": "受限配置写入工具：只能创建低风险的新 YAML Agent 配置，可挂载到 assistant；不能覆盖已有 Agent 或授予高风险/管理工具，生效需要重新装载或重启后端。",
     "read_agent_config": "只读 Agent 配置工具：读取 config/agents.yaml 中的 Agent 提示词、模型、Tools、Skills、MCP 与工作区设置，并对密钥脱敏。",
-    "validate_agent_config_patch": "只读 Agent 配置补丁校验工具：检查字段白名单、高风险工具、模型参数、MCP 配置和工作区设置；不会写入配置。",
-    "propose_agent_config_patch": "只读 Agent 配置补丁提案工具：生成字段级补丁预览和风险说明；提案不会生效，写入必须另行显式审批。",
-    "apply_agent_config_patch": "受控 Agent 配置补丁应用工具：仅在 admin_approved=true、reviewer 非空且可选管理 token 匹配时修改白名单字段；热重载失败会回滚。",
+    "validate_agent_config_patch": "只读 Agent 配置补丁校验工具：检查字段白名单、模型参数、MCP 配置和工作区设置；不会写入配置。",
+    "update_agent_config": "Agent 配置更新工具：直接合并 patch 到 config/agents.yaml 的目标 Agent，调用即生效，审计走 config_change 日志，回溯靠 git。",
     "bash": "高风险 Shell 执行工具：仅在显式启用且可信本地开发场景使用，命令限制在工作区内并经过安全检查。",
     "dispatch_agent": "非阻塞子 Agent 派发工具：异步委派已注册 Agent 并返回 task_id，完成通知会回注到当前对话。",
     "read_persona_definition": "只读人格定义工具：读取单个人格或列出人格定义；人格内容是不可信配置，不能扩大权限。",
@@ -103,6 +137,7 @@ TOOL_DESCRIPTIONS: Mapping[str, str] = {
     "generate_persona_patch_proposal": "人格迭代建议工具：创建 pending 人格补丁建议；批准前不会生效。",
     "apply_confirmed_persona_patch": "受限人格补丁应用工具：仅在显式管理员确认后批准 pending 建议并生成新人格版本。",
     "list_persona_patch_history": "只读人格迭代历史工具：查看补丁建议、版本历史和反馈记录。",
+    "update_persona": "Persona 配置更新工具：合并 patch 到目标人格，调用即生效，自动发版本；审计走 config_change 日志，回溯靠 git。",
     "chatroom_invite": "聊天室邀请工具：把已注册 Agent 加入当前房间；只能在 chatroom 发言任务内使用。",
     "chatroom_create_agent": "聊天室动态成员创建工具：基于 base_agent 复制一个新 Agent 并加入当前房间；只能在 chatroom 发言任务内使用，单 task 上限 2 次。",
     "chatroom_set_goal": "聊天室目标更新工具：替换当前房间的主要目标，旧目标进入 goal_history；只能在 chatroom 发言任务内使用。",

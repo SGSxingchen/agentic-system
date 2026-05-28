@@ -188,3 +188,66 @@ def test_websocket_unsupported_event_type_returns_notice():
         msg = ws.receive_json()
         assert msg["event_type"] == "unsupported_event"
         assert msg["data"]["requested_event_type"] == "totally-unknown"
+
+
+# ─── Task 15: chatroom_dispatch_called event ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_chatroom_dispatch_called_event_broadcasted(monkeypatch, tmp_path):
+    """Spec 2 §12 / Task 15 — chatroom_dispatch.execute 成功时广播一次
+    chatroom_dispatch_called，payload 包含 room_id / dispatcher /
+    dispatched_task_ids / actions。"""
+
+    from core.chatroom import ChatroomStore
+    from core.task import (
+        reset_current_parent_message_id,
+        reset_current_room_id,
+        reset_current_speaker_name,
+        set_current_parent_message_id,
+        set_current_room_id,
+        set_current_speaker_name,
+    )
+    from capabilities.tools import chatroom_dispatch as dispatch_mod
+
+    # 隔离 store
+    store = ChatroomStore(root=tmp_path / "rooms")
+    monkeypatch.setattr(dispatch_mod, "ChatroomStore", lambda *a, **k: store)
+
+    # 让真实 dispatch_speaking_task stub 出 task_id
+    def _fake(room_id, agent_name, **kwargs):
+        return {"task_id": f"t-{agent_name}", "agent_name": agent_name, "message_id": "m"}
+
+    monkeypatch.setattr(dispatch_mod, "dispatch_speaking_task", _fake)
+
+    # 捕获 broadcast
+    captured = []
+
+    async def _capture(room_id, event_type, data):
+        captured.append({"room_id": room_id, "event_type": event_type, "data": data})
+
+    monkeypatch.setattr(dispatch_mod, "_broadcast", _capture)
+
+    room = store.create_room(title="t", members=["planner", "reviewer"])
+    rt = set_current_room_id(room["id"])
+    st = set_current_speaker_name("planner")
+    pt = set_current_parent_message_id("placeholder-msg")
+    try:
+        result = await dispatch_mod.ChatroomDispatchCapability().execute(
+            actions=[{"agent": "reviewer", "prompt": "x"}]
+        )
+    finally:
+        reset_current_parent_message_id(pt)
+        reset_current_speaker_name(st)
+        reset_current_room_id(rt)
+
+    assert result.get("dispatched")
+    matching = [
+        e for e in captured if e["event_type"] == "chatroom_dispatch_called"
+    ]
+    assert len(matching) == 1
+    data = matching[0]["data"]
+    assert data["room_id"] == room["id"]
+    assert data["dispatcher"] == "planner"
+    assert data["dispatched_task_ids"] == ["t-reviewer"]
+    assert data["actions"] == [{"agent": "reviewer", "task_id": "t-reviewer"}]

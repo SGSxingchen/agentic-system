@@ -356,31 +356,47 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 
 ### 3.10 Agent 聊天室（Chatroom）
 
-多 Agent 群聊形态。完整设计见 [`docs/superpowers/specs/2026-05-26-agent-chatroom-design.md`](docs/superpowers/specs/2026-05-26-agent-chatroom-design.md)。
+多 Agent 群聊形态。原始设计见 [`docs/superpowers/specs/2026-05-26-agent-chatroom-design.md`](docs/superpowers/specs/2026-05-26-agent-chatroom-design.md)；
+2026-05-28 协作机制重构见 [`docs/superpowers/specs/2026-05-28-chatroom-collaboration-design.md`](docs/superpowers/specs/2026-05-28-chatroom-collaboration-design.md)。
 
 **模型** (`core/chatroom.py`)：
-- `Chatroom`：id / title / **topic** / **goal** / goal_history / members / dynamic_members / workspace_id / summary / settings
+- `Chatroom`：id / title / **topic** / **goal** / goal_history / **goal_subgoals** / **todos** / members / dynamic_members / workspace_id / summary / settings
 - `ChatroomMessage`：id / room_id / sender (`user` / `agent:<name>` / `system`) / content / mentions / parent_message_id / status (`pending`/`streaming`/`done`/`failed`) / task_id / meta
-- `ChatroomStore`：JSON 持久化（`data/chatrooms/{room_id}.json` + `_index.json`），原子写
-- 工具：`parse_mentions(content, valid)` 解析 `@AgentName`（跳过反引号代码段，含未闭合）；`build_room_context(room, target)` 拼系统提示（topic+goal+summary）+ 最近 N 条历史
+- `ChatroomStore`：JSON 持久化（`data/chatrooms/{room_id}.json` + `_index.json`），原子写；新增 `apply_goal_subgoal_op` / `add_todo` / `update_todo` / `list_todos` / `delete_todo` / `find_todos_by_dispatch`
+- 工具：`parse_mentions(content, valid)` 解析 `@AgentName`（跳过反引号代码段，含未闭合）；`build_room_context(room, target)` 现在产出 XML 化的 `<chatroom_context>` system 块（含 `<topic>` `<goal>` `<summary>` `<members self="...">` `<protocol>`）
+- `_format_history_message` 重构：自己的发言用 `assistant` role 原文返回，其他成员/用户/system 一律 `user` role 包成 `<msg id="" from="" at="" mentions="" parent="">...</msg>` 或 `<system_event>...</system_event>`，避免 LM 角色混淆
 
 **编排** (`core/chatroom_orchestrator.py`)：
 - `dispatch_speaking_task(room_id, agent_name, parent_message_id?)` —— 同步入口，不阻塞
 - `_run_speaking_task` 后台 coroutine：插占位消息（pending）→ stream Agent → 最终消息 done + 解析 @ → 递归派接力（`max_relay_depth` 默认 3）
-- `maybe_schedule_summary` —— 早于 recent_n 的消息累计 ≥ summary_threshold_m 时异步派 `summarize_room`，不阻塞发言
+- `_parse_host_directive` / `_extract_json_object` 已删除（Spec 2 §5.4）；旧的"末尾 JSON 文本协议"被 `chatroom_dispatch` 工具取代
+- `routes/chatrooms.py` 不再注入 host_directive prompt；auto_host + 用户消息无 mention → 直接召唤 host_agent，host 自己用 `chatroom_dispatch` 决定多人调度
+- `_run_speaking_task` 在 history 末尾按需追加 `<system-reminder>` 块（goal/member/mention 变化），见 [`core/chatroom_reminders.py`](backend/src/core/chatroom_reminders.py)；同时 set/reset `_current_parent_message_id_cv` ContextVar
+- 默认在 payload 里塞 `_excluded_tools=["dispatch_agent"]`，房间 settings 显式 `allow_subagent_dispatch: True` 才放行（spec §10.2）
+- `chatroom_dispatch` 完成后自动建 pending todo（`parent_dispatch_id=task_id`）；speaking task COMPLETED 时自动 mark todo completed
 - task 类型 `TaskType.AGENT_SPEAK`；transcript 写到 `workspace/tasks/{task_id}.jsonl`
 
-**自治工具**（默认对所有 Agent 注册，房间外调用直接 error）：
+**协作覆盖前缀** (`core/prompts.py:CHATROOM_COLLABORATION_PROTOCOL`)：
+仅在 `build_room_context` 的 `<protocol>` 块里注入；ChatPanel / Agent Run 路径不受影响。覆盖 yaml 本体的"严格 JSON 输出契约"，强制 chatroom 内用自然语言、并行调度、自助管理 goal/todo。
+
+**自治工具**（默认对所有 Agent 注册，房间外调用直接 error，列表见 `api/main.py:_CHATROOM_AUTONOMY_TOOLS`）：
 - `chatroom_invite(agent_name)` —— 拉已注册 Agent 入群
 - `chatroom_create_agent(name, role_prompt, base_agent="generic")` —— 运行时造新 Agent；单 task 上限 2 次；动态成员存房间 JSON，重启后由 `rebuild_chatroom_dynamic_agents` 重建
-- `chatroom_set_goal(goal, reason?)` —— 改房间主目标，旧 goal 入 history
+- `chatroom_set_goal(goal, reason?)` —— 覆盖式改房间主目标，旧 goal 入 history
+- **`chatroom_get_goal()`** —— 只读返回 topic/goal/goal_revisions/goal_subgoals/summary/members/your_role
+- **`chatroom_update_goal(operation, content?, subgoal_id?)`** —— `add_subgoal` / `mark_done` / `remove_subgoal` / `revise` 增量更新；`revise` 把旧 goal 推入 `goal_history`
+- **`chatroom_dispatch(actions=[{agent, prompt?}])`** —— 任意成员都可调，一次列多个并行派发；返回 `dispatched + failed`，错失败给 LM 自学
+- **`chatroom_todo(action, todos? / todo_id?, content? / assignee? / notes?)`** —— `create` / `update` / `complete` / `block` / `delete` / `list`；调度联动建 / 完成 todo
 
 **WebSocket 频道**：
-客户端 `{event_type:"subscribe", channel:"chatroom:<id>"}` 订阅；事件类型：`chatroom_message_added` / `_started` / `_done` / `_failed`、`chatroom_agent_thinking` / `tool_call` / `tool_result`、`chatroom_summary_updated`、`chatroom_member_added` / `_removed`、`chatroom_goal_updated`。
+客户端 `{event_type:"subscribe", channel:"chatroom:<id>"}` 订阅；事件类型：
+- 消息流：`chatroom_message_added` / `_started` / `_done` / `_failed`、`chatroom_agent_thinking` / `tool_call` / `tool_result`
+- 状态：`chatroom_summary_updated`、`chatroom_member_added` / `_removed`、`chatroom_goal_updated`
+- **新增**：`chatroom_dispatch_called`、`chatroom_todo_added` / `_updated` / `_completed` / `_deleted`、`chatroom_goal_subgoal_added` / `_done` / `_removed`、`chatroom_system_reminder`（调试用）
 
 **工作区绑定**：`Chatroom.workspace_id` 在派 speaking task 时通过 `set_workspace_root_override` 注入；`read_file` / `write_file` / `bash` 等工作区工具自动落到该房间根目录。
 
-**前端**：`frontend/src/components/ChatroomPanel.tsx` —— 三栏布局（房间列表 / 消息流 + topic·goal banner / 成员设置）；独立 useWebSocket 连接订阅频道；@ mention 浮窗、思考折叠、工具调用卡片、状态徽标、断线重订阅。
+**前端**：`frontend/src/components/ChatroomPanel.tsx` —— 三栏布局（房间列表 / 消息流 + topic·goal banner + **TodoBanner** + **SubgoalList** / 成员设置）；独立 useWebSocket 连接订阅频道；@ mention 浮窗、思考折叠、工具调用卡片、状态徽标、断线重订阅；新增 `chatroom_todo_*` / `chatroom_goal_subgoal_*` / `chatroom_dispatch_called` / `chatroom_system_reminder` 事件订阅。
 
 ---
 

@@ -32,6 +32,7 @@ from ..schemas import (
     AgentWorkspaceBinding,
 )
 from ..dependencies import get_agent_registry, get_capability_registry, reload_agent_fn
+from core.capability.risk import AGENT_MANAGEMENT_TOOLS
 from core.chat_history import ChatHistoryStore
 from core.config import load_single_yaml, save_yaml_config
 from core.persona import BASE_PERSONA_ID, DEFAULT_BINDABLE_AGENT_ROLES, PersonaBindingService
@@ -62,19 +63,6 @@ PROTECTED_AGENT_NAMES = {
     "persona_evolution",
 }
 MASKED_SECRET_VALUES = {"********", "••••••••"}
-HIGH_RISK_TOOLS = {
-    "bash",
-    "write_file",
-    "create_agent_config",
-    "create_dynamic_tool_config",
-    "dispatch_agent",
-}
-AGENT_MANAGEMENT_TOOLS = {
-    "read_agent_config",
-    "validate_agent_config_patch",
-    "propose_agent_config_patch",
-    "apply_agent_config_patch",
-}
 
 
 class AgentPersonaBindRequest(BaseModel):
@@ -450,12 +438,25 @@ def _validate_tools_for_write(
     if agent_name != "agent_manager" and tool_set & AGENT_MANAGEMENT_TOOLS:
         blocked = ", ".join(sorted(tool_set & AGENT_MANAGEMENT_TOOLS))
         return f"Agent 管理工具只能挂载到 agent_manager: {blocked}"
-    if creating:
-        blocked = sorted(tool_set & HIGH_RISK_TOOLS)
-    else:
-        blocked = sorted((tool_set - set(existing_tools or [])) & HIGH_RISK_TOOLS)
-    if blocked:
-        return "普通 Agent API 不能新增高风险工具，请通过 agent_manager 审批: " + ", ".join(blocked)
+    # A4: HIGH_RISK_TOOLS 默认放开。仅 system.yaml ``agent_creation.forbidden_tools``
+    # 显式列出的工具会被拒绝。
+    try:
+        from core.config import load_system_config
+
+        forbidden = list(load_system_config().agent_creation.forbidden_tools or [])
+    except Exception:  # pragma: no cover - defensive
+        forbidden = []
+    forbidden_set = {item for item in forbidden if isinstance(item, str)}
+    if forbidden_set:
+        if creating:
+            blocked = sorted(tool_set & forbidden_set)
+        else:
+            blocked = sorted((tool_set - set(existing_tools or [])) & forbidden_set)
+        if blocked:
+            return (
+                "以下工具被 system.yaml agent_creation.forbidden_tools 屏蔽："
+                + ", ".join(blocked)
+            )
     return None
 
 
@@ -1028,6 +1029,80 @@ def _extract_agent_response_text(result: Any) -> str:
     return str(result)
 
 
+def _attach_attachment_context(payload: dict[str, Any]) -> None:
+    """Materialize non-image attachments into the workspace + inject reminder.
+
+    B1 Plan 3 P3 Task 25 — when the request payload carries ``attachments``
+    (list of ids) and a ``_trusted_workspace_root`` was resolved by
+    ``_attach_trusted_workspace_context``, this helper:
+
+    * Imports the AttachmentStore singleton from the routes module.
+    * Calls ``build_attachment_reminder`` which links files into
+      ``<workspace_root>/.attachments/<id>/<filename>`` and returns an
+      ``<attached_files>`` block referencing each file's *workspace path*.
+    * Stores the block under ``payload["attachment_context"]`` — Agent.run
+      appends it to the system prompt (see ``_build_messages``).
+
+    Image attachments are skipped here; they belong to the LLM vision payload
+    path (Task 26).
+
+    Failures are non-fatal: a missing store or invalid workspace simply skips
+    the reminder, leaving the chat turn untouched.
+    """
+
+    raw_ids = payload.get("attachments")
+    if not raw_ids:
+        return
+    workspace_root = payload.get("_trusted_workspace_root")
+    # workspace_root 仅决定非图片路径是否能挂；图片附件可独立走 vision payload。
+
+    try:
+        from core.attachment_message_context import (
+            build_attachment_image_blocks,
+            build_attachment_reminder,
+            get_default_attachment_store,
+        )
+    except Exception:  # pragma: no cover — defensive
+        return
+
+    store = get_default_attachment_store()
+    if store is None:
+        return
+
+    ids = [str(i) for i in raw_ids if i]
+
+    # Non-image: needs the workspace root because the Agent will read_file by
+    # workspace path. Skip when no workspace was resolved.
+    if workspace_root:
+        try:
+            block = build_attachment_reminder(
+                attachment_ids=ids,
+                workspace_root=workspace_root,
+                store=store,
+            )
+        except Exception:  # pragma: no cover — defensive
+            block = ""
+        if block:
+            existing = str(payload.get("attachment_context") or "")
+            payload["attachment_context"] = (
+                f"{existing}\n\n{block}".strip() if existing else block
+            )
+
+    # B1 Plan 3 P3 Task 26 — 图片附件单独走 vision 通道：读 bytes 转 base64，
+    # 塞进 payload["attachment_images"]，Agent._build_messages 会把它挂到最后
+    # 一条 user 消息上，LLM 客户端再翻成 provider 的多模态格式。
+    try:
+        images = build_attachment_image_blocks(attachment_ids=ids, store=store)
+    except Exception:  # pragma: no cover — defensive
+        images = []
+    if images:
+        existing_imgs = payload.get("attachment_images")
+        if isinstance(existing_imgs, list):
+            existing_imgs.extend(images)
+        else:
+            payload["attachment_images"] = list(images)
+
+
 @router.post("/{name}/invoke", response_model=APIResponse)
 async def invoke_agent(name: str, req: AgentInvokeRequest):
     """直接调用某个 Agent（通过 CapabilityRegistry）"""
@@ -1046,6 +1121,11 @@ async def invoke_agent(name: str, req: AgentInvokeRequest):
             memory_context, memories_used = await build_memory_context(message)
             if memory_context:
                 payload["memory_context"] = memory_context
+
+        # B1 Plan 3 P3 Task 25 — 把非图片附件挂入工作区并拼 system reminder。
+        # 图片走 vision payload（Task 26），不在这里处理。
+        _attach_attachment_context(payload)
+
         result = await cap_registry.execute(name, **payload)
         if message:
             response_text = _extract_agent_response_text(result)

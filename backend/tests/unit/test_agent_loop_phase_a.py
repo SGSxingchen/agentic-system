@@ -44,6 +44,7 @@ class ScriptedLLM(BaseLLMClient):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Any]] = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         self.calls.append([dict(m) for m in messages])
         if not self._responses:

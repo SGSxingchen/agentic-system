@@ -5,6 +5,7 @@ import type {
   AgentMCPServerConfig,
   AgentInfo,
   AgentSkillConfig,
+  Attachment,
   ChatSession,
   ChatSessionSummary,
   Chatroom,
@@ -35,6 +36,50 @@ import type {
 
 const API_BASE = ''
 const DEFAULT_GET_CACHE_TTL_MS = 30_000
+
+// ===== A11 全局密码门禁：token 工具 =====
+// 后端配置 server.access_password 后，所有 /api/* 请求需带 Authorization: Bearer <token>，
+// WebSocket 走 ?token=<token>。token 持久化在 localStorage，登录页输入后写入；
+// 401 响应统一清掉并广播一个 auth-failed 事件给上层路由 → 跳回登录页。
+
+const AUTH_TOKEN_KEY = 'agentic.auth_token'
+export const AUTH_FAILED_EVENT = 'agentic:auth-failed'
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setAuthToken(token: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token)
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+export function clearAuthToken(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(AUTH_TOKEN_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+function dispatchAuthFailed() {
+  if (typeof window === 'undefined' || typeof CustomEvent !== 'function') return
+  try {
+    window.dispatchEvent(new CustomEvent(AUTH_FAILED_EVENT))
+  } catch {
+    // ignore
+  }
+}
 
 interface CachedResponse<T> {
   expiresAt: number
@@ -92,13 +137,30 @@ async function fetchAPI<T>(
   options?: RequestInit
 ): Promise<APIResponse<T>> {
   try {
+    const headers = new Headers(options?.headers || {})
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+    // A11: 统一注入 Authorization: Bearer <token>
+    const token = getAuthToken()
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
       ...options,
+      headers,
     })
+
+    if (res.status === 401) {
+      // A11: token 失效或被踢出 → 清掉 + 通知 App 跳登录页
+      clearAuthToken()
+      dispatchAuthFailed()
+      const text = await res.text().catch(() => '')
+      return {
+        status: 'error',
+        message: `HTTP 401: ${text || 'unauthorized'}`,
+      }
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -126,10 +188,24 @@ async function fetchFormAPI<T>(
   formData: FormData
 ): Promise<APIResponse<T>> {
   try {
+    const headers = new Headers()
+    const token = getAuthToken()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
     const res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
       body: formData,
+      headers,
     })
+
+    if (res.status === 401) {
+      clearAuthToken()
+      dispatchAuthFailed()
+      const text = await res.text().catch(() => '')
+      return {
+        status: 'error',
+        message: `HTTP 401: ${text || 'unauthorized'}`,
+      }
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -353,6 +429,24 @@ export async function deleteAgent(name: string): Promise<APIResponse<void>> {
   return response
 }
 
+// A8 — 重新装载动态能力 + 刷新 Agent 工具挂载（POST /api/evolution/reload）
+export interface EvolutionReloadResult {
+  loaded_dynamic_tools?: number
+  prompt_overrides?: number
+  reloaded_at?: string
+  [key: string]: unknown
+}
+
+export async function reloadEvolutionExtensions(): Promise<
+  APIResponse<EvolutionReloadResult>
+> {
+  const response = await post<EvolutionReloadResult>('/api/evolution/reload')
+  if (response.status === 'ok') {
+    invalidateGetCache('/api/agents')
+  }
+  return response
+}
+
 // ===== 能力 API =====
 
 export async function listCapabilities(): Promise<APIResponse<{ name: string; description: string; parameters?: any }[]>> {
@@ -545,6 +639,7 @@ export async function addChatSessionMessage(
     toolCalls?: Array<Record<string, unknown>>
     agent_name?: string
     error?: string
+    attachments?: string[]
   }
 ): Promise<APIResponse<ChatSession>> {
   return post<ChatSession>(
@@ -690,11 +785,16 @@ export async function listChatroomMessages(
 
 export async function postChatroomMessage(
   id: string,
-  content: string
+  content: string,
+  options?: { attachments?: string[] }
 ): Promise<APIResponse<ChatroomMessageCreateResult>> {
+  const body: Record<string, unknown> = { content }
+  if (options?.attachments && options.attachments.length > 0) {
+    body.attachments = options.attachments
+  }
   return post<ChatroomMessageCreateResult>(
     `/api/chatrooms/${encodeURIComponent(id)}/messages`,
-    { content }
+    body
   )
 }
 
@@ -718,3 +818,33 @@ export async function cancelChatroom(
     `/api/chatrooms/${encodeURIComponent(id)}/cancel`
   )
 }
+
+// ===== 附件 API（B1 Plan 3 P3） =====
+//
+// 单文件上传走 multipart/form-data；scope 用 ``chat_session:<id>`` /
+// ``chatroom:<id>`` 两类来源串。复用 fetchFormAPI 注入 Authorization header。
+// 上传成功返回 Attachment 元数据，调用方拿 id 后塞进 send 请求。
+
+export async function uploadAttachment(
+  file: File,
+  scope: string,
+  uploaded_by: string = 'user'
+): Promise<APIResponse<Attachment>> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const path =
+    `/api/attachments?scope=${encodeURIComponent(scope)}` +
+    `&uploaded_by=${encodeURIComponent(uploaded_by)}`
+  return fetchFormAPI<Attachment>(path, formData)
+}
+
+export function attachmentContentUrl(id: string): string {
+  return `/api/attachments/${encodeURIComponent(id)}/content`
+}
+
+export async function getAttachmentMetadata(
+  id: string
+): Promise<APIResponse<Attachment>> {
+  return get<Attachment>(`/api/attachments/${encodeURIComponent(id)}`)
+}
+

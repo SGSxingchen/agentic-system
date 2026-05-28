@@ -5,6 +5,11 @@
 **作者**: 项目维护者
 **状态**: 待实现
 
+> **2026-05-28 更新**：协作机制重构见 [`2026-05-28-chatroom-collaboration-design.md`](2026-05-28-chatroom-collaboration-design.md)
+> （host_directive 文本协议删除，XML 化 system 块 + history，`<system-reminder>` 注入，
+> `chatroom_dispatch` / `chatroom_get_goal` / `chatroom_update_goal` / `chatroom_todo` 工具，
+> 默认屏蔽 `dispatch_agent`）。本文为 1.0 基线。
+
 > 在现有 1v1 ChatPanel 之外，新增"多 Agent 群聊"模块。
 > Agent 之间能通过 `@` 互相接力、自治拉人/造人，房间可绑定工作区，可全自动协作完成任务。
 > 与现有 `ChatHistoryStore` / `ChatPanel` 完全独立，不破坏既有功能。

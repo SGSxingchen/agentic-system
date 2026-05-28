@@ -12,14 +12,20 @@ import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { Select } from './Select'
+import { AttachmentList } from './AttachmentChip'
+import { getSettingLabel } from './chatroomSettingsLabels'
+import { senderToDisplay, agentMetaFromList, type AgentMetaMap } from './agentBadge'
 import type {
   AgentInfo,
+  Attachment,
   Chatroom,
   ChatroomCreatePayload,
+  ChatroomGoalSubgoal,
   ChatroomMessage,
   ChatroomMessageStatus,
   ChatroomSettings,
   ChatroomSummary,
+  ChatroomTodo,
   ChatroomToolCallRecord,
   ChatroomUpdatePayload,
   ManagedWorkspace,
@@ -45,13 +51,6 @@ function hashColor(name: string): string {
   }
   const idx = Math.abs(hash) % AGENT_HASH_COLORS.length
   return AGENT_HASH_COLORS[idx]
-}
-
-function senderDisplayName(sender: string): string {
-  if (sender === 'user') return '用户'
-  if (sender === 'system') return '系统'
-  if (sender.startsWith('agent:')) return sender.slice(6) || 'agent'
-  return sender || 'unknown'
 }
 
 function senderIsAgent(sender: string): boolean {
@@ -218,6 +217,9 @@ export function ChatroomPanel() {
   const [showBannerDetails, setShowBannerDetails] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  // B1 — 待发送附件草稿
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
+  const [uploadingFiles, setUploadingFiles] = useState<number>(0)
   const [mentionPicker, setMentionPicker] = useState<{
     visible: boolean
     query: string
@@ -298,7 +300,10 @@ export function ChatroomPanel() {
   // ─── WebSocket（独立连接，不影响全局 ws）─────────────────
   const wsUrl = useMemo(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/ws`
+    // A11: 后端开了 access_password 时必须带 ?token=<password>，否则会被 close(4401)
+    const token = api.getAuthToken()
+    const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : ''
+    return `${protocol}//${window.location.host}/ws${tokenSuffix}`
   }, [])
 
   const handleWSMessage = useCallback((raw: unknown) => {
@@ -449,6 +454,97 @@ export function ChatroomPanel() {
         loadRooms()
         break
       }
+      // ─── Spec 2 §12 / Task 18 — dispatch / todo / subgoal / reminder ───
+      case 'chatroom_dispatch_called': {
+        // 调试用：在 console 留个面包屑，UI 不展示
+        console.info('[chatroom] dispatch called', data)
+        break
+      }
+      case 'chatroom_todo_added': {
+        const newTodos = (data && data.todos) || []
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const existing = prev.todos || []
+          // 按 id 去重
+          const seen = new Set(existing.map((t) => t.id))
+          const merged = [
+            ...existing,
+            ...newTodos.filter(
+              (t: ChatroomTodo) => t && t.id && !seen.has(t.id)
+            ),
+          ]
+          return { ...prev, todos: merged }
+        })
+        break
+      }
+      case 'chatroom_todo_updated':
+      case 'chatroom_todo_completed': {
+        const todo = data && data.todo
+        if (!todo || !todo.id) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const todos = (prev.todos || []).map((t) =>
+            t.id === todo.id ? { ...t, ...todo } : t
+          )
+          return { ...prev, todos }
+        })
+        break
+      }
+      case 'chatroom_todo_deleted': {
+        const todoId = data && data.todo_id
+        if (!todoId) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const todos = (prev.todos || []).filter((t) => t.id !== todoId)
+          return { ...prev, todos }
+        })
+        break
+      }
+      case 'chatroom_goal_subgoal_added': {
+        const subgoal = data && data.subgoal
+        if (!subgoal || !subgoal.id) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const existing = prev.goal_subgoals || []
+          if (existing.some((s) => s.id === subgoal.id)) {
+            return prev
+          }
+          return {
+            ...prev,
+            goal_subgoals: [...existing, subgoal],
+          }
+        })
+        break
+      }
+      case 'chatroom_goal_subgoal_done': {
+        const subgoalId = data && (data.subgoal_id || (data.subgoal && data.subgoal.id))
+        if (!subgoalId) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const subs = (prev.goal_subgoals || []).map((s) =>
+            s.id === subgoalId
+              ? { ...s, status: 'done' as const, done_at: data.done_at || s.done_at }
+              : s
+          )
+          return { ...prev, goal_subgoals: subs }
+        })
+        break
+      }
+      case 'chatroom_goal_subgoal_removed': {
+        const subgoalId = data && data.subgoal_id
+        if (!subgoalId) break
+        setActiveRoom((prev) => {
+          if (!prev || prev.id !== roomId) return prev
+          const subs = (prev.goal_subgoals || []).filter((s) => s.id !== subgoalId)
+          return { ...prev, goal_subgoals: subs }
+        })
+        break
+      }
+      case 'chatroom_system_reminder': {
+        // 调试模式打印，不在 UI 显示
+        console.debug('[chatroom] system reminder', data)
+        break
+      }
       case 'subscribed':
       case 'unsubscribed':
       case 'pong':
@@ -527,6 +623,11 @@ export function ChatroomPanel() {
     }
     return names
   }, [activeRoom])
+
+  const agentMeta: AgentMetaMap = useMemo(
+    () => agentMetaFromList(agents),
+    [agents],
+  )
 
   const settings = activeRoom?.settings || DEFAULT_SETTINGS
 
@@ -609,10 +710,15 @@ export function ChatroomPanel() {
   // ─── 发送消息 ───────────────────────────────────────────
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || !activeRoom || sending) return
+    const attachmentIds = pendingAttachments.map((a) => a.id)
+    if ((!text && attachmentIds.length === 0) || !activeRoom || sending) return
     setSending(true)
     setError('')
-    const res = await api.postChatroomMessage(activeRoom.id, text)
+    const res = await api.postChatroomMessage(
+      activeRoom.id,
+      text,
+      attachmentIds.length > 0 ? { attachments: attachmentIds } : undefined
+    )
     setSending(false)
     if (res.status !== 'ok' || !res.data) {
       setError(res.message || '发送失败')
@@ -625,8 +731,79 @@ export function ChatroomPanel() {
         : prev
     )
     setInput('')
+    setPendingAttachments([])
     setMentionPicker({ visible: false, query: '', position: 0 })
   }
+
+  // ─── B1 附件上传 ────────────────────────────────────────
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const composerWrapRef = useRef<HTMLDivElement | null>(null)
+
+  const handleUpload = useCallback(
+    async (files: File[]) => {
+      if (!files.length || !activeRoom) return
+      const scope = `chatroom:${activeRoom.id}`
+      setUploadingFiles((n) => n + files.length)
+      try {
+        for (const file of files) {
+          const res = await api.uploadAttachment(file, scope)
+          if (res.status === 'ok' && res.data) {
+            setPendingAttachments((prev) => [...prev, res.data as Attachment])
+          } else {
+            setError(res.message || `上传 ${file.name} 失败`)
+          }
+        }
+      } finally {
+        setUploadingFiles((n) => Math.max(0, n - files.length))
+      }
+    },
+    [activeRoom]
+  )
+
+  const handleRemovePending = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const onPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const items = Array.from(event.clipboardData?.items || [])
+      const files = items
+        .filter((i) => i.kind === 'file')
+        .map((i) => i.getAsFile())
+        .filter((f): f is File => f != null)
+      if (files.length > 0) {
+        event.preventDefault()
+        handleUpload(files)
+      }
+    },
+    [handleUpload]
+  )
+
+  const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (event.dataTransfer?.types?.includes('Files')) {
+      event.preventDefault()
+    }
+  }, [])
+
+  const onDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const files = Array.from(event.dataTransfer?.files || [])
+      if (files.length > 0) {
+        event.preventDefault()
+        handleUpload(files)
+      }
+    },
+    [handleUpload]
+  )
+
+  const onFilePicked = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || [])
+      event.target.value = ''
+      if (files.length > 0) await handleUpload(files)
+    },
+    [handleUpload]
+  )
 
   const onInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentionPicker.visible && event.key === 'Enter' && !event.shiftKey) {
@@ -765,6 +942,8 @@ export function ChatroomPanel() {
                 onToggle={() => setShowBannerDetails((v) => !v)}
               />
 
+              <TodoBanner room={activeRoom} />
+
               <div className="chatroom-transcript" ref={transcriptRef}>
                 {activeRoom.messages.length === 0 ? (
                   <div className="empty-state" style={{ padding: 60 }}>
@@ -779,6 +958,7 @@ export function ChatroomPanel() {
                       key={message.id}
                       message={message}
                       onRetry={handleRetry}
+                      agentMeta={agentMeta}
                     />
                   ))
                 )}
@@ -796,6 +976,15 @@ export function ChatroomPanel() {
                 onPickMention={insertMention}
                 detectedMentions={detectedMentions}
                 autoHost={settings.auto_host}
+                pendingAttachments={pendingAttachments}
+                uploadingFiles={uploadingFiles}
+                fileInputRef={fileInputRef}
+                onPaste={onPaste}
+                onDragOver={onDragOver}
+                onDrop={onDrop}
+                onFilePicked={onFilePicked}
+                onRemovePending={handleRemovePending}
+                wrapRef={composerWrapRef}
               />
             </>
           ) : (
@@ -950,6 +1139,9 @@ function ChatroomBanner({
           {room.goal || '（未设定）'}
         </span>
       </div>
+      {room.goal_subgoals && room.goal_subgoals.length > 0 && (
+        <SubgoalList subgoals={room.goal_subgoals} />
+      )}
       {expanded && room.goal_history && room.goal_history.length > 0 && (
         <div className="chatroom-banner__history">
           <div className="chatroom-banner__label">目标历史</div>
@@ -972,20 +1164,122 @@ function ChatroomBanner({
   )
 }
 
+// ─── 子组件：子目标列表 (Spec 2 §3.4 / Task 17) ──────────
+
+function SubgoalList({ subgoals }: { subgoals: ChatroomGoalSubgoal[] }) {
+  if (!subgoals || subgoals.length === 0) {
+    return null
+  }
+  return (
+    <div className="chatroom-subgoals">
+      <span className="chatroom-banner__label">子目标</span>
+      <ul className="chatroom-subgoals__list">
+        {subgoals.map((sub) => (
+          <li
+            key={sub.id}
+            className={
+              'chatroom-subgoal' +
+              (sub.status === 'done' ? ' chatroom-subgoal--done' : '')
+            }
+          >
+            <span className="chatroom-subgoal__check">
+              {sub.status === 'done' ? '✔' : '☐'}
+            </span>
+            <span className="chatroom-subgoal__content">{sub.content}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// ─── 子组件：TodoBanner (Spec 2 §9.5 / Task 17) ─────────
+
+function TodoBanner({ room }: { room: Chatroom }) {
+  const todos = room.todos || []
+  if (todos.length === 0) {
+    return null
+  }
+  const grouped: Record<string, ChatroomTodo[]> = {
+    pending: [],
+    in_progress: [],
+    completed: [],
+    blocked: [],
+  }
+  for (const todo of todos) {
+    const key = todo.status in grouped ? todo.status : 'pending'
+    grouped[key].push(todo)
+  }
+  const totalActive = grouped.pending.length + grouped.in_progress.length
+  return (
+    <div className="chatroom-todos">
+      <div className="chatroom-todos__header">
+        <span className="chatroom-todos__title">📋 房间任务</span>
+        <span className="chatroom-todos__counts">
+          待完成 {totalActive} · 已完成 {grouped.completed.length}
+          {grouped.blocked.length > 0 ? ` · 阻塞 ${grouped.blocked.length}` : ''}
+        </span>
+      </div>
+      <ul className="chatroom-todos__list">
+        {grouped.pending.concat(grouped.in_progress).map((todo) => (
+          <TodoRow key={todo.id} todo={todo} />
+        ))}
+        {grouped.blocked.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} />
+        ))}
+        {grouped.completed.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function TodoRow({ todo }: { todo: ChatroomTodo }) {
+  const cls =
+    'chatroom-todo chatroom-todo--' + (todo.status || 'pending')
+  return (
+    <li className={cls}>
+      <span className="chatroom-todo__status-badge">
+        {todo.status === 'completed'
+          ? '✔'
+          : todo.status === 'blocked'
+            ? '⚠'
+            : todo.status === 'in_progress'
+              ? '⏵'
+              : '☐'}
+      </span>
+      {todo.assignee && (
+        <span className="chatroom-todo__assignee">{todo.assignee}</span>
+      )}
+      <span className="chatroom-todo__content">{todo.content}</span>
+      {todo.notes && (
+        <span className="chatroom-todo__notes" title={todo.notes}>
+          💭
+        </span>
+      )}
+    </li>
+  )
+}
+
 // ─── 子组件：消息卡片 ────────────────────────────────────
 
 function ChatroomMessageCard({
   message,
   onRetry,
+  agentMeta,
 }: {
   message: ChatroomMessage
   onRetry: (m: ChatroomMessage) => void
+  agentMeta: AgentMetaMap
 }) {
   const [expanded, setExpanded] = useState(false)
   const isAgent = senderIsAgent(message.sender)
   const isUser = message.sender === 'user'
   const isSystem = message.sender === 'system'
-  const displayName = senderDisplayName(message.sender)
+  const senderInfo = senderToDisplay(message.sender, agentMeta)
+  const displayName = senderInfo.name
+  const modelBadge = senderInfo.model
   const color = isAgent || (!isUser && !isSystem) ? hashColor(displayName) : undefined
   const meta: any = message.meta || {}
   const elapsedMs = meta.elapsed_ms
@@ -1019,6 +1313,11 @@ function ChatroomMessageCard({
         </div>
         <div className="chatroom-msg__head-text">
           <span className="chatroom-msg__name">{displayName}</span>
+          {modelBadge && (
+            <small className="agent-model-badge" title={`LLM 模型：${modelBadge}`}>
+              {modelBadge}
+            </small>
+          )}
           {statusLabel(message.status) && (
             <span
               className={`chatroom-msg__badge chatroom-msg__badge--${message.status}`}
@@ -1079,10 +1378,20 @@ function ChatroomMessageCard({
         </div>
       ) : null}
 
+      {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}
+      <AttachmentList ids={message.attachments} />
+
       {message.status === 'failed' && (
         <div className="chatroom-msg__retry">
           <span className="chatroom-msg__error">
-            {(meta.error as string) || '调用失败'}
+            {/* A6/R2: 流式中断专属文案 — 区别于普通调用失败，告诉用户点击重试 */}
+            {(() => {
+              const err = (meta.error as string) || ''
+              if (/stream/i.test(err)) {
+                return '流式中断，请点击重试'
+              }
+              return err || '调用失败'
+            })()}
           </span>
           {isAgent && (
             <button type="button" className="btn-xs" onClick={() => onRetry(message)}>
@@ -1179,6 +1488,16 @@ interface ComposerProps {
   onPickMention: (name: string) => void
   detectedMentions: string[]
   autoHost: boolean
+  // B1 附件相关
+  pendingAttachments: Attachment[]
+  uploadingFiles: number
+  fileInputRef: React.RefObject<HTMLInputElement>
+  onPaste: (event: React.ClipboardEvent<HTMLDivElement>) => void
+  onDragOver: (event: React.DragEvent<HTMLDivElement>) => void
+  onDrop: (event: React.DragEvent<HTMLDivElement>) => void
+  onFilePicked: (event: React.ChangeEvent<HTMLInputElement>) => void
+  onRemovePending: (id: string) => void
+  wrapRef: React.RefObject<HTMLDivElement>
 }
 
 function ChatroomComposer({
@@ -1193,6 +1512,15 @@ function ChatroomComposer({
   onPickMention,
   detectedMentions,
   autoHost,
+  pendingAttachments,
+  uploadingFiles,
+  fileInputRef,
+  onPaste,
+  onDragOver,
+  onDrop,
+  onFilePicked,
+  onRemovePending,
+  wrapRef,
 }: ComposerProps) {
   const hint =
     detectedMentions.length === 0
@@ -1202,7 +1530,48 @@ function ChatroomComposer({
       : `将召唤 ${detectedMentions.map((n) => `@${n}`).join(' ')} 接力`
 
   return (
-    <div className="chatroom-composer">
+    <div
+      className="chatroom-composer"
+      ref={wrapRef}
+      onPaste={onPaste}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      {(pendingAttachments.length > 0 || uploadingFiles > 0) && (
+        <div className="chatroom-composer__attachments">
+          {pendingAttachments.map((att) => (
+            <span
+              key={att.id}
+              className="chatroom-composer__chip"
+              title={`${att.filename} · ${att.mime_type}`}
+            >
+              {att.mime_type.startsWith('image/') ? (
+                <img
+                  src={api.attachmentContentUrl(att.id)}
+                  alt={att.filename}
+                  className="chatroom-composer__chip-thumb"
+                />
+              ) : (
+                <span className="chatroom-composer__chip-icon">📎</span>
+              )}
+              <span className="chatroom-composer__chip-name">{att.filename}</span>
+              <button
+                type="button"
+                className="chatroom-composer__chip-remove"
+                onClick={() => onRemovePending(att.id)}
+                aria-label="移除附件"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+          {uploadingFiles > 0 && (
+            <span className="chatroom-composer__chip chatroom-composer__chip--uploading">
+              上传中… ({uploadingFiles})
+            </span>
+          )}
+        </div>
+      )}
       <div className="chatroom-composer__input-wrap">
         <textarea
           ref={inputRef}
@@ -1210,7 +1579,7 @@ function ChatroomComposer({
           value={value}
           onChange={onChange}
           onKeyDown={onKeyDown}
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行。@ 召唤成员"
+          placeholder="输入消息，Enter 发送，Shift+Enter 换行。@ 召唤成员；支持粘贴/拖拽附件"
           rows={3}
           disabled={sending}
         />
@@ -1235,7 +1604,23 @@ function ChatroomComposer({
           </div>
         )}
       </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={onFilePicked}
+      />
       <div className="chatroom-composer__actions">
+        <button
+          type="button"
+          className="btn-secondary chatroom-composer__attach-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={sending}
+          title="添加附件（也可粘贴/拖拽）"
+        >
+          📎 附件
+        </button>
         <span className="text-muted" style={{ fontSize: 11.5 }}>
           {hint}
         </span>
@@ -1243,7 +1628,11 @@ function ChatroomComposer({
           type="button"
           className="btn-primary"
           onClick={onSend}
-          disabled={!value.trim() || sending}
+          disabled={
+            (!value.trim() && pendingAttachments.length === 0) ||
+            sending ||
+            uploadingFiles > 0
+          }
         >
           {sending ? '发送中…' : '发送'}
         </button>
@@ -1456,10 +1845,22 @@ function SettingsForm({
   const apply = (patch: Partial<ChatroomSettings>) => {
     onUpdate({ settings: { ...settings, ...patch } })
   }
+  const autoHostMeta = getSettingLabel('auto_host')
+  const hostAgentMeta = getSettingLabel('host_agent')
+  const recentNMeta = getSettingLabel('recent_n')
+  const summaryMeta = getSettingLabel('summary_threshold_m')
+  const relayMeta = getSettingLabel('max_relay_depth')
+  const membersMeta = getSettingLabel('max_members')
+  const inviteMeta = getSettingLabel('allow_agent_invite')
   return (
     <div className="chatroom-settings">
       <label className="chatroom-settings__row">
-        <span>auto_host</span>
+        <div className="chatroom-settings__label">
+          <span>{autoHostMeta.label}</span>
+          {autoHostMeta.hint && (
+            <small className="chatroom-settings__hint">{autoHostMeta.hint}</small>
+          )}
+        </div>
         <input
           type="checkbox"
           checked={settings.auto_host}
@@ -1467,7 +1868,12 @@ function SettingsForm({
         />
       </label>
       <label className="chatroom-settings__row">
-        <span>host_agent</span>
+        <div className="chatroom-settings__label">
+          <span>{hostAgentMeta.label}</span>
+          {hostAgentMeta.hint && (
+            <small className="chatroom-settings__hint">{hostAgentMeta.hint}</small>
+          )}
+        </div>
         <Select
           size="sm"
           fullWidth={false}
@@ -1482,27 +1888,36 @@ function SettingsForm({
         />
       </label>
       <NumberSetting
-        label="recent_n"
+        label={recentNMeta.label}
+        hint={recentNMeta.hint}
         value={settings.recent_n}
         onChange={(v) => apply({ recent_n: v })}
       />
       <NumberSetting
-        label="summary_threshold_m"
+        label={summaryMeta.label}
+        hint={summaryMeta.hint}
         value={settings.summary_threshold_m}
         onChange={(v) => apply({ summary_threshold_m: v })}
       />
       <NumberSetting
-        label="max_relay_depth"
+        label={relayMeta.label}
+        hint={relayMeta.hint}
         value={settings.max_relay_depth}
         onChange={(v) => apply({ max_relay_depth: v })}
       />
       <NumberSetting
-        label="max_members"
+        label={membersMeta.label}
+        hint={membersMeta.hint}
         value={settings.max_members}
         onChange={(v) => apply({ max_members: v })}
       />
       <label className="chatroom-settings__row">
-        <span>allow_agent_invite</span>
+        <div className="chatroom-settings__label">
+          <span>{inviteMeta.label}</span>
+          {inviteMeta.hint && (
+            <small className="chatroom-settings__hint">{inviteMeta.hint}</small>
+          )}
+        </div>
         <input
           type="checkbox"
           checked={settings.allow_agent_invite}
@@ -1515,10 +1930,12 @@ function SettingsForm({
 
 function NumberSetting({
   label,
+  hint,
   value,
   onChange,
 }: {
   label: string
+  hint?: string
   value: number
   onChange: (v: number) => void
 }) {
@@ -1528,7 +1945,10 @@ function NumberSetting({
   }, [value])
   return (
     <label className="chatroom-settings__row">
-      <span>{label}</span>
+      <div className="chatroom-settings__label">
+        <span>{label}</span>
+        {hint && <small className="chatroom-settings__hint">{hint}</small>}
+      </div>
       <input
         type="number"
         value={draft}

@@ -12,6 +12,7 @@ from .chatrooms import router as chatrooms_router
 from .personas import router as personas_router
 from .artifacts import router as artifacts_router
 from .workspaces import router as workspaces_router
+from .attachments import router as attachments_router
 
 __all__ = [
     "tasks_router",
@@ -25,4 +26,5 @@ __all__ = [
     "personas_router",
     "artifacts_router",
     "workspaces_router",
+    "attachments_router",
 ]

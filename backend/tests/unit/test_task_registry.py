@@ -214,6 +214,44 @@ def test_create_agent_run_state_has_continuous_goal_fields() -> None:
     assert payload["progress"]["memory_count"] == 3
 
 
+# ─── A6: AgentProgress.retry_count（覆盖语义） ──────────────────────────────
+
+
+def test_agent_progress_has_retry_count_default_zero() -> None:
+    """A6: AgentProgress 默认 retry_count=0；并出现在 to_dict 中。"""
+    p = AgentProgress()
+    assert p.retry_count == 0
+    assert "retry_count" in p.to_dict()
+    assert p.to_dict()["retry_count"] == 0
+
+
+def test_set_progress_retry_count_is_overwrite_not_accumulate() -> None:
+    """A6: retry_count 与 tool_count 不同——是覆盖语义（最新尝试号）。
+
+    重试 1 次 → 2 → 重试成功后置 0；不能像 tool_count 那样累加成 3。
+    """
+    registry = TaskRegistry()
+    state = registry.create(requirement="g")
+
+    registry.set_progress(state.id, retry_count=2)
+    assert registry.get(state.id).progress.retry_count == 2
+
+    registry.set_progress(state.id, retry_count=3)
+    assert registry.get(state.id).progress.retry_count == 3  # 覆盖而非 5
+
+    registry.set_progress(state.id, retry_count=0)
+    assert registry.get(state.id).progress.retry_count == 0  # 重置
+
+
+def test_retry_count_in_to_dict_payload() -> None:
+    """A6: TaskState.to_dict() 的 progress 段包含 retry_count，前端可读。"""
+    registry = TaskRegistry()
+    state = registry.create(requirement="g")
+    registry.set_progress(state.id, retry_count=1)
+    payload = state.to_dict()
+    assert payload["progress"]["retry_count"] == 1
+
+
 def test_pause_and_resume_agent_run() -> None:
     registry = TaskRegistry()
     state = registry.create(

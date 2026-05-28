@@ -32,6 +32,8 @@ class LLMConfig(BaseModel):
     top_p: Optional[float] = Field(default=None, ge=0, le=1, description="核采样概率")
     max_tokens: int = Field(default=4096, ge=1, description="最大输出 token 数")
     stop_sequences: List[str] = Field(default_factory=list, description="停止序列")
+    max_retries: int = Field(default=3, ge=0, description="LLM 调用瞬态错误最大重试次数（不含首发）")
+    retry_initial_delay: float = Field(default=1.0, ge=0, description="首次重试退避秒数；之后 ×2 + ±20% jitter")
     openai: Dict[str, Any] = Field(default_factory=dict, description="OpenAI 专属对话参数")
     anthropic: Dict[str, Any] = Field(default_factory=dict, description="Anthropic 专属对话参数")
 
@@ -59,6 +61,35 @@ class BusConfig(BaseModel):
 
     queue_size: int = Field(default=1000, description="消息队列大小")
     history_size: int = Field(default=500, description="消息历史保留数量")
+
+
+class ServerConfig(BaseModel):
+    """FastAPI 服务器配置 (含 A11 全局密码门禁)。"""
+
+    host: str = Field(default="127.0.0.1", description="服务器绑定地址")
+    port: int = Field(default=8001, ge=1, le=65535, description="服务器端口")
+    cors_origins: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:3001",
+        ],
+        description="允许的前端来源",
+    )
+    # A11: 公网部署密码门禁 — 空字符串等于不开启门禁。
+    access_password: str = Field(
+        default="",
+        description="A11 全局访问密码；空字符串等于不开启门禁",
+    )
+    failed_login_max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description="同一 IP 在锁定窗口内允许的最大失败次数",
+    )
+    failed_login_lockout_seconds: int = Field(
+        default=60,
+        ge=1,
+        description="失败计数滑动窗口长度（秒）",
+    )
 
 
 class ContextConfig(BaseModel):
@@ -121,15 +152,42 @@ class ToolsConfig(BaseModel):
     custom: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
+class AgentCreationConfig(BaseModel):
+    """A4: Agent 创建/更新时的工具黑名单配置（escape hatch）。
+
+    HIGH_RISK_TOOLS 默认放开后，部署方仍可通过 ``forbidden_tools`` 显式锁
+    住特定工具。空列表表示"全放开"。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    forbidden_tools: List[str] = Field(default_factory=list)
+
+
+class DispatchConfig(BaseModel):
+    """A10 Plan Task 11: dispatch_agent 嵌套深度配置。
+
+    默认 5（之前硬编码 1，几乎禁止嵌套派生）。部署方可通过 system.yaml
+    ``dispatch.max_depth`` 调整。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    max_depth: int = Field(default=5, ge=1, description="dispatch_agent 最大嵌套深度")
+
+
 class SystemConfig(BaseModel):
     """顶层系统配置。"""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     bus: BusConfig = Field(default_factory=BusConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     agents: List[AgentConfig] = Field(default_factory=list)
+    agent_creation: AgentCreationConfig = Field(default_factory=AgentCreationConfig)
+    dispatch: DispatchConfig = Field(default_factory=DispatchConfig)
 
 
 def _default_project_root() -> Path:
@@ -303,6 +361,29 @@ def load_system_config(config_path: Optional[Path] = None) -> SystemConfig:
         raw = _apply_env_overrides(raw)
 
     return SystemConfig(**raw)
+
+
+_system_config_cache: Optional[SystemConfig] = None
+
+
+def get_system_config(*, refresh: bool = False) -> SystemConfig:
+    """A11: 进程级缓存 SystemConfig，供中间件等热路径复用。
+
+    middleware 在每次请求都会读 ``server.access_password``，避免重复 IO。
+    需要热重载时调用 ``get_system_config(refresh=True)`` 或 ``clear_system_config_cache()``。
+    """
+
+    global _system_config_cache
+    if refresh or _system_config_cache is None:
+        _system_config_cache = load_system_config()
+    return _system_config_cache
+
+
+def clear_system_config_cache() -> None:
+    """清空 ``get_system_config`` 缓存。配置 yaml 改动后应调用一次。"""
+
+    global _system_config_cache
+    _system_config_cache = None
 
 
 def load_single_yaml(filename: str, config_dir: Optional[Path] = None) -> Dict[str, Any]:

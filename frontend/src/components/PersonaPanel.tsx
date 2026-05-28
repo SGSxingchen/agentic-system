@@ -10,7 +10,7 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const PROPOSAL_STATUS_LABEL: Record<string, string> = {
-  pending: '待审核',
+  pending: '历史归档',
   approved: '已通过',
   rejected: '已拒绝',
 }
@@ -282,9 +282,12 @@ export function PersonaPanel() {
       {proposals.length > 0 && (
         <section className="console-card">
           <header className="console-card__header">
-            <span className="console-card__title">待审核建议</span>
+            <span className="console-card__title">人格补丁建议（历史归档）</span>
             <span className="text-muted">{proposals.length} 条</span>
           </header>
+          <div style={{ padding: '8px 12px 0 12px', fontSize: 12, color: 'var(--color-text-muted)' }}>
+            A10 之后，人格变更通过 update_persona 调用即生效，不再走两段式审批。下方仅展示历史归档的 pending 提案数据。
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12 }}>
             {proposals.map((proposal) => (
               <div className="persona-proposal" key={proposal.id}>

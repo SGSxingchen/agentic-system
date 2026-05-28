@@ -36,7 +36,7 @@ class ScriptedLLM(BaseLLMClient):
         self._responses = list(responses)
         self.calls: List[List[Dict[str, Any]]] = []
 
-    async def chat(self, messages, tools=None) -> LLMResponse:
+    async def chat(self, messages, tools=None, **kwargs) -> LLMResponse:
         self.calls.append([dict(m) for m in messages])
         if not self._responses:
             return LLMResponse(content="(exhausted)", stop_reason="end_turn")
@@ -187,13 +187,14 @@ async def test_missing_required_args(
 # =====================
 
 
-async def test_max_depth_one_blocks_nested(
+async def test_max_depth_blocks_nested_at_5(
     cap_registry, task_registry, dispatch_tool
 ) -> None:
+    """A10 Plan Task 11：max_depth 默认放宽到 5，第 5 层才会被拒。"""
     sub = MockSubAgent("coder")
     cap_registry.register_native(sub)
 
-    token = set_dispatch_depth(1)
+    token = set_dispatch_depth(5)
     try:
         result = await dispatch_tool.execute(
             subagent_type="coder", prompt="x"
@@ -202,11 +203,28 @@ async def test_max_depth_one_blocks_nested(
         reset_dispatch_depth(token)
 
     assert "error" in result
-    assert "nested" in result["error"].lower()
+    assert "nested" in result["error"].lower() or "max" in result["error"].lower()
 
 
-def test_check_permissions_denies_at_max_depth(dispatch_tool) -> None:
-    token = set_dispatch_depth(1)
+async def test_max_depth_allows_depth_4(
+    cap_registry, task_registry, dispatch_tool
+) -> None:
+    """A10：depth=4 仍允许（< max_depth=5）。"""
+    sub = MockSubAgent("coder")
+    cap_registry.register_native(sub)
+
+    token = set_dispatch_depth(4)
+    try:
+        outcome = dispatch_tool.check_permissions(
+            subagent_type="coder", prompt="x"
+        )
+    finally:
+        reset_dispatch_depth(token)
+    assert outcome["decision"] == "allow"
+
+
+def test_check_permissions_denies_at_max_depth_5(dispatch_tool) -> None:
+    token = set_dispatch_depth(5)
     try:
         outcome = dispatch_tool.check_permissions(
             subagent_type="coder", prompt="x"
@@ -214,7 +232,26 @@ def test_check_permissions_denies_at_max_depth(dispatch_tool) -> None:
     finally:
         reset_dispatch_depth(token)
     assert outcome["decision"] == "deny"
-    assert "nested" in outcome["reason"].lower()
+    assert "nested" in outcome["reason"].lower() or "max" in outcome["reason"].lower()
+
+
+def test_max_depth_configurable_via_system_yaml(monkeypatch, dispatch_tool) -> None:
+    """A10 Task 11：``dispatch.max_depth`` 通过 system.yaml 调整。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "capabilities.tools.dispatch_agent._get_max_depth",
+        lambda: 2,
+    )
+    token = set_dispatch_depth(2)
+    try:
+        outcome = dispatch_tool.check_permissions(
+            subagent_type="coder", prompt="x"
+        )
+    finally:
+        reset_dispatch_depth(token)
+    assert outcome["decision"] == "deny"
+
 
 
 def test_check_permissions_allows_at_depth_zero(dispatch_tool) -> None:

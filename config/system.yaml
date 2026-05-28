@@ -20,6 +20,11 @@ server:
   cors_origins:
     - "http://localhost:3000"
     - "http://localhost:3001"
+  # A11 全局访问密码门禁
+  # 空字符串等于不开启门禁；公网部署时建议配 HTTPS + 高熵密码
+  access_password: ""
+  failed_login_lockout_seconds: 60     # 失败计数滑动窗口（秒）
+  failed_login_max_attempts: 5         # 滑动窗口内最大失败次数，超过即锁定到下个窗口
 
 # LLM 默认配置
 # 可被环境变量覆盖:
@@ -37,6 +42,8 @@ llm:
   top_p: null
   max_tokens: 4096
   stop_sequences: []
+  max_retries: 3                # A6: 总重试次数（不含首发），仅瞬态错误才重试
+  retry_initial_delay: 1.0      # A6: 首次退避秒数；之后 ×2 + ±20% jitter
   openai:
     max_completion_tokens: null
     use_legacy_max_tokens: false # 兼容旧式 OpenAI 代理时可开启
@@ -94,3 +101,29 @@ tools:
     enabled: false               # 默认关闭，避免任意命令执行
     timeout: 30
   custom: {}                     # 未来工具的 URL/Key/extra 参数，Key 不会通过 API 明文返回
+
+# Agent 创建 / 更新时的工具黑名单 (A4 escape hatch)
+# 默认空列表 = 不锁任何工具，HIGH_RISK_TOOLS 已全放开。
+# 部署方需要锁定时填上对应工具名，例如：
+# agent_creation:
+#   forbidden_tools: [bash, dispatch_agent]
+agent_creation:
+  forbidden_tools: []
+
+# dispatch_agent 嵌套深度上限 (A10 Plan Task 11)
+# 默认 5（>= 该值即拒绝再嵌套派生），从硬编码 1 放开。
+# 部署方可调小到 1~2 锁住嵌套，或调大到 10 让多 Agent 协作能更深委派。
+dispatch:
+  max_depth: 5
+
+# 附件上传配置 (B1 Plan 3 Phase P3)
+# REST 路由 /api/attachments 在落盘前用这两个字段做大小 + MIME 守门。
+# 留空 allowed_mime_prefixes ([]) 表示放开 MIME 校验（不推荐生产）。
+attachments:
+  max_size_bytes: 52428800   # 50MB
+  allowed_mime_prefixes:
+    - "image/"
+    - "text/"
+    - "application/pdf"
+    - "application/json"
+    - "application/zip"

@@ -22,6 +22,7 @@ from ..task.context import (
     reset_notification_box,
     set_workspace_root_override,
     reset_workspace_root_override,
+    get_parent_task_id,
 )
 from ..task.notifications import make_user_message
 from ..workspace import WorkspaceNotFoundError, WorkspaceStore
@@ -112,17 +113,30 @@ class Agent:
         workspace_token = self._maybe_set_workspace_root(input_data)
         try:
             messages = self._build_messages(input_data)
-            tool_schemas = [t.get_schema() for t in self._tools]
+            # Spec 2 §10.2 / Task 14 — 调用方可通过 input_data['_excluded_tools']
+            # 临时屏蔽部分工具（不修改 self._tools，仅影响本次 run）。
+            excluded = set(input_data.get("_excluded_tools") or [])
+            active_tools = (
+                [t for t in self._tools if t.name not in excluded]
+                if excluded
+                else list(self._tools)
+            )
+            tool_schemas = [t.get_schema() for t in active_tools]
             total_usage: Dict[str, int] = {}
             total_elapsed_ms = 0.0
             nudged = False
 
             for iteration in range(self._max_iterations):
                 await self._drain_notifications(notification_box, messages)
+                # A6: 注入 on_retry 闭包推 progress.retry_count（仅当任务上下文存在）
+                on_retry_cb = self._build_on_retry_callback()
                 response = await self.llm.chat(
                     messages,
                     tools=tool_schemas if tool_schemas else None,
+                    on_retry=on_retry_cb,
                 )
+                # 调用成功 → 重置 retry_count（避免前端卡在"重试中"）
+                self._reset_retry_progress()
                 total_usage = self._merge_usage(total_usage, response.usage)
                 if response.elapsed_ms:
                     total_elapsed_ms += response.elapsed_ms
@@ -213,7 +227,14 @@ class Agent:
         workspace_token = self._maybe_set_workspace_root(input_data)
         try:
             messages = self._build_messages(input_data)
-            tool_schemas = [t.get_schema() for t in self._tools]
+            # Spec 2 §10.2 / Task 14 — 通过 input_data['_excluded_tools'] 临时屏蔽工具
+            excluded = set(input_data.get("_excluded_tools") or [])
+            active_tools = (
+                [t for t in self._tools if t.name not in excluded]
+                if excluded
+                else list(self._tools)
+            )
+            tool_schemas = [t.get_schema() for t in active_tools]
             total_usage: Dict[str, int] = {}
             total_elapsed_ms = 0.0
             nudged = False
@@ -229,6 +250,7 @@ class Agent:
                 async for event in self.llm.chat_stream(
                     messages,
                     tools=tool_schemas if tool_schemas else None,
+                    on_retry=self._build_on_retry_callback(),
                 ):
                     if event.type == "text" and event.content:
                         full_text += event.content
@@ -240,6 +262,8 @@ class Agent:
                         total_usage = self._merge_usage(total_usage, event.usage)
                         if event.elapsed_ms:
                             total_elapsed_ms += event.elapsed_ms
+                # A6: 流式建立成功 → 重置 retry_count
+                self._reset_retry_progress()
 
                 # LLM 返回最终文本 → 结束
                 if stop_reason != "tool_use":
@@ -356,6 +380,13 @@ class Agent:
         if memory_context:
             system_prompt = format_untrusted_memory_context(system_prompt, memory_context)
 
+        # B1 Plan 3 P3 Task 25 — 附件 system reminder。非图片附件由 routes 层
+        # 预先建好工作区软链/拷贝并拼好 <attached_files> 块；这里直接追加到
+        # system prompt 末尾，让 Agent 自助用 read_file 读取。
+        attachment_context = str(input_data.get("attachment_context") or "").strip()
+        if attachment_context:
+            system_prompt = f"{system_prompt}\n\n{attachment_context}"
+
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -366,7 +397,68 @@ class Agent:
         else:
             messages.append({"role": "user", "content": self._build_user_message(input_data)})
 
+        # B1 Plan 3 P3 Task 26 — 图片附件走 vision payload。把 attachment_images
+        # 列表里的项打包成中立 image block 追加到最后一条 user 消息上。LLM
+        # 客户端层负责把中立块翻译成 OpenAI image_url / Anthropic image source。
+        attachment_images = input_data.get("attachment_images")
+        if isinstance(attachment_images, list) and attachment_images:
+            self._append_image_blocks_to_last_user(messages, attachment_images)
+
         return messages
+
+    @staticmethod
+    def _append_image_blocks_to_last_user(
+        messages: List[Dict[str, Any]],
+        images: List[Dict[str, Any]],
+    ) -> None:
+        """Inject neutral image blocks into the most recent user message."""
+
+        target: Optional[Dict[str, Any]] = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                target = msg
+                break
+        if target is None:
+            target = {"role": "user", "content": ""}
+            messages.append(target)
+
+        existing = target.get("content")
+        if isinstance(existing, list):
+            parts: List[Any] = list(existing)
+        else:
+            text = str(existing or "").strip()
+            parts = [{"type": "text", "text": text}] if text else []
+
+        for img in images:
+            if not isinstance(img, dict):
+                continue
+            data = img.get("data") or ""
+            url = img.get("url") or ""
+            if not data and not url:
+                continue
+            block: Dict[str, Any] = {
+                "type": "image",
+                "mime_type": str(img.get("mime_type") or "image/png"),
+            }
+            if data:
+                block["data"] = str(data)
+            if url:
+                block["url"] = str(url)
+            parts.append(block)
+
+        if not parts:
+            return
+        # If we only ended up with a text part (no images survived), keep
+        # the original string form to avoid an unneeded shape change.
+        only_text = (
+            len(parts) == 1
+            and isinstance(parts[0], dict)
+            and parts[0].get("type") == "text"
+        )
+        if only_text:
+            target["content"] = str(parts[0].get("text") or "")
+        else:
+            target["content"] = parts
 
     @staticmethod
     def _coerce_conversation_messages(input_data: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -410,7 +502,7 @@ class Agent:
         input_data = {
             key: value
             for key, value in input_data.items()
-            if key not in {"messages", "history", "memory_context", "workspace_root", "_trusted_workspace_root"}
+            if key not in {"messages", "history", "memory_context", "attachment_context", "attachment_images", "workspace_root", "_trusted_workspace_root"}
         }
         if not input_data:
             return ""
@@ -480,6 +572,61 @@ class Agent:
         notification_box.clear()
         for payload in pending:
             messages.append(make_user_message(payload))
+
+    # ─── A6: LLM 重试 → progress.retry_count 桥 ─────────────
+
+    def _build_on_retry_callback(self):
+        """构造 on_retry 闭包：把当前重试尝试号写到 TaskRegistry.progress。
+
+        仅当协程上下文中有 ``parent_task_id`` + 全局 ``task_registry`` 可用时返回回调；
+        否则返回 None，让 ``call_with_retry`` 跳过通知（不影响纯单元测试场景）。
+        """
+        try:
+            task_id = get_parent_task_id()
+        except Exception:
+            return None
+        if not task_id:
+            return None
+        try:
+            from api.dependencies import get_task_registry  # 延迟 import 防循环
+        except Exception:
+            return None
+        registry = get_task_registry()
+        if registry is None or task_id not in registry:
+            return None
+        max_retries = int(self._runtime_config.get("max_retries") or 3)
+
+        def _on_retry(attempt: int, exc: BaseException, sleep_for: float) -> None:
+            try:
+                registry.set_progress(
+                    task_id,
+                    retry_count=attempt,
+                    activity=f"重试中 ({attempt}/{max_retries})",
+                )
+            except Exception:  # pragma: no cover — 回调异常吞掉
+                pass
+
+        return _on_retry
+
+    def _reset_retry_progress(self) -> None:
+        """LLM 调用成功后把 retry_count 显式置 0（覆盖语义）。"""
+        try:
+            task_id = get_parent_task_id()
+        except Exception:
+            return
+        if not task_id:
+            return
+        try:
+            from api.dependencies import get_task_registry
+        except Exception:
+            return
+        registry = get_task_registry()
+        if registry is None or task_id not in registry:
+            return
+        # 仅当 retry_count > 0 时才写，避免每轮都打 set_progress 开销
+        state = registry.get(task_id)
+        if state and state.progress.retry_count > 0:
+            registry.set_progress(task_id, retry_count=0)
 
     # ─── Token 预算闸门 ────────────────────────────────────
 

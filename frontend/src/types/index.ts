@@ -164,6 +164,7 @@ export interface TaskProgress {
   last_tool?: string | null
   current_step?: string | null
   memory_count?: number
+  retry_count?: number  // A6: 当前重试尝试号；> 0 且 status=running 时显示徽标
 }
 
 export interface Task {
@@ -310,6 +311,7 @@ export interface ChatMessage {
   toolCalls?: ChatToolCallRecord[]
   agent_name?: string
   error?: string
+  attachments?: string[]
 }
 
 export interface ChatSessionSummary {
@@ -491,6 +493,8 @@ export interface ChatroomSettings {
   max_relay_depth: number
   max_members: number
   allow_agent_invite: boolean
+  allow_subagent_dispatch?: boolean
+  auto_memory?: boolean
   [key: string]: unknown
 }
 
@@ -527,9 +531,23 @@ export interface ChatroomMessage {
   meta: ChatroomMessageMeta
   created_at: string
   updated_at: string
+  attachments?: string[]
   // 前端运行时附加（不写回后端）
   thinking_buffer?: string
   tool_calls?: ChatroomToolCallRecord[]
+}
+
+// ===== 附件（B1 Plan 3 P3） =====
+
+export interface Attachment {
+  id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  scope: string
+  uploaded_by: string
+  created_at: string
+  meta?: Record<string, unknown>
 }
 
 export interface ChatroomGoalHistoryEntry {
@@ -538,12 +556,38 @@ export interface ChatroomGoalHistoryEntry {
   set_at: string
 }
 
+// Spec 2 §11 / Task 16 — Todo + GoalSubgoal 数据模型
+export type ChatroomTodoStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
+
+export interface ChatroomTodo {
+  id: string
+  content: string
+  status: ChatroomTodoStatus
+  assignee: string | null
+  created_at: string
+  updated_at: string
+  parent_dispatch_id: string | null
+  notes: string | null
+}
+
+export type ChatroomGoalSubgoalStatus = 'pending' | 'done'
+
+export interface ChatroomGoalSubgoal {
+  id: string
+  content: string
+  status: ChatroomGoalSubgoalStatus
+  created_at: string
+  done_at: string | null
+}
+
 export interface Chatroom {
   id: string
   title: string
   topic: string
   goal: string | null
   goal_history: ChatroomGoalHistoryEntry[]
+  goal_subgoals?: ChatroomGoalSubgoal[]
+  todos?: ChatroomTodo[]
   members: string[]
   dynamic_members: ChatroomMember[]
   workspace_id: string | null

@@ -52,6 +52,7 @@ class AgentProgress:
     last_tool: Optional[str] = None
     current_step: Optional[str] = None
     memory_count: int = 0
+    retry_count: int = 0  # A6: 当前重试尝试号；覆盖语义，重试成功后调用方显式置 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

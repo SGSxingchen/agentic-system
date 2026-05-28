@@ -27,9 +27,7 @@ in ``api/routes/chatrooms.py`` is the only synchronous entry point for now.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
@@ -40,16 +38,19 @@ from .chatroom import (
     should_summarize,
     summarize_room,
 )
+from .chatroom_reminders import build_system_reminders
 from .task import (
     TaskRegistry,
     TaskStatus,
     TaskType,
     TranscriptWriter,
     reset_current_create_counter,
+    reset_current_parent_message_id,
     reset_current_room_id,
     reset_current_speaker_name,
     reset_workspace_root_override,
     set_current_create_counter,
+    set_current_parent_message_id,
     set_current_room_id,
     set_current_speaker_name,
     set_workspace_root_override,
@@ -160,6 +161,26 @@ def _truncate(value: Any, limit: int = 500) -> str:
     return preview
 
 
+def _build_memory_query(room: Dict[str, Any], prompt: Optional[str]) -> str:
+    """拼接最近 3 条房间消息（任意 sender）+ prompt 作为记忆检索 query。
+
+    与 ChatPanel 单 query 相比，房间多人接力时单条消息上下文太薄；取最近 3 条
+    保证检索的语义粒度。done/streaming/pending 都计入——记忆系统自己不在乎完成度。
+    """
+    messages = room.get("messages") or []
+    tail = messages[-3:]
+    parts: List[str] = []
+    for msg in tail:
+        sender = str(msg.get("sender") or "")
+        text = str(msg.get("content") or "").strip()
+        if not text:
+            continue
+        parts.append(f"[{sender}] {text}")
+    if prompt and prompt.strip():
+        parts.append(prompt.strip())
+    return "\n".join(parts)
+
+
 def _relay_depth(messages: List[Dict[str, Any]], parent_message_id: Optional[str]) -> int:
     """Walk the parent_message_id chain backwards and count agent hops.
 
@@ -214,6 +235,84 @@ def _attach_workspace(payload: Dict[str, Any], workspace_id: Optional[str]) -> N
         return
     payload["workspace_id"] = workspace.id
     payload["_trusted_workspace_root"] = workspace.root_path
+
+
+def _attach_chatroom_attachment_context(
+    payload: Dict[str, Any], room_snapshot: Dict[str, Any]
+) -> None:
+    """B1 Plan 3 P3 Task 25/26 — chat room 附件挂入 payload.
+
+    Picks the most recent user-authored message that carries ``attachments``
+    and forks two paths:
+
+    * Non-image (text/PDF/...): require ``_trusted_workspace_root`` so we can
+      materialize the file under ``<workspace_root>/.attachments/<id>/<name>``
+      and drop the ``<attached_files>`` block into ``attachment_context``.
+    * Image: read bytes directly into ``payload["attachment_images"]`` so the
+      LLM clients can ship them as multimodal content.
+
+    Failures are non-fatal — a missing store / unreadable image / link error
+    must not block the speak task.
+    """
+
+    messages = room_snapshot.get("messages") or []
+    attachment_ids: list[str] = []
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        if str(msg.get("sender") or "").strip() != "user":
+            continue
+        ids = msg.get("attachments")
+        if isinstance(ids, list) and ids:
+            attachment_ids = [str(i) for i in ids if i]
+            break
+
+    if not attachment_ids:
+        return
+
+    try:
+        from core.attachment_message_context import (
+            build_attachment_image_blocks,
+            build_attachment_reminder,
+            get_default_attachment_store,
+        )
+    except Exception:  # pragma: no cover — defensive
+        return
+
+    store = get_default_attachment_store()
+    if store is None:
+        return
+
+    workspace_root = payload.get("_trusted_workspace_root")
+    if workspace_root:
+        try:
+            block = build_attachment_reminder(
+                attachment_ids=attachment_ids,
+                workspace_root=workspace_root,
+                store=store,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("attachment reminder build failed: %s", exc)
+            block = ""
+        if block:
+            existing = str(payload.get("attachment_context") or "")
+            payload["attachment_context"] = (
+                f"{existing}\n\n{block}".strip() if existing else block
+            )
+
+    try:
+        images = build_attachment_image_blocks(
+            attachment_ids=attachment_ids, store=store
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("attachment image build failed: %s", exc)
+        images = []
+    if images:
+        existing_imgs = payload.get("attachment_images")
+        if isinstance(existing_imgs, list):
+            existing_imgs.extend(images)
+        else:
+            payload["attachment_images"] = list(images)
 
 
 def _maybe_set_workspace_root(
@@ -527,6 +626,9 @@ async def _run_speaking_task(
 
     room_token = set_current_room_id(room_id)
     speaker_token = set_current_speaker_name(agent_name)
+    # Spec 2 §5 / Task 9 — 暴露当前发言占位 message_id；chatroom_dispatch 等
+    # 工具读它作为 child speaking task 的 parent_message_id。
+    parent_token = set_current_parent_message_id(message_id)
     create_counter: List[int] = [0]
     counter_token = set_current_create_counter(create_counter)
     workspace_token = _maybe_set_workspace_root(room_id, store=store)
@@ -573,15 +675,82 @@ async def _run_speaking_task(
         )
 
         # ── 拼上下文 ──────────────────────────────────────
+        # build_room_context 已在 system 块里嵌入 CHATROOM_COLLABORATION_PROTOCOL，
+        # 不再额外强插旧版 _CHATROOM_OVERRIDE_PROMPT（Spec 2 §6 / Task 4）。
         room_snapshot = store.get_room(room_id) or {}
         context_messages = build_room_context(room_snapshot, agent_name)
+
+        # Spec 2 §8 / Task 13 — 在 history 末尾追加 <system-reminder> user 消息，
+        # 把 goal 变化 / 新成员 / 你被 @ 等"鲜活"信号塞给 LM；不污染稳定的
+        # system 块（cache 友好）。
+        try:
+            reminder_text = build_system_reminders(
+                room_snapshot,
+                target_agent=agent_name,
+                parent_message_id=parent_message_id,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("build_system_reminders failed: %s", exc)
+            reminder_text = ""
+        if reminder_text:
+            context_messages.append(
+                {
+                    "role": "user",
+                    "content": f"<system-reminder>\n{reminder_text}\n</system-reminder>",
+                }
+            )
+            await _broadcast(
+                room_id,
+                "chatroom_system_reminder",
+                {
+                    "room_id": room_id,
+                    "task_id": task_id,
+                    "agent_name": agent_name,
+                    "reminders": [
+                        line for line in reminder_text.split("\n") if line.strip()
+                    ],
+                },
+            )
 
         payload: Dict[str, Any] = {
             "messages": context_messages,
             "message": prompt or "请发言",
             "task_id": task_id,
         }
+
+        # Spec 2 §10.2 / Task 14 — 默认在房间里关掉 dispatch_agent，避免 Agent
+        # 私下派子 Agent（违背"围观一切"哲学）。settings.allow_subagent_dispatch
+        # 显式开启可放行。
+        room_settings = room_snapshot.get("settings") or {}
+        allow_subagent = bool(room_settings.get("allow_subagent_dispatch", False))
+        if not allow_subagent:
+            payload["_excluded_tools"] = ["dispatch_agent"]
+
+        # ── A1: 注入长期记忆（房间级 auto_memory，默认开） ──
+        auto_memory = bool((room_snapshot.get("settings") or {}).get("auto_memory", True))
+        if auto_memory:
+            try:
+                from api.websocket.handlers import build_memory_context  # type: ignore
+            except Exception:  # pragma: no cover — defensive
+                build_memory_context = None  # type: ignore
+            if build_memory_context is not None:
+                query = _build_memory_query(room_snapshot, prompt)
+                if query:
+                    try:
+                        memory_context, _ = await build_memory_context(query)
+                    except Exception as exc:  # pragma: no cover — defensive
+                        logger.warning("chatroom memory recall failed: %s", exc)
+                        memory_context = ""
+                    if memory_context:
+                        payload["memory_context"] = memory_context
+
+        # ── A2: 强制群聊文本输出（防御性，当前 Agent 仅在构造时读 output_format，
+        # 留 key 待 capability 支持 payload override 时生效；
+        # 真正起作用的是下面的 system override 块） ──
+        payload["output_format"] = "text"
+
         _attach_workspace(payload, room_snapshot.get("workspace_id"))
+        _attach_chatroom_attachment_context(payload, room_snapshot)
 
         stream_fn = getattr(cap, "execute_stream", None)
         if stream_fn is None:
@@ -741,33 +910,50 @@ async def _run_speaking_task(
             },
         )
 
-        # ── 接力派发 ──────────────────────────────────────
-        # host_directive 优先：如果发言者是 auto_host 模式下的 host_agent，
-        # 优先尝试把回复解析为结构化指令，按指令派发；否则回退到 mention 接力。
-        directive_actions = _parse_host_directive(
-            final_text,
-            room_after,
-            speaker=agent_name,
-        )
-        if directive_actions:
-            await _broadcast(
-                room_id,
-                "chatroom_host_directive",
-                {
-                    "room_id": room_id,
-                    "host": agent_name,
-                    "actions": directive_actions,
-                },
-            )
-            for action in directive_actions:
-                dispatch_speaking_task(
+        # Spec 2 §9.4 / Task 12 — 自动 mark associated todo as completed
+        try:
+            related_todos = store.find_todos_by_dispatch(room_id, task_id)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("find_todos_by_dispatch failed: %s", exc)
+            related_todos = []
+        for todo in related_todos:
+            if (todo.get("status") or "") == "completed":
+                continue
+            updated = store.update_todo(room_id, todo["id"], status="completed")
+            if updated:
+                await _broadcast(
                     room_id,
-                    action["agent"],
-                    prompt=action.get("prompt"),
-                    parent_message_id=message_id,
-                    store=store,
+                    "chatroom_todo_completed",
+                    {
+                        "room_id": room_id,
+                        "todo_id": todo["id"],
+                        "todo": updated,
+                        "by": agent_name,
+                        "source": "auto",
+                    },
                 )
-        elif mentions:
+
+        # ── A1: 触发记忆反思（不阻塞接力派发） ──
+        if auto_memory and final_text:
+            try:
+                from api.websocket.handlers import schedule_memory_reflection  # type: ignore
+            except Exception:  # pragma: no cover — defensive
+                schedule_memory_reflection = None  # type: ignore
+            if schedule_memory_reflection is not None:
+                try:
+                    schedule_memory_reflection(
+                        user_message=_build_memory_query(room_after, prompt),
+                        assistant_text=final_text,
+                        source=f"chatroom:{agent_name}",
+                        session_id=f"chatroom:{room_id}",
+                    )
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.warning("chatroom memory reflection failed: %s", exc)
+
+        # ── 接力派发 ──────────────────────────────────────
+        # mention 接力：发言里 @ 了某成员就给该成员派 speaking task。
+        # （旧版的 host_directive JSON 文本协议已删除，spec §5.4，Task 8）
+        if mentions:
             for relay_target in mentions:
                 dispatch_speaking_task(
                     room_id,
@@ -825,6 +1011,7 @@ async def _run_speaking_task(
         if workspace_token is not None:
             reset_workspace_root_override(workspace_token)
         reset_current_create_counter(counter_token)
+        reset_current_parent_message_id(parent_token)
         reset_current_speaker_name(speaker_token)
         reset_current_room_id(room_token)
 
@@ -833,101 +1020,3 @@ __all__ = [
     "dispatch_speaking_task",
     "maybe_schedule_summary",
 ]
-
-
-# ─── host_directive 解析 ──────────────────────────────────
-
-
-def _parse_host_directive(
-    final_text: str,
-    room: Dict[str, Any],
-    *,
-    speaker: str,
-) -> Optional[List[Dict[str, Any]]]:
-    """从主持人 Agent 的回复里解析结构化调度指令。
-
-    仅当：(a) 房间 auto_host=True，(b) speaker 与 settings.host_agent 一致，
-    (c) 文本里能找到一段可解析的 JSON ``{"actions":[{"agent":...,"prompt":...}]}``，
-    才返回 actions 列表（每项已校验 agent 在房间成员里）。
-    其余情况返回 None，调用方回退到 mention 解析。
-    """
-
-    if not final_text:
-        return None
-    settings = room.get("settings") or {}
-    if not bool(settings.get("auto_host")):
-        return None
-    host_agent = str(settings.get("host_agent") or "").strip()
-    if not host_agent or speaker != host_agent:
-        return None
-
-    payload = _extract_json_object(final_text)
-    if not isinstance(payload, dict):
-        return None
-    actions = payload.get("actions")
-    if not isinstance(actions, list) or not actions:
-        return None
-
-    valid_names = set(_all_member_names(room)) - {speaker}
-    cleaned: List[Dict[str, Any]] = []
-    for raw in actions:
-        if not isinstance(raw, dict):
-            continue
-        agent_name = str(raw.get("agent") or "").strip()
-        if not agent_name or agent_name not in valid_names:
-            continue
-        prompt = raw.get("prompt")
-        if prompt is not None and not isinstance(prompt, str):
-            prompt = str(prompt)
-        cleaned.append({"agent": agent_name, "prompt": prompt})
-    return cleaned or None
-
-
-def _extract_json_object(text: str) -> Optional[Any]:
-    """从一段自由文本里抽出第一个完整 JSON 对象。
-
-    优先匹配 ``json``/`json` 代码围栏，其次扫描首个 ``{`` 起到平衡的 ``}``。
-    出错全部静默返回 None，让调用方回退。
-    """
-
-    # 1) 围栏块 ```json ... ```
-    fence = re.search(
-        r"```(?:json)?\s*([\s\S]+?)\s*```",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if fence:
-        try:
-            return json.loads(fence.group(1))
-        except (ValueError, TypeError):
-            pass
-
-    # 2) 首个 { 起的平衡块（朴素括号配对，能处理嵌套）
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_str:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start : i + 1])
-                except (ValueError, TypeError):
-                    return None
-    return None

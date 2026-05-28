@@ -502,6 +502,10 @@ class ChatMessageCreateRequest(BaseModel):
     error: Optional[str] = None
     timeline: Optional[list[dict[str, Any]]] = None
     artifacts: Optional[list[dict[str, Any]]] = None
+    attachments: Optional[list[str]] = Field(
+        default=None,
+        description="引用的附件 ID 列表（B1 Plan 3 P3）",
+    )
 
 
 
@@ -619,6 +623,10 @@ class ChatroomMessageCreateRequest(BaseModel):
     """房间内追加用户消息请求"""
 
     content: str = Field(..., min_length=1, description="Markdown 文本")
+    attachments: Optional[list[str]] = Field(
+        default=None,
+        description="引用的附件 ID 列表（B1 Plan 3 P3）",
+    )
 
 
 class ChatroomInvokeRequest(BaseModel):
