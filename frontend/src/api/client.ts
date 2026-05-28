@@ -398,6 +398,7 @@ export async function updateAgent(
     tools?: string[]
     output_format?: string
     max_iterations?: number
+    token_budget?: number
     model?: string | null
     llm?: Record<string, unknown> | null
     skills?: AgentSkillConfig | null

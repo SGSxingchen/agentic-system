@@ -858,6 +858,22 @@ export function AgentPanel() {
                     />
                   </label>
                   <label className="agent-form-field">
+                    <span>Token 预算上限</span>
+                    <input
+                      type="number"
+                      min={10000}
+                      max={2000000}
+                      step={10000}
+                      placeholder="继承全局默认 (300000)"
+                      value={draft.token_budget}
+                      disabled={!editing}
+                      onChange={(event) => updateDraft({ token_budget: event.target.value })}
+                    />
+                    <small style={{ color: '#888', fontSize: '12px' }}>
+                      单次 Agent 调用累计 token 上限。聊天室主持人建议 300000+
+                    </small>
+                  </label>
+                  <label className="agent-form-field">
                     <span>默认工作区</span>
                     <Select
                       value={draft.default_workspace_id}

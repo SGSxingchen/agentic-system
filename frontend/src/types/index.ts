@@ -85,6 +85,7 @@ export interface AgentInfo {
   llm?: AgentLLMConfig | null
   output_format?: string
   max_iterations?: number
+  token_budget?: number
   skills?: AgentSkillConfig | null
   mcp_servers?: AgentMCPServerConfig[]
   default_workspace_id?: string | null
