@@ -131,6 +131,7 @@ TOOL_DESCRIPTIONS: Mapping[str, str] = {
     "file_search": "只读工作区文件搜索工具：按文件名或内容查找工作区内文件，自动跳过依赖和缓存目录。",
     "read_file": "只读工作区文件读取工具：读取指定工作区内文件内容；不能读取工作区外路径。",
     "write_file": "受限工作区文件写入工具：仅在用户明确要求创建或修改文件时使用，写入完整内容并限制在工作区内。",
+    "edit_file": "受限工作区文件精确替换工具：将文件中匹配的 old_string 替换为 new_string，适合改大文件中的某段而不重写全文；默认要求 old_string 在文件中只出现一次，否则需要传 replace_all=True。",
     "json_tool": "只读 JSON 工具：校验、格式化、压缩 JSON，并支持简单点路径查询。",
     "text_processor": "只读文本处理工具：统计、清洗、关键词提取、大小写转换和 slug 生成。",
     "create_dynamic_tool_config": "受限配置写入工具：创建或更新 YAML 动态 Tool 配置，并可挂载到指定 Agent；生效需要重新装载或重启后端。",
