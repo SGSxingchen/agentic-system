@@ -106,6 +106,7 @@ function formatToolPayload(value: any) {
 function toAgentHistory(messages: ChatMessage[], nextMessage: ChatMessage) {
   const history = [...messages, nextMessage].flatMap((message) => {
     if (message.type !== 'user' && message.type !== 'assistant') return []
+    if (!message.content.trim()) return []
     return [{ role: message.type, content: message.content }]
   })
   return history.slice(-30)
@@ -1119,7 +1120,12 @@ export function ChatPanel() {
                 📎 附件
               </button>
               <span className="text-muted" style={{ fontSize: 11 }}>
-                调用 /api/agents/{agentName || '?'}/invoke
+                WebSocket 流式调用 · 携带最近 {toAgentHistory(activeSession?.messages || [], {
+                  id: 'draft',
+                  type: 'user',
+                  content: input.trim(),
+                  timestamp: '',
+                }).length} 条上下文
               </span>
               <button
                 type="button"

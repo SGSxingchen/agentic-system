@@ -80,6 +80,41 @@ def _attach_workspace_context(
     return None
 
 
+def _chat_session_messages_for_agent(
+    session_id: str | None,
+    current_message: str,
+) -> list[dict[str, str]]:
+    """Build the actual chat message queue from persisted session history."""
+
+    if not session_id:
+        return []
+    session = ChatHistoryStore().get_session(str(session_id))
+    if not session:
+        return []
+
+    messages: list[dict[str, str]] = []
+    for item in session.get("messages") or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("type") or item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        messages.append({"role": role, "content": content})
+
+    current_message = current_message.strip()
+    if current_message and not (
+        messages
+        and messages[-1]["role"] == "user"
+        and messages[-1]["content"] == current_message
+    ):
+        messages.append({"role": "user", "content": current_message})
+
+    return messages[-30:]
+
+
 def _ws_message(
     message_type: str,
     data: dict[str, Any] | None = None,
@@ -348,7 +383,13 @@ async def _handle_user_message(
     memory_context, memories_used = await build_memory_context(user_message)
     session_id = payload.get("session_id") or payload.get("chat_session_id")
     assistant_payload = {"message": user_message}
-    if isinstance(payload.get("messages"), list):
+    session_messages = _chat_session_messages_for_agent(
+        str(session_id) if session_id else None,
+        user_message,
+    )
+    if session_messages:
+        assistant_payload["messages"] = session_messages
+    elif isinstance(payload.get("messages"), list):
         assistant_payload["messages"] = payload.get("messages")
     if isinstance(payload.get("attachments"), list):
         assistant_payload["attachments"] = payload.get("attachments")
@@ -379,7 +420,7 @@ async def _handle_user_message(
     if stream_fn is None:
         # 兜底：不支持流式时回退到一次性调用
         try:
-            result = await cap_registry.execute("assistant", **assistant_payload)
+            result = await cap_registry.execute(agent_name, **assistant_payload)
             response_text = result.get("response", str(result))
         except Exception as exc:
             response_text = f"Processing failed: {exc}"

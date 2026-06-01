@@ -393,6 +393,18 @@ class Agent:
 
         conversation = self._coerce_conversation_messages(input_data)
         if conversation:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "[当前会话历史]\n"
+                        f"下面紧接着的 {len(conversation)} 条 user/assistant 消息来自同一个聊天会话，"
+                        "是本轮回答必须优先参考的上下文。"
+                        "如果用户询问“上下文”“刚才”“前面说了什么”等问题，"
+                        "请优先概括这些会话历史里的具体内容，而不是只复述系统规则、人格或长期记忆。"
+                    ),
+                }
+            )
             messages.extend(conversation)
         else:
             messages.append({"role": "user", "content": self._build_user_message(input_data)})
