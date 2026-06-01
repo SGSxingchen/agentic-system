@@ -123,6 +123,23 @@ export function SkillsPanel() {
     [loadCatalog, selectedAgent]
   )
 
+  const unassembleSkill = useCallback(
+    async (name: string, agentName: string) => {
+      setAssemblingName(name)
+      setError('')
+      setNotice('')
+      const res = await api.unassembleCapability('skills', name, agentName)
+      setAssemblingName(null)
+      if (res.status !== 'ok') {
+        setCatalogError(res.message || `从 ${agentName} 卸下 Skill ${name} 失败。`)
+        return
+      }
+      setNotice(`已从 ${agentName} 卸下 Skill ${name}。`)
+      await Promise.all([loadAgents(selectedAgent || undefined), loadCatalog()])
+    },
+    [loadCatalog, selectedAgent]
+  )
+
   const selected = useMemo(
     () => agents.find((agent) => agent.name === selectedAgent) || null,
     [agents, selectedAgent]
@@ -246,6 +263,7 @@ export function SkillsPanel() {
             items={catalogItems}
             agents={agents}
             onAssemble={assembleSkill}
+            onUnassemble={unassembleSkill}
             loading={catalogLoading}
             error={catalogError}
             assemblingName={assemblingName}

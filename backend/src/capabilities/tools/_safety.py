@@ -45,8 +45,34 @@ def get_workspace_root() -> Path:
     return resolve_workspace_root()
 
 
+def _boundary_enforced() -> bool:
+    """工作区边界是否强制。默认 False（放行越界路径）。
+
+    优先级：环境变量 ``AGENTIC_ENFORCE_WORKSPACE_BOUNDARY`` >
+    ``get_tool_runtime_config("file").enforce_workspace_boundary`` > 默认 False。
+    """
+
+    env = os.getenv("AGENTIC_ENFORCE_WORKSPACE_BOUNDARY", "").strip().lower()
+    if env:
+        return env in {"1", "true", "yes", "on"}
+
+    try:
+        from core.config import get_tool_runtime_config
+
+        return bool(
+            get_tool_runtime_config("file").get("enforce_workspace_boundary", False)
+        )
+    except Exception:
+        return False
+
+
 def resolve_workspace_path(raw_path: str) -> Path:
-    """Resolve a user path and ensure it stays inside the workspace."""
+    """Resolve a user path.
+
+    相对路径始终落到工作区根目录下（保留聊天室工作区绑定/附件相对路径语义）。
+    绝对路径与越界路径默认放行；仅当 ``_boundary_enforced()`` 为真时才强制沙箱、
+    对越界路径抛 ``PermissionError``。
+    """
 
     if not raw_path:
         raise ValueError("path is required")
@@ -58,12 +84,13 @@ def resolve_workspace_path(raw_path: str) -> Path:
     else:
         path = path.resolve()
 
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise PermissionError(
-            f"path '{raw_path}' is outside the workspace root '{root}'"
-        ) from exc
+    if _boundary_enforced():
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise PermissionError(
+                f"path '{raw_path}' is outside the workspace root '{root}'"
+            ) from exc
 
     return path
 

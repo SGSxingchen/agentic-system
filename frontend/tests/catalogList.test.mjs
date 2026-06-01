@@ -60,6 +60,18 @@ assert.match(
   '装配按钮应有「装配」/「装配中...」文案'
 )
 
+// ─── 3b. 卸下：used_by chip 点击调用 onUnassemble(name, agent) ───
+assert.match(
+  source,
+  /onUnassemble\(\s*item\.name\s*,\s*agent\s*\)/,
+  '可卸下 chip 应调用 onUnassemble(item.name, agent)'
+)
+assert.match(
+  source,
+  /catalog-row__chip--removable/,
+  'used_by chip 应为可卸下按钮形态'
+)
+
 // ─── 4. 目标 agent select ─────────────────────────────────
 assert.match(
   source,

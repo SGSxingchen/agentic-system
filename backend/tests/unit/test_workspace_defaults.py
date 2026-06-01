@@ -55,6 +55,40 @@ def test_workspace_path_resolution_is_under_workspace(tmp_path, monkeypatch):
     assert (tmp_path / "workspace").is_dir()
 
 
+def test_outside_path_allowed_by_default(tmp_path, monkeypatch):
+    """默认不强制边界：工作区外的绝对路径应放行，而不是抛 PermissionError。"""
+    monkeypatch.delenv("AGENTIC_ENFORCE_WORKSPACE_BOUNDARY", raising=False)
+    monkeypatch.setenv("AGENTIC_WORKSPACE_ROOT", str(tmp_path / "ws"))
+    outside = tmp_path / "outside" / "doc.pdf"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x", encoding="utf-8")
+
+    resolved = resolve_workspace_path(str(outside))
+
+    assert resolved == outside.resolve()
+
+
+def test_outside_path_rejected_when_boundary_enforced(tmp_path, monkeypatch):
+    """开关打开时恢复严格沙箱：越界路径抛 PermissionError。"""
+    monkeypatch.setenv("AGENTIC_ENFORCE_WORKSPACE_BOUNDARY", "true")
+    monkeypatch.setenv("AGENTIC_WORKSPACE_ROOT", str(tmp_path / "ws"))
+    outside = tmp_path / "outside" / "doc.pdf"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x", encoding="utf-8")
+
+    with pytest.raises(PermissionError):
+        resolve_workspace_path(str(outside))
+
+
+def test_relative_path_still_under_workspace_regardless_of_flag(tmp_path, monkeypatch):
+    """无论开关如何，相对路径都落到工作区根（保留聊天室工作区绑定语义）。"""
+    monkeypatch.setenv("AGENTIC_WORKSPACE_ROOT", str(tmp_path / "ws"))
+    for flag in ("", "true"):
+        monkeypatch.setenv("AGENTIC_ENFORCE_WORKSPACE_BOUNDARY", flag)
+        resolved = resolve_workspace_path(".attachments/abc/file.pdf")
+        assert resolved == (tmp_path / "ws" / ".attachments" / "abc" / "file.pdf").resolve()
+
+
 @pytest.mark.asyncio
 async def test_bash_default_cwd_is_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("ENABLE_SHELL_TOOL", "true")

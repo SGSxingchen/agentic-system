@@ -324,3 +324,55 @@ class TestAssembleErrors:
             "/api/catalog/mcp/broken/assemble", json={"agent_name": "assistant"}
         )
         assert resp.status_code == 422
+
+
+class TestUnassemble:
+    async def test_unassemble_tool_round_trip(self, client, catalog_env):
+        await client.post(
+            "/api/catalog/tools/calculator/assemble", json={"agent_name": "coder"}
+        )
+        assert "calculator" in _read_agents(catalog_env["config_dir"])["coder"]["tools"]
+
+        resp = await client.post(
+            "/api/catalog/tools/calculator/unassemble", json={"agent_name": "coder"}
+        )
+        assert resp.status_code == 200, resp.text
+        assert "calculator" not in _read_agents(catalog_env["config_dir"])["coder"]["tools"]
+
+    async def test_unassemble_skill_round_trip(self, client, catalog_env):
+        await client.post(
+            "/api/catalog/skills/mcp-builder/assemble", json={"agent_name": "assistant"}
+        )
+        resp = await client.post(
+            "/api/catalog/skills/mcp-builder/unassemble", json={"agent_name": "assistant"}
+        )
+        assert resp.status_code == 200, resp.text
+        skills = _read_agents(catalog_env["config_dir"])["assistant"].get("skills", {})
+        paths = [i.get("path") for i in skills.get("items", [])]
+        assert "skills/mcp-builder/SKILL.md" not in paths
+        # 卸下最后一个 skill 后 enabled 关闭
+        assert skills.get("enabled") is False
+
+    async def test_unassemble_mcp_round_trip(self, client, catalog_env):
+        await client.post(
+            "/api/catalog/mcp/filesystem/assemble", json={"agent_name": "assistant"}
+        )
+        resp = await client.post(
+            "/api/catalog/mcp/filesystem/unassemble", json={"agent_name": "assistant"}
+        )
+        assert resp.status_code == 200, resp.text
+        servers = _read_agents(catalog_env["config_dir"])["assistant"].get("mcp_servers", [])
+        assert all(s.get("name") != "filesystem" for s in servers)
+
+    async def test_unassemble_idempotent_when_absent(self, client, catalog_env):
+        # 未装配时卸下应幂等成功（无副作用）
+        resp = await client.post(
+            "/api/catalog/tools/calculator/unassemble", json={"agent_name": "coder"}
+        )
+        assert resp.status_code == 200, resp.text
+
+    async def test_unassemble_unknown_agent_404(self, client):
+        resp = await client.post(
+            "/api/catalog/tools/calculator/unassemble", json={"agent_name": "ghost"}
+        )
+        assert resp.status_code == 404

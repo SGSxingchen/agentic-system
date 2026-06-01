@@ -78,11 +78,15 @@ class JsonToolCapability(CapabilityBase):
             }
         if operation == "query":
             if not path:
-                return {"valid": True, "error": "path is required for query"}
+                return {"valid": True, "found": False, "error": "path is required for query"}
             try:
-                return {"valid": True, "path": path, "value": self._query(data, path)}
-            except Exception as exc:
-                return {"valid": True, "error": f"path not found: {str(exc)}"}
+                value = self._query(data, path)
+            except ValueError as exc:
+                # 对列表用了非数字索引（如 users.abc）。
+                return {"valid": True, "found": False, "error": f"invalid list index in path: {exc}"}
+            except (KeyError, IndexError) as exc:
+                return {"valid": True, "found": False, "error": f"path not found: {exc}"}
+            return {"valid": True, "found": True, "path": path, "value": value}
 
         return {"valid": True, "type": type(data).__name__}
 
@@ -91,6 +95,7 @@ class JsonToolCapability(CapabilityBase):
         current = data
         for part in path.split("."):
             if isinstance(current, list):
+                # int(part) 对非数字抛 ValueError，由 execute 转成清晰提示。
                 current = current[int(part)]
             elif isinstance(current, dict):
                 current = current[part]

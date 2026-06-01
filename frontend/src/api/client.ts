@@ -486,6 +486,21 @@ export async function assembleCapability(
   return response
 }
 
+export async function unassembleCapability(
+  kind: CatalogKind,
+  name: string,
+  agentName: string
+): Promise<APIResponse<AgentInfo>> {
+  const response = await post<AgentInfo>(
+    `/api/catalog/${kind}/${encodeURIComponent(name)}/unassemble`,
+    { agent_name: agentName }
+  )
+  if (response.status === 'ok') {
+    invalidateGetCache('/api/agents', '/api/catalog')
+  }
+  return response
+}
+
 // ===== Agent Run API =====
 
 export async function createRun(data: {

@@ -131,6 +131,13 @@ class FileToolConfig(BaseModel):
     """Workspace file tool configuration."""
 
     workspace_root: str = Field(default="./workspace", description="Workspace root for file/shell tools")
+    enforce_workspace_boundary: bool = Field(
+        default=False,
+        description=(
+            "是否强制文件/Shell 工具的工作区边界。默认 False：相对路径仍落到工作区根，"
+            "但绝对路径/越界路径放行（便于读取附件等工作区外文件）。设 True 恢复严格沙箱。"
+        ),
+    )
 
 
 class ShellToolConfig(BaseModel):
@@ -328,6 +335,8 @@ def _apply_env_overrides(raw: Dict[str, Any]) -> Dict[str, Any]:
     file_tools = tools.setdefault("file", {})
     if value := os.getenv("AGENTIC_WORKSPACE_ROOT"):
         file_tools["workspace_root"] = value
+    if value := os.getenv("AGENTIC_ENFORCE_WORKSPACE_BOUNDARY"):
+        file_tools["enforce_workspace_boundary"] = value.strip().lower() in {"1", "true", "yes", "on"}
 
     shell = tools.setdefault("shell", {})
     if value := os.getenv("ENABLE_SHELL_TOOL"):

@@ -91,32 +91,47 @@ class FileSearchCapability(CapabilityBase):
         results: list[dict[str, Any]] = []
         query_lower = query.lower()
         max_results = max(1, min(max_results, 100))
+        ws_root = get_workspace_root()
 
         for file_path in self._iter_files(root):
             if not fnmatch.fnmatch(file_path.name, glob_pattern):
                 continue
 
-            match_reason = "name" if query_lower and query_lower in file_path.name.lower() else ""
-            snippets: list[dict[str, Any]] = []
+            # 单个文件出错（损坏软链、权限不足、遍历途中被删）只跳过该文件，
+            # 不能让整次搜索因一次 stat/read 异常而整体失败。
+            try:
+                # 跳过解析后逃逸出工作区的软链（os.walk 出的路径不经 resolve_workspace_path）。
+                if file_path.is_symlink():
+                    try:
+                        file_path.resolve(strict=True).relative_to(ws_root)
+                    except (OSError, ValueError):
+                        continue
 
-            if query and not match_reason:
-                snippets = self._search_file_content(file_path, query_lower, include_snippets)
-                if snippets:
-                    match_reason = "content"
-            elif query and include_snippets:
-                snippets = self._search_file_content(file_path, query_lower, include_snippets)
+                match_reason = (
+                    "name" if query_lower and query_lower in file_path.name.lower() else ""
+                )
+                snippets: list[dict[str, Any]] = []
 
-            if query and not match_reason:
+                if query and not match_reason:
+                    snippets = self._search_file_content(file_path, query_lower, include_snippets)
+                    if snippets:
+                        match_reason = "content"
+                elif query and include_snippets:
+                    snippets = self._search_file_content(file_path, query_lower, include_snippets)
+
+                if query and not match_reason:
+                    continue
+
+                results.append(
+                    {
+                        "path": file_path.relative_to(ws_root).as_posix(),
+                        "size": file_path.stat().st_size,
+                        "match": match_reason or "glob",
+                        "snippets": snippets[:3],
+                    }
+                )
+            except OSError:
                 continue
-
-            results.append(
-                {
-                    "path": file_path.relative_to(get_workspace_root()).as_posix(),
-                    "size": file_path.stat().st_size,
-                    "match": match_reason or "glob",
-                    "snippets": snippets[:3],
-                }
-            )
             if len(results) >= max_results:
                 break
 

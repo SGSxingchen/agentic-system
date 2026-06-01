@@ -80,6 +80,8 @@ class TestEditFileCapability:
         outside = tmp_path / "outside.txt"
         outside.write_text("secret", encoding="utf-8")
         monkeypatch.setenv("AGENTIC_WORKSPACE_ROOT", str(workspace))
+        # 工作区边界默认放开；本用例验证“开启严格沙箱”后越界写入被拦截。
+        monkeypatch.setenv("AGENTIC_ENFORCE_WORKSPACE_BOUNDARY", "true")
 
         tool = EditFileCapability()
         result = await tool.execute(

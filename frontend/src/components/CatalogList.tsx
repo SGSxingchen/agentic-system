@@ -16,9 +16,11 @@ interface CatalogListProps {
     agentName: string,
     env?: Record<string, string>
   ) => void | Promise<void>
+  /** 从指定 agent 卸下该 catalog 项。 */
+  onUnassemble: (name: string, agentName: string) => void | Promise<void>
   loading?: boolean
   error?: string
-  /** 正在装配中的 catalog 项名称（用于禁用按钮 + loading 文案）。 */
+  /** 正在装配/卸下中的 catalog 项名称（用于禁用按钮 + loading 文案）。 */
   assemblingName?: string | null
   /** 自定义空态文案。 */
   emptyHint?: string
@@ -28,6 +30,7 @@ interface RowProps {
   item: CatalogListItem
   agents: AgentInfo[]
   onAssemble: CatalogListProps['onAssemble']
+  onUnassemble: CatalogListProps['onUnassemble']
   assembling: boolean
 }
 
@@ -39,7 +42,7 @@ function collectMcpEnvKeys(item: CatalogListItem): string[] {
   return Object.keys(env)
 }
 
-function CatalogRow({ item, agents, onAssemble, assembling }: RowProps) {
+function CatalogRow({ item, agents, onAssemble, onUnassemble, assembling }: RowProps) {
   const [agentName, setAgentName] = useState(agents[0]?.name || '')
   const [expanded, setExpanded] = useState(false)
   const [envDraft, setEnvDraft] = useState<Record<string, string>>({})
@@ -96,9 +99,17 @@ function CatalogRow({ item, agents, onAssemble, assembling }: RowProps) {
             <span className="text-muted catalog-row__usedby-empty">未装配</span>
           ) : (
             usedBy.map((agent) => (
-              <span key={agent} className="pill pill--info catalog-row__chip">
+              <button
+                key={agent}
+                type="button"
+                className="pill pill--info catalog-row__chip catalog-row__chip--removable"
+                onClick={() => void onUnassemble(item.name, agent)}
+                disabled={assembling}
+                title={`从 ${agent} 卸下`}
+              >
                 {agent}
-              </span>
+                <span className="catalog-row__chip-x" aria-hidden>×</span>
+              </button>
             ))
           )}
         </div>
@@ -184,6 +195,7 @@ export function CatalogList({
   items,
   agents,
   onAssemble,
+  onUnassemble,
   loading,
   error,
   assemblingName,
@@ -228,6 +240,7 @@ export function CatalogList({
           item={item}
           agents={agents}
           onAssemble={onAssemble}
+          onUnassemble={onUnassemble}
           assembling={assemblingName === item.name}
         />
       ))}

@@ -130,6 +130,8 @@ class BashCapability(CapabilityBase):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(resolved_cwd),
+                # POSIX 上独立会话 → 进程组，超时可整组回收子进程；Windows 不支持。
+                start_new_session=(os.name != "nt"),
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             return {
@@ -139,9 +141,31 @@ class BashCapability(CapabilityBase):
                 "cwd": str(resolved_cwd),
             }
         except asyncio.TimeoutError:
-            if process is not None:
-                process.kill()
-                await process.communicate()
+            await self._terminate(process)
             return {"error": f"Command timed out after {timeout} seconds"}
         except Exception as exc:
             return {"error": f"Command execution failed: {str(exc)}"}
+
+    @staticmethod
+    async def _terminate(process: "asyncio.subprocess.Process | None") -> None:
+        """超时后杀掉整棵进程树，并限时回收，避免 communicate() 永久挂起。"""
+        if process is None:
+            return
+        try:
+            if os.name != "nt":
+                import signal
+
+                # 杀整个进程组（含 shell 派生的子进程），而不仅是 shell 本身。
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            else:
+                process.kill()
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                process.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        # 限时收尸：子进程若仍占着管道，communicate() 可能无限阻塞。
+        try:
+            await asyncio.wait_for(process.communicate(), timeout=5)
+        except Exception:  # noqa: BLE001
+            pass

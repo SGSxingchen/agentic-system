@@ -11,6 +11,9 @@ from core.capability.base import CapabilityBase, CapabilitySchema
 
 from ._safety import resolve_workspace_path
 
+# 本地文件转 base64 artifact 的大小上限（base64 后约 +33%）。
+_MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
+
 
 class FrontendArtifactCapability(CapabilityBase):
     """Create a frontend-visible artifact and return preview/download metadata."""
@@ -70,6 +73,16 @@ class FrontendArtifactCapability(CapabilityBase):
                 file_path = resolve_workspace_path(raw_path)
                 if not file_path.exists() or not file_path.is_file():
                     return {"error": f"create_frontend_artifact failed: file not found: {raw_path}"}
+                # 先看大小再读：避免把超大文件整体读进内存并 base64（约膨胀 33%），
+                # 否则既可能 OOM，返回值也会被结果预算截断成无效 base64。
+                size = file_path.stat().st_size
+                if size > _MAX_ARTIFACT_BYTES:
+                    return {
+                        "error": (
+                            f"create_frontend_artifact failed: file too large "
+                            f"({size} bytes > {_MAX_ARTIFACT_BYTES} 上限)"
+                        )
+                    }
                 content = base64.b64encode(file_path.read_bytes()).decode("ascii")
                 content_encoding = "base64"
                 if not filename:

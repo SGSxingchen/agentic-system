@@ -71,6 +71,23 @@ export function ToolsPanel() {
     [load]
   )
 
+  const handleUnassemble = useCallback(
+    async (name: string, agentName: string) => {
+      setAssemblingName(name)
+      setError('')
+      setNotice('')
+      const res = await api.unassembleCapability('tools', name, agentName)
+      setAssemblingName(null)
+      if (res.status !== 'ok') {
+        setError(res.message || `从 ${agentName} 卸下工具 ${name} 失败。`)
+        return
+      }
+      setNotice(`已从 ${agentName} 卸下工具 ${name}。`)
+      await load()
+    },
+    [load]
+  )
+
   const stats = useMemo(() => {
     const assembled = items.filter((item) => item.used_by.length > 0).length
     return { total: items.length, assembled }
@@ -129,6 +146,7 @@ export function ToolsPanel() {
         </header>
         <div className="console-card__body--flush">
           <CatalogList
+            onUnassemble={handleUnassemble}
             items={items}
             agents={agents}
             onAssemble={handleAssemble}

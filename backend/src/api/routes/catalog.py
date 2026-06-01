@@ -319,6 +319,41 @@ def _build_mcp_patch(
     return {"mcp_servers": merged}, None
 
 
+# ─── 卸下（unassemble）：从 agent 配置移除目录项 ──────────────────────
+
+
+def _build_tool_unpatch(agent: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
+    existing = agent.get("tools")
+    tools = [str(item) for item in existing if isinstance(item, str)] if isinstance(existing, list) else []
+    return {"tools": [t for t in tools if t != tool_name]}
+
+
+def _build_skill_unpatch(agent: Dict[str, Any], slug: str) -> Dict[str, Any]:
+    target_path = f"skills/{slug}/SKILL.md"
+    existing = agent.get("skills")
+    skills: Dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    raw_items = skills.get("items")
+    items: List[Any] = list(raw_items) if isinstance(raw_items, list) else []
+
+    def _has_path(item: Any) -> bool:
+        if isinstance(item, str):
+            return item.replace("./", "") == target_path
+        if isinstance(item, dict):
+            return str(item.get("path") or "").replace("./", "") == target_path
+        return False
+
+    remaining = [item for item in items if not _has_path(item)]
+    skills["items"] = remaining
+    skills["enabled"] = bool(remaining)
+    return {"skills": skills}
+
+
+def _build_mcp_unpatch(agent: Dict[str, Any], server_name: str) -> Dict[str, Any]:
+    existing = agent.get("mcp_servers")
+    existing_list = [s for s in existing if isinstance(s, dict)] if isinstance(existing, list) else []
+    return {"mcp_servers": [s for s in existing_list if str(s.get("name") or "") != server_name]}
+
+
 @router.post("/{kind}/{name}/assemble", response_model=APIResponse)
 async def assemble_capability(kind: str, name: str, req: AssembleRequest):
     """把目录项装配到目标 agent 的配置字段，落盘 + 热重载，返回更新后的 agent 视图。"""
@@ -368,5 +403,50 @@ async def assemble_capability(kind: str, name: str, req: AssembleRequest):
     return APIResponse(
         status="ok",
         message=f"已把 {kind[:-1] if kind != 'mcp' else 'mcp'} '{name}' 装配到 Agent '{agent_name}'",
+        data=info.model_dump(),
+    )
+
+
+@router.post("/{kind}/{name}/unassemble", response_model=APIResponse)
+async def unassemble_capability(kind: str, name: str, req: AssembleRequest):
+    """从目标 agent 的配置字段卸下目录项，落盘 + 热重载，返回更新后的 agent 视图。
+
+    幂等：若该项当前未装配到 agent，直接返回成功（无副作用）。不要求该项仍在能力库中，
+    以便随时把历史装配卸下。
+    """
+
+    kind = _KIND_ALIASES.get(kind, kind)
+    if kind not in VALID_KINDS:
+        raise HTTPException(status_code=404, detail=f"未知能力类型: {kind}")
+
+    agent_name = str(req.agent_name or "").strip()
+    if not agent_name:
+        raise HTTPException(status_code=422, detail="agent_name is required")
+
+    agents = _agents_list()
+    agent = _find_agent(agents, agent_name)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' 不存在")
+
+    if kind == "tools":
+        patch = _build_tool_unpatch(agent, name)
+    elif kind == "skills":
+        patch = _build_skill_unpatch(agent, name)
+    else:  # mcp
+        patch = _build_mcp_unpatch(agent, name)
+
+    cap = UpdateAgentConfigCapability()
+    result = await cap.execute(agent_name=agent_name, patch=patch)
+    if not result.get("success"):
+        message = result.get("error") or "; ".join(result.get("errors") or []) or "卸下失败"
+        raise HTTPException(status_code=422, detail=message)
+
+    updated_agent = _find_agent(_agents_list(), agent_name) or agent
+    registry = get_agent_registry()
+    runtime_meta = registry.get(agent_name).get_metadata() if registry and registry.get(agent_name) else None
+    info = _build_agent_info(agent_name, config=updated_agent, runtime_meta=runtime_meta)
+    return APIResponse(
+        status="ok",
+        message=f"已从 Agent '{agent_name}' 卸下 {kind[:-1] if kind != 'mcp' else 'mcp'} '{name}'",
         data=info.model_dump(),
     )

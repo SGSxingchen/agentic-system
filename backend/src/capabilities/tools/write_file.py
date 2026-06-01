@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 from typing import Any
 
 from core.capability.base import CapabilityBase, CapabilitySchema
@@ -57,6 +58,12 @@ class WriteFileCapability(CapabilityBase):
 
         if not file_path:
             return {"error": "file_path is required"}
+
+        # 提前校验编码名，给出明确错误而不是埋进通用 "Failed to write file"。
+        try:
+            codecs.lookup(encoding)
+        except LookupError:
+            return {"error": f"unknown encoding: {encoding!r}"}
 
         try:
             resolved_path = resolve_workspace_path(file_path)

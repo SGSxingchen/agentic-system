@@ -143,6 +143,23 @@ export function McpPanel() {
     [loadCatalog, selectedAgent]
   )
 
+  const unassembleMcp = useCallback(
+    async (name: string, agentName: string) => {
+      setAssemblingName(name)
+      setError('')
+      setNotice('')
+      const res = await api.unassembleCapability('mcp', name, agentName)
+      setAssemblingName(null)
+      if (res.status !== 'ok') {
+        setCatalogError(res.message || `从 ${agentName} 卸下 MCP ${name} 失败。`)
+        return
+      }
+      setNotice(`已从 ${agentName} 卸下 MCP Server ${name}。`)
+      await Promise.all([loadAgents(selectedAgent || undefined), loadCatalog()])
+    },
+    [loadCatalog, selectedAgent]
+  )
+
   const aggregated = useMemo<McpEntry[]>(() => {
     const map = new Map<string, McpEntry>()
     for (const agent of agents) {
@@ -323,6 +340,7 @@ export function McpPanel() {
             items={catalogItems}
             agents={agents}
             onAssemble={assembleMcp}
+            onUnassemble={unassembleMcp}
             loading={catalogLoading}
             error={catalogError}
             assemblingName={assemblingName}
