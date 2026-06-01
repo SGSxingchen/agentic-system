@@ -407,7 +407,11 @@ class TestAgentStatusAndLifecycle:
         assert sent[0]["role"] == "system"
         assert sent[0]["content"].startswith("system prompt")
         assert "[当前人格 - 受控配置]" in sent[0]["content"]
-        assert sent[1:] == [
+        # 存在真实历史（>1 条）时注入会话历史标记，随后是原始多轮消息。
+        assert sent[1]["role"] == "system"
+        assert sent[1]["content"].startswith("[当前会话历史]")
+        assert "3 条" in sent[1]["content"]
+        assert sent[2:] == [
             {"role": "user", "content": "我叫 Ada"},
             {"role": "assistant", "content": "记住了，你叫 Ada。"},
             {"role": "user", "content": "我刚才说我叫什么？"},
@@ -431,7 +435,11 @@ class TestAgentStatusAndLifecycle:
         assert sent[0]["role"] == "system"
         assert sent[0]["content"].startswith("sys")
         assert "[当前人格 - 受控配置]" in sent[0]["content"]
-        assert sent[1:] == [
+        # 当前消息已在 messages 末尾，去重后仍是 3 条真实历史 → 注入标记，不重复追加。
+        assert sent[1]["role"] == "system"
+        assert sent[1]["content"].startswith("[当前会话历史]")
+        assert "3 条" in sent[1]["content"]
+        assert sent[2:] == [
             {"role": "user", "content": "第一句"},
             {"role": "assistant", "content": "好的"},
             {"role": "user", "content": "继续"},

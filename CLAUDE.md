@@ -66,7 +66,12 @@ agentic-system/
 ├── config/                             # ★ YAML 配置目录 (被 config.py 动态加载)
 │   ├── agents.yaml                     #   智能体定义
 │   ├── capabilities.yaml               #   能力插件
+│   ├── mcp_servers.yaml                #   MCP 模板库 (能力库 catalog)
 │   └── system.yaml                     #   全局系统配置 (LLM/Bus/Memory 等)
+│
+├── skills/                             # ★ Skills 库 (能力库 catalog, <slug>/SKILL.md)
+│   ├── pdf/ docx/ mcp-builder/ webapp-testing/   # 从 anthropics/skills 预置
+│   └── ...                             #   (THIRD_PARTY_NOTICES.md 记录出处/许可)
 │
 ├── backend/
 │   ├── requirements.txt                # Python 依赖清单
@@ -86,11 +91,12 @@ agentic-system/
 │   │   │   ├── main.py                 #   ★ 应用入口 (lifespan + 动态加载)
 │   │   │   ├── dependencies.py         #   依赖注入 (全局状态容器)
 │   │   │   ├── schemas.py              #   Pydantic 请求/响应 Schema
-│   │   │   ├── routes/                 #   路由模块 (5 个)
+│   │   │   ├── routes/                 #   路由模块
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── agents.py           #     GET/POST /api/agents/*
 │   │   │   │   ├── tasks.py            #     GET/POST/DELETE /api/tasks/*
 │   │   │   │   ├── memory.py           #     GET/POST/DELETE /api/memory/*
+│   │   │   │   ├── catalog.py          #     GET /api/catalog/* + 装配 (能力库)
 │   │   │   │   └── config.py           #     GET/POST /api/config + /api/health
 │   │   │   └── websocket/
 │   │   │       ├── __init__.py
@@ -296,6 +302,7 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 | `read_file` / `write_file` | 工作区文件读写 |
 | `json_tool` | JSON 校验、格式化、压缩、路径查询 |
 | `text_processor` | 文本统计、清洗、关键词提取、slug 生成 |
+| `create_frontend_artifact` | 把内容**或工作区本地文件**（传 `path` 自动读取+编码，支持二进制）发到前端 Artifact 区，供预览/打开/下载 |
 | `bash` | 工作区 shell 执行，默认关闭 |
 
 **动态 Tool** (在 `core/capability/dynamic.py`):
@@ -312,6 +319,16 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - Agent 主提示词在 `config/agents.yaml`，统一按“角色边界 / 输入变量 / 工具调用规则或工作流程 / 安全与权限约束 / 输出契约”组织。
 - Python 运行时拼接片段在 `core/prompts.py`，包括长期记忆不可信注入、token 预算 nudge、对话反思 prompt、内置 Tool 描述。
 - 内置 Tool 的 `CapabilitySchema.description` 应通过 `core.prompts.TOOL_DESCRIPTIONS` 获取；`config/capabilities.yaml` 的 `description` 与其保持同风格，`prompt` 仅用于显式覆盖。
+
+**能力库（Catalog，2026-06-01 新增）**：把 Tools / Skills / MCP 统一成「仓库级目录 + 一键装配到 agent」。设计见 [`docs/superpowers/specs/2026-06-01-capability-catalog-design.md`](docs/superpowers/specs/2026-06-01-capability-catalog-design.md)。
+
+- 路由 `api/routes/catalog.py`，前缀 `/api/catalog`，统一三类能力的「列目录 / 装配」：
+  - `GET /api/catalog/tools` — 复用 capability registry，每项附 `used_by:[agent]`
+  - `GET /api/catalog/skills` — 扫描仓库根 `skills/<slug>/SKILL.md`（`core/skills.py` 解析），每项 `instructions_preview` 截断
+  - `GET /api/catalog/mcp` — 读 `config/mcp_servers.yaml` 模板，env 脱敏
+  - `POST /api/catalog/{kind}/{name}/assemble {agent_name, env?}` — 把目录项并入目标 agent 的 `tools` / `skills.items` / `mcp_servers`，**复用 `update_agent_config` 落盘+热重载链路**，幂等去重
+- 预置内容：`skills/`（4 个 SKILL.md，从 anthropics/skills 扒：pdf/docx 为 source-available，mcp-builder/webapp-testing 为 Apache-2.0，出处见 `THIRD_PARTY_NOTICES.md`）+ `config/mcp_servers.yaml`（filesystem/git/fetch/sqlite 模板，默认 `enabled:false`）。
+- 缺目录/文件时返回空列表（fallback），不报 500。
 
 ### 3.8 Agent Run 调度
 
@@ -489,6 +506,10 @@ _CAPABILITY_CLASS_MAP = {
 | POST | `/api/chatrooms/{room_id}/messages` | 用户发言（自动派发 mention） |
 | POST | `/api/chatrooms/{room_id}/invoke` | 召唤指定 Agent 发言（异步派 task） |
 | POST | `/api/chatrooms/{room_id}/cancel` | 取消房间所有 in-flight 发言 |
+| GET | `/api/catalog/tools` | 列出工具目录（附 `used_by`） |
+| GET | `/api/catalog/skills` | 列出 Skills 库（`skills/<slug>/SKILL.md`） |
+| GET | `/api/catalog/mcp` | 列出 MCP 模板库（env 脱敏） |
+| POST | `/api/catalog/{kind}/{name}/assemble` | 把目录项装配到指定 agent（落盘+热重载） |
 | GET | `/api/memory/stats` | 记忆统计 |
 | GET | `/api/memory/list` | 列出记忆 |
 | POST | `/api/memory/search` | 搜索记忆 |
@@ -523,6 +544,10 @@ _CAPABILITY_CLASS_MAP = {
 | `EvolutionPanel` | 进化中心 (Agent-Tool 能力网络、动态 Tool、子 Agent 创建) |
 | `MonitorPanel` | 系统监控 (连接状态、事件流) |
 | `Settings` | LLM 配置面板 (热重载) |
+
+**能力与扩展面板（「能力库」三平级，2026-06-01）**：`ToolsPanel`（新增，列工具目录）/ `SkillsPanel` / `McpPanel` 在侧边栏「能力与扩展」下平级展示，三者共用 `CatalogList` 组件（名称/描述/`kind` 徽标/`used_by` 徽标/「装配到 ▾agent」）。`SkillsPanel`/`McpPanel` 在原有「按 agent 聚合」视图之上各加一段「能力库」。
+
+> 注：WSL `/mnt/c` 下 Vite 文件监听失效，`vite.config.ts` 已开 `server.watch.usePolling` 保证热更新。
 
 ---
 

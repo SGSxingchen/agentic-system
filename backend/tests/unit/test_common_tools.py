@@ -667,6 +667,9 @@ class TestWebSearchCapability:
         """
         tool = WebSearchCapability()
         with (
+            # 隔离开发者运行时配置（config.yaml 可能把 provider 改成 brave/serper），
+            # 强制走默认 duckduckgo HTML 解析路径，保证测试可复现。
+            patch.object(tool, "_load_tool_config", return_value={}),
             patch("socket.getaddrinfo", return_value=[PUBLIC_ADDR]),
             patch("urllib.request.OpenerDirector.open", return_value=FakeResponse(html)),
         ):
