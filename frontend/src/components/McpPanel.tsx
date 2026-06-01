@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as api from '../api/client'
-import type { AgentInfo, AgentMCPServerConfig } from '../types'
+import type {
+  AgentInfo,
+  AgentMCPServerConfig,
+  CatalogApiItem,
+  CatalogListItem,
+  CatalogMcpItem,
+} from '../types'
+import { CatalogList } from './CatalogList'
 import {
   emptyMcpServerDraft,
   mcpDraftToServer,
@@ -8,6 +15,22 @@ import {
   type McpServerDraft,
 } from './skillMcpFormLogic'
 import './McpPanel.css'
+
+function mcpCatalogToListItem(raw: CatalogMcpItem): CatalogListItem {
+  return {
+    name: raw.name,
+    description: raw.description,
+    kind: 'mcp',
+    used_by: raw.used_by || [],
+    detail: {
+      command: raw.command,
+      args: raw.args || [],
+      transport: raw.transport,
+      env: raw.env || {},
+      enabled: raw.enabled,
+    },
+  }
+}
 
 interface McpEntry {
   key: string
@@ -34,6 +57,28 @@ export function McpPanel() {
   const [selectedAgent, setSelectedAgent] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [draft, setDraft] = useState<McpServerDraft>(emptyMcpServerDraft())
+  // 能力库（catalog）段：仓库级 MCP 模板 + 一键装配。
+  const [catalogItems, setCatalogItems] = useState<CatalogListItem[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState('')
+  const [assemblingName, setAssemblingName] = useState<string | null>(null)
+
+  const loadCatalog = useCallback(async () => {
+    setCatalogLoading(true)
+    setCatalogError('')
+    const res = await api.listCatalog('mcp')
+    setCatalogLoading(false)
+    if (res.status !== 'ok' || !Array.isArray(res.data)) {
+      setCatalogError(res.message || '加载 MCP 能力库失败。')
+      setCatalogItems([])
+      return
+    }
+    setCatalogItems(
+      (res.data as CatalogApiItem[])
+        .filter((entry): entry is CatalogMcpItem => entry.kind === 'mcp')
+        .map(mcpCatalogToListItem)
+    )
+  }, [])
 
   const selectedAgentInfo = useMemo(
     () => agents.find((agent) => agent.name === selectedAgent) || null,
@@ -78,7 +123,25 @@ export function McpPanel() {
 
   useEffect(() => {
     loadAgents()
-  }, [])
+    loadCatalog()
+  }, [loadCatalog])
+
+  const assembleMcp = useCallback(
+    async (name: string, agentName: string, env?: Record<string, string>) => {
+      setAssemblingName(name)
+      setError('')
+      setNotice('')
+      const res = await api.assembleCapability('mcp', name, agentName, env)
+      setAssemblingName(null)
+      if (res.status !== 'ok') {
+        setCatalogError(res.message || `装配 MCP ${name} 失败。`)
+        return
+      }
+      setNotice(`已把 MCP Server ${name} 装配到 ${agentName}。`)
+      await Promise.all([loadAgents(selectedAgent || undefined), loadCatalog()])
+    },
+    [loadCatalog, selectedAgent]
+  )
 
   const aggregated = useMemo<McpEntry[]>(() => {
     const map = new Map<string, McpEntry>()
@@ -249,6 +312,24 @@ export function McpPanel() {
           </button>
         </div>
       )}
+
+      <section className="console-card">
+        <header className="console-card__header">
+          <span className="console-card__title">能力库</span>
+          <span className="text-muted">{catalogItems.length} 项预置</span>
+        </header>
+        <div className="console-card__body--flush">
+          <CatalogList
+            items={catalogItems}
+            agents={agents}
+            onAssemble={assembleMcp}
+            loading={catalogLoading}
+            error={catalogError}
+            assemblingName={assemblingName}
+            emptyHint="config/mcp_servers.yaml 暂未预置任何 MCP 模板。"
+          />
+        </div>
+      </section>
 
       <div className="mcp-stats">
         <div className="mcp-stats__card">

@@ -582,6 +582,11 @@ class TestConnectionManager:
             def __contains__(self, name):
                 return name == "assistant"
 
+            def get(self, name):
+                # 处理器先用 registry.get(agent_name) 取能力；返回无 execute_stream
+                # 的占位对象，使其走非流式兜底分支（最终调用 registry.execute）。
+                return object() if name == "assistant" else None
+
             async def execute(self, name, **kwargs):
                 return {"response": "ok"}
 

@@ -220,8 +220,8 @@ def _validate_patch(
 
     if "max_iterations" in patch and patch["max_iterations"] is not None:
         value = patch["max_iterations"]
-        if not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > 50:
-            errors.append("max_iterations must be an integer between 1 and 50")
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > 100:
+            errors.append("max_iterations must be an integer between 1 and 100")
 
     if "llm" in patch and patch["llm"] is not None:
         llm = patch["llm"]

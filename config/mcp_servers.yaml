@@ -1,0 +1,28 @@
+# 仓库级 MCP 模板库（catalog）。
+# 这些条目仅作模板：均 enabled:false，装配到 agent 后再补占位（路径/key）并 enable。
+# 缺失此文件时 catalog 回退空列表（沿用 fallback 原则）。
+mcp_servers:
+- name: filesystem
+  command: npx
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "<ABS_PATH>"]
+  transport: stdio
+  enabled: false
+  description: 官方文件系统 MCP server；把 <ABS_PATH> 换成允许访问的目录后启用。
+- name: git
+  command: npx
+  args: ["-y", "@modelcontextprotocol/server-git", "--repository", "<REPO_PATH>"]
+  transport: stdio
+  enabled: false
+  description: 官方 Git MCP server；提供仓库读取/历史查询。
+- name: fetch
+  command: npx
+  args: ["-y", "@modelcontextprotocol/server-fetch"]
+  transport: stdio
+  enabled: false
+  description: 官方抓取 MCP server；按 URL 拉取网页并转 markdown。
+- name: sqlite
+  command: npx
+  args: ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "<DB_PATH>"]
+  transport: stdio
+  enabled: false
+  description: 官方 SQLite MCP server；只读/查询本地 sqlite 库。

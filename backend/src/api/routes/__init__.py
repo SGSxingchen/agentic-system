@@ -4,6 +4,7 @@
 """
 from .tasks import router as tasks_router, runs_router
 from .agents import router as agents_router
+from .catalog import router as catalog_router
 from .memory import router as memory_router
 from .config import router as config_router
 from .evolution import router as evolution_router
@@ -18,6 +19,7 @@ __all__ = [
     "tasks_router",
     "runs_router",
     "agents_router",
+    "catalog_router",
     "memory_router",
     "config_router",
     "evolution_router",

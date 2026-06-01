@@ -309,8 +309,8 @@ class CreateAgentConfigCapability(CapabilityBase):
             return {"error": "tools must be a list of tool or Agent names"}
         if input_schema is not None and not isinstance(input_schema, dict):
             return {"error": "input_schema must be an object when provided"}
-        if max_iterations < 1 or max_iterations > 50:
-            return {"error": "max_iterations must be between 1 and 50"}
+        if max_iterations < 1 or max_iterations > 100:
+            return {"error": "max_iterations must be between 1 and 100"}
         if name in PROTECTED_AGENT_NAMES:
             return {
                 "error": (

@@ -420,6 +420,51 @@ export interface CapabilityInfo {
   parameters?: Record<string, any>
 }
 
+// ===== 能力库（Catalog） =====
+
+export type CatalogKind = 'tools' | 'skills' | 'mcp'
+
+// 单类 catalog 项的后端原始形状（按 kind 字段区分）。
+export interface CatalogToolItem {
+  name: string
+  description?: string
+  parameters?: Record<string, any>
+  kind: 'tool'
+  used_by: string[]
+}
+
+export interface CatalogSkillItem {
+  name: string
+  description?: string
+  source?: string
+  instructions_preview?: string
+  kind: 'skill'
+  used_by: string[]
+}
+
+export interface CatalogMcpItem {
+  name: string
+  command?: string
+  args?: string[]
+  transport?: string
+  description?: string
+  enabled?: boolean
+  env?: Record<string, string>
+  kind: 'mcp'
+  used_by: string[]
+}
+
+export type CatalogApiItem = CatalogToolItem | CatalogSkillItem | CatalogMcpItem
+
+// CatalogList 统一渲染形状。detail 携带 kind 特有字段（parameters / env 等）。
+export interface CatalogListItem {
+  name: string
+  description?: string
+  kind: 'tool' | 'skill' | 'mcp'
+  used_by: string[]
+  detail?: Record<string, any>
+}
+
 // ===== 视图 =====
 
 export type PanelType =
@@ -431,6 +476,7 @@ export type PanelType =
   | 'runs'
   | 'monitor'
   | 'memory'
+  | 'tools'
   | 'skills'
   | 'mcp'
   | 'personas'

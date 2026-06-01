@@ -62,6 +62,7 @@ from .dependencies import (
 from .middleware import AuthMiddleware
 from .routes import (
     agents_router,
+    catalog_router,
     chat_sessions_router,
     chatrooms_router,
     config_router,
@@ -656,6 +657,7 @@ app.add_middleware(
 app.include_router(tasks_router)
 app.include_router(runs_router)
 app.include_router(agents_router)
+app.include_router(catalog_router)
 app.include_router(memory_router)
 app.include_router(personas_router)
 app.include_router(config_router)

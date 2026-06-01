@@ -6,6 +6,8 @@ import type {
   AgentInfo,
   AgentSkillConfig,
   Attachment,
+  CatalogApiItem,
+  CatalogKind,
   ChatSession,
   ChatSessionSummary,
   Chatroom,
@@ -452,6 +454,36 @@ export async function reloadEvolutionExtensions(): Promise<
 
 export async function listCapabilities(): Promise<APIResponse<{ name: string; description: string; parameters?: any }[]>> {
   return getCached('/api/agents/capabilities/list', 60_000)
+}
+
+// ===== 能力库（Catalog）API =====
+// 三类能力（tools/skills/mcp）共用同一读取 + 装配模型。
+// - listCatalog(kind)               → GET  /api/catalog/{kind}
+// - assembleCapability(kind, name…) → POST /api/catalog/{kind}/{name}/assemble
+// 装配成功后失效 agents / capabilities 缓存，调用方应自行刷新面板。
+
+export async function listCatalog<T = CatalogApiItem[]>(
+  kind: CatalogKind
+): Promise<APIResponse<T>> {
+  return getCached<T>(`/api/catalog/${kind}`, 30_000)
+}
+
+export async function assembleCapability(
+  kind: CatalogKind,
+  name: string,
+  agentName: string,
+  env?: Record<string, string>
+): Promise<APIResponse<AgentInfo>> {
+  const body: Record<string, unknown> = { agent_name: agentName }
+  if (env && Object.keys(env).length > 0) body.env = env
+  const response = await post<AgentInfo>(
+    `/api/catalog/${kind}/${encodeURIComponent(name)}/assemble`,
+    body
+  )
+  if (response.status === 'ok') {
+    invalidateGetCache('/api/agents', '/api/catalog')
+  }
+  return response
 }
 
 // ===== Agent Run API =====

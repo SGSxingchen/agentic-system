@@ -64,18 +64,6 @@ function makeMessageId() {
   return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-function downloadTextFile(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename.replace(/[\\/:*?"<>|]+/g, '-')
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
-}
-
 function collectArtifacts(payload: any): ChatArtifactRecord[] {
   if (!payload || typeof payload !== 'object') return []
   const found: ChatArtifactRecord[] = []
@@ -973,22 +961,6 @@ export function ChatPanel() {
                       <>
                         <ToolCallList calls={message.toolCalls} />
                         <ArtifactList artifacts={message.artifacts} />
-                        {message.content.trim() && message.id !== pendingAssistantIdRef.current && (
-                          <div className="chat-msg__actions">
-                            <button
-                              type="button"
-                              className="btn-xs"
-                              onClick={() =>
-                                downloadTextFile(
-                                  `${message.agent_name || 'assistant'}-${message.id}.md`,
-                                  message.content || ''
-                                )
-                              }
-                            >
-                              {'\u4e0b\u8f7d\u56de\u590d'}
-                            </button>
-                          </div>
-                        )}
                       </>
                     )}
                   {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}

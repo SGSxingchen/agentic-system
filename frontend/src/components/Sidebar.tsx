@@ -61,6 +61,11 @@ const Icon = {
       <path d="M8 17h5" />
     </svg>
   ),
+  tools: (
+    <svg viewBox="0 0 24 24">
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.6-.6-2.1z" />
+    </svg>
+  ),
   skills: (
     <svg viewBox="0 0 24 24">
       <path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.3 7.2 16.9l.9-5.4L4.2 7.7l5.4-.8z" />
@@ -111,6 +116,7 @@ const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: '能力与扩展',
     items: [
+      { key: 'tools', icon: Icon.tools, label: '工具' },
       { key: 'skills', icon: Icon.skills, label: 'Skills' },
       { key: 'mcp', icon: Icon.mcp, label: 'MCP' },
     ],

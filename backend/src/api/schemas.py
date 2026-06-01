@@ -213,7 +213,7 @@ class AgentInfo(BaseModel):
     runtime_tools: list[str] = Field(default_factory=list)
     tool_mounts: list[AgentToolMount] = Field(default_factory=list)
     output_format: Optional[Literal["text", "json"]] = None
-    max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=100)
     skills: Optional[SkillConfigRequest] = None
     skill_mount: AgentSkillMount = Field(default_factory=AgentSkillMount)
     mcp_servers: Optional[list[MCPServerConfigRequest]] = None
@@ -395,7 +395,7 @@ class AgentCreateRequest(BaseModel):
     system_prompt: str = Field(default="", description="系统提示词")
     tools: list[str] = Field(default_factory=list, description="可用工具名称列表")
     output_format: Literal["text", "json"] = Field(default="text", description="输出格式: text | json")
-    max_iterations: int = Field(default=10, ge=1, le=50, description="tool_use 最大循环次数")
+    max_iterations: int = Field(default=10, ge=1, le=100, description="tool_use 最大循环次数")
     model: Optional[str] = Field(default=None, description="可选：该 Agent 使用的模型名称")
     llm: Optional[AgentLLMConfig] = None
     skills: Optional[SkillConfigRequest] = None
@@ -411,7 +411,7 @@ class AgentUpdateRequest(BaseModel):
     system_prompt: Optional[str] = None
     tools: Optional[list[str]] = None
     output_format: Optional[Literal["text", "json"]] = None
-    max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=100)
     model: Optional[str] = None
     llm: Optional[AgentLLMConfig] = None
     skills: Optional[SkillConfigRequest] = None

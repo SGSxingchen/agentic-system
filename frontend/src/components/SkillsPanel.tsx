@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as api from '../api/client'
-import type { AgentInfo } from '../types'
+import type { AgentInfo, CatalogApiItem, CatalogListItem, CatalogSkillItem } from '../types'
+import { CatalogList } from './CatalogList'
 import {
   buildSkillConfig,
   emptySkillDraft,
@@ -8,6 +9,19 @@ import {
   type SkillDraft,
 } from './skillMcpFormLogic'
 import './SkillsPanel.css'
+
+function skillCatalogToListItem(raw: CatalogSkillItem): CatalogListItem {
+  return {
+    name: raw.name,
+    description: raw.description,
+    kind: 'skill',
+    used_by: raw.used_by || [],
+    detail: {
+      source: raw.source,
+      instructions_preview: raw.instructions_preview,
+    },
+  }
+}
 
 interface SkillEntry {
   key: string
@@ -45,6 +59,28 @@ export function SkillsPanel() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // 能力库（catalog）段：仓库级预置 Skills + 一键装配。
+  const [catalogItems, setCatalogItems] = useState<CatalogListItem[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState('')
+  const [assemblingName, setAssemblingName] = useState<string | null>(null)
+
+  const loadCatalog = useCallback(async () => {
+    setCatalogLoading(true)
+    setCatalogError('')
+    const res = await api.listCatalog('skills')
+    setCatalogLoading(false)
+    if (res.status !== 'ok' || !Array.isArray(res.data)) {
+      setCatalogError(res.message || '加载 Skills 能力库失败。')
+      setCatalogItems([])
+      return
+    }
+    setCatalogItems(
+      (res.data as CatalogApiItem[])
+        .filter((entry): entry is CatalogSkillItem => entry.kind === 'skill')
+        .map(skillCatalogToListItem)
+    )
+  }, [])
 
   const loadAgents = async (preferredAgent?: string) => {
     setLoading(true)
@@ -67,7 +103,25 @@ export function SkillsPanel() {
 
   useEffect(() => {
     loadAgents()
-  }, [])
+    loadCatalog()
+  }, [loadCatalog])
+
+  const assembleSkill = useCallback(
+    async (name: string, agentName: string) => {
+      setAssemblingName(name)
+      setError('')
+      setNotice('')
+      const res = await api.assembleCapability('skills', name, agentName)
+      setAssemblingName(null)
+      if (res.status !== 'ok') {
+        setCatalogError(res.message || `装配 Skill ${name} 失败。`)
+        return
+      }
+      setNotice(`已把 Skill ${name} 装配到 ${agentName}。`)
+      await Promise.all([loadAgents(selectedAgent || undefined), loadCatalog()])
+    },
+    [loadCatalog, selectedAgent]
+  )
 
   const selected = useMemo(
     () => agents.find((agent) => agent.name === selectedAgent) || null,
@@ -181,6 +235,24 @@ export function SkillsPanel() {
           </button>
         </div>
       )}
+
+      <section className="console-card">
+        <header className="console-card__header">
+          <span className="console-card__title">能力库</span>
+          <span className="text-muted">{catalogItems.length} 项预置</span>
+        </header>
+        <div className="console-card__body--flush">
+          <CatalogList
+            items={catalogItems}
+            agents={agents}
+            onAssemble={assembleSkill}
+            loading={catalogLoading}
+            error={catalogError}
+            assemblingName={assemblingName}
+            emptyHint="仓库 skills/ 目录暂未预置任何 Skill。"
+          />
+        </div>
+      </section>
 
       <div className="skills-stats">
         <div className="skills-stats__card">

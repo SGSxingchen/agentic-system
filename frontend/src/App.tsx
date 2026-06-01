@@ -11,6 +11,7 @@ import { AgentPanel } from './components/AgentPanel'
 import { RunsPanel } from './components/RunsPanel'
 import { MonitorPanel } from './components/MonitorPanel'
 import { MemoryPanel } from './components/MemoryPanel'
+import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
 import { McpPanel } from './components/McpPanel'
 import { PersonaPanel } from './components/PersonaPanel'
@@ -168,6 +169,8 @@ function AuthenticatedApp({
         return <MonitorPanel />
       case 'memory':
         return <MemoryPanel />
+      case 'tools':
+        return <ToolsPanel />
       case 'skills':
         return <SkillsPanel />
       case 'mcp':
@@ -188,6 +191,7 @@ function AuthenticatedApp({
     runs: '运行',
     monitor: '监控',
     memory: '记忆',
+    tools: '工具',
     skills: 'Skills',
     mcp: 'MCP',
     personas: '人格',

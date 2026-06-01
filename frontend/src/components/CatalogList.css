@@ -1,0 +1,174 @@
+.catalog-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.catalog-list--state {
+  padding: 0;
+}
+
+.catalog-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border-row);
+}
+
+.catalog-row:last-child {
+  border-bottom: none;
+}
+
+.catalog-row:hover {
+  background: var(--color-surface-soft);
+}
+
+.catalog-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.catalog-row__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.catalog-row__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.catalog-row__kind {
+  font-size: 11px;
+}
+
+.catalog-row__kind--tool {
+  background: var(--color-bg-tint);
+  color: var(--color-text-secondary);
+}
+
+.catalog-row__kind--skill {
+  background: rgba(99, 102, 241, 0.14);
+  color: #6366f1;
+}
+
+.catalog-row__kind--mcp {
+  background: rgba(16, 185, 129, 0.14);
+  color: #10b981;
+}
+
+.catalog-row__toggle {
+  margin-left: auto;
+}
+
+.catalog-row__desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+  margin-bottom: 6px;
+}
+
+.catalog-row__usedby {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.catalog-row__usedby-label {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-right: 2px;
+}
+
+.catalog-row__usedby-empty {
+  font-size: 11.5px;
+}
+
+.catalog-row__chip {
+  font-size: 11px;
+}
+
+.catalog-row__detail {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--color-bg-tint);
+  border: 1px solid var(--color-border-row);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.catalog-row__detail--text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.catalog-row__mcp {
+  margin-top: 8px;
+}
+
+.catalog-row__mcp-cmd {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  padding: 6px 10px;
+  background: var(--color-bg-tint);
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+}
+
+.catalog-row__env {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.catalog-row__env-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+
+.catalog-row__assemble {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  width: 150px;
+}
+
+.catalog-row__assemble select {
+  width: 100%;
+}
+
+.catalog-row__assemble-btn {
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .catalog-row {
+    flex-direction: column;
+  }
+  .catalog-row__assemble {
+    width: 100%;
+    flex-direction: row;
+  }
+  .catalog-row__assemble select {
+    flex: 1;
+  }
+  .catalog-row__assemble-btn {
+    width: auto;
+  }
+}
