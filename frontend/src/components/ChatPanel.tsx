@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import * as api from '../api/client'
@@ -16,12 +16,12 @@ import type {
 } from '../types'
 import { Select } from './Select'
 import { AttachmentList } from './AttachmentChip'
-import { agentMetaFromList } from './agentBadge'
+import { agentMetaFromList, type AgentMetaMap } from './agentBadge'
 import './ChatPanel.css'
 
 const SESSIONS_COLLAPSED_KEY = 'chat.sessionsCollapsed'
 
-function MessageBody({ content }: { content: string }) {
+const MessageBody = memo(function MessageBody({ content }: { content: string }) {
   return (
     <div className="chat-msg__body">
       <ReactMarkdown
@@ -36,7 +36,7 @@ function MessageBody({ content }: { content: string }) {
       </ReactMarkdown>
     </div>
   )
-}
+})
 
 function formatTime(value?: string) {
   if (!value) return ''
@@ -175,6 +175,90 @@ function ArtifactList({ artifacts }: { artifacts?: ChatArtifactRecord[] }) {
   )
 }
 
+type MessageRowProps = {
+  message: ChatMessage
+  agentMeta: AgentMetaMap
+  sending: boolean
+  isPending: boolean
+}
+
+// Memoized so streaming re-renders only re-parse the message whose content
+// actually changed —历史消息引用不变会被 shallow-compare 跳过，避免每个 token
+// 全量重解析 markdown 把主线程打满（这正是「生成时滚轮滑不下去」的根因）。
+const MessageRow = memo(function MessageRow({
+  message,
+  agentMeta,
+  sending,
+  isPending,
+}: MessageRowProps) {
+  return (
+    <div className={`chat-msg chat-msg--${message.type}`}>
+      <div className="chat-msg__head">
+        <span className="chat-msg__role">
+          {message.type === 'user'
+            ? '用户'
+            : message.type === 'assistant'
+            ? message.agent_name || 'assistant'
+            : '系统'}
+        </span>
+        {message.type === 'assistant' &&
+          (() => {
+            const name = message.agent_name || 'assistant'
+            const model = agentMeta[name]?.model
+            return model ? (
+              <small
+                className="agent-model-badge"
+                title={`LLM 模型：${model}`}
+              >
+                {model}
+              </small>
+            ) : null
+          })()}
+        <span className="chat-msg__time">
+          {formatTime(message.timestamp)}
+        </span>
+        {message.elapsedMs != null && (
+          <span className="chat-msg__stat">
+            {(message.elapsedMs / 1000).toFixed(1)}s
+          </span>
+        )}
+        {message.memoriesUsed != null && message.memoriesUsed > 0 && (
+          <span className="chat-msg__stat">
+            记忆 {message.memoriesUsed}
+          </span>
+        )}
+        {message.usage?.total_tokens != null && (
+          <span className="chat-msg__stat">
+            {message.usage.total_tokens} tokens
+          </span>
+        )}
+      </div>
+      {message.content.trim() ? (
+        <MessageBody content={message.content} />
+      ) : message.type === 'assistant' && sending && isPending ? (
+        <div className="chat-msg__body chat-msg__body--pending">
+          <span className="chat-typing">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+      ) : null}
+      {message.type === 'assistant' &&
+        (message.toolCalls?.length ||
+          message.artifacts?.length ||
+          message.content.trim()) && (
+          <>
+            <ToolCallList calls={message.toolCalls} />
+            <ArtifactList artifacts={message.artifacts} />
+          </>
+        )}
+      {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}
+      <AttachmentList ids={message.attachments} />
+    </div>
+  )
+})
+
 export function ChatPanel() {
   const { state } = useAppStore()
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
@@ -194,6 +278,8 @@ export function ChatPanel() {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(SESSIONS_COLLAPSED_KEY) === '1'
   })
+  // 用户是否贴着底部：决定流式生成时是否自动跟随。手动上滑后置 false，不再抢滚动。
+  const [stuckToBottom, setStuckToBottom] = useState(true)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -208,6 +294,8 @@ export function ChatPanel() {
   const pendingToolCallsRef = useRef<ChatToolCallRecord[]>([])
   const pendingArtifactsRef = useRef<ChatArtifactRecord[]>([])
   const finalPersistedRef = useRef(false)
+  // 流式更新节流：把每个 token 的 setState 合到一帧里，重渲染从「每 token」降到 ≤60fps。
+  const rafIdRef = useRef<number | null>(null)
   const wsUrl = useMemo(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const token = api.getAuthToken()
@@ -293,6 +381,36 @@ export function ChatPanel() {
     [agentName, loadSessions]
   )
 
+  // 把累积的流式内容一次性写进当前助手消息（在 rAF 回调里执行，单帧最多一次）。
+  const flushStreamingContent = useCallback(() => {
+    rafIdRef.current = null
+    const assistantId = pendingAssistantIdRef.current
+    if (!assistantId) return
+    const content = pendingContentRef.current
+    setActiveSession((prev) =>
+      prev
+        ? {
+            ...prev,
+            messages: prev.messages.map((message) =>
+              message.id === assistantId ? { ...message, content } : message
+            ),
+          }
+        : prev
+    )
+  }, [])
+
+  const scheduleStreamingFlush = useCallback(() => {
+    if (rafIdRef.current != null) return
+    rafIdRef.current = requestAnimationFrame(flushStreamingContent)
+  }, [flushStreamingContent])
+
+  const cancelStreamingFlush = useCallback(() => {
+    if (rafIdRef.current != null) {
+      cancelAnimationFrame(rafIdRef.current)
+      rafIdRef.current = null
+    }
+  }, [])
+
   const handleStreamEvent = useCallback(
     (raw: unknown) => {
       const event = raw as WSEvent
@@ -305,16 +423,8 @@ export function ChatPanel() {
         const delta = String(data.content || data.delta || '')
         if (!delta) return
         pendingContentRef.current += delta
-        setActiveSession((prev) =>
-          prev
-            ? {
-                ...prev,
-                messages: prev.messages.map((message) =>
-                  message.id === assistantId ? { ...message, content: pendingContentRef.current } : message
-                ),
-              }
-            : prev
-        )
+        // 不再每 token 直接 setState：累积到 ref，由 rAF 合帧刷新，避免主线程被打满。
+        scheduleStreamingFlush()
         return
       }
 
@@ -387,6 +497,7 @@ export function ChatPanel() {
       }
 
       if (eventType === 'agent_done') {
+        cancelStreamingFlush()
         pendingContentRef.current =
           typeof data.final === 'string' ? data.final : pendingContentRef.current
         setActiveSession((prev) =>
@@ -410,6 +521,7 @@ export function ChatPanel() {
       }
 
       if (eventType === 'assistant_response') {
+        cancelStreamingFlush()
         const finalText = extractAssistantText(data) || pendingContentRef.current
         pendingContentRef.current = finalText
         const artifacts = [...pendingArtifactsRef.current, ...collectArtifacts(data)]
@@ -424,7 +536,7 @@ export function ChatPanel() {
         })
       }
     },
-    [persistAssistantMessage]
+    [persistAssistantMessage, scheduleStreamingFlush, cancelStreamingFlush]
   )
 
   const { send: sendWS, connected: wsConnected } = useWebSocket({
@@ -442,6 +554,7 @@ export function ChatPanel() {
       setActiveSession(null)
       return
     }
+    setStuckToBottom(true) // 切换会话：默认贴底打开
     let cancelled = false
     api.getChatSession(selectedSessionId).then((res) => {
       if (cancelled) return
@@ -456,12 +569,24 @@ export function ChatPanel() {
     }
   }, [selectedSessionId])
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    if (transcriptRef.current) {
+  // 贴底自动滚动：仅当用户当前贴着底部才跟随生成。依赖整个 messages 数组——
+  // 每次 rAF flush 后其引用都会变，所以流式生成时视图能持续跟到底部；
+  // 用户一旦手动上滑（stuckToBottom=false）就不再抢滚动。
+  useLayoutEffect(() => {
+    if (stuckToBottom && transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight
     }
-  }, [activeSession?.messages?.length])
+  }, [activeSession?.messages, stuckToBottom])
+
+  // 监听滚动：离底 > 40px 视为「已上滑」，暂停自动跟随；滑回底部恢复。
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptRef.current
+    if (!el) return
+    setStuckToBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+  }, [])
+
+  // 卸载时清理挂起的 rAF。
+  useEffect(() => () => cancelStreamingFlush(), [cancelStreamingFlush])
 
   const handleNewSession = async () => {
     const res = await api.createChatSession({
@@ -590,6 +715,8 @@ export function ChatPanel() {
       artifacts: [],
       agent_name: agentName,
     }
+    cancelStreamingFlush()
+    setStuckToBottom(true) // 新发送：贴底，跟随接下来的流式回复
     pendingAssistantIdRef.current = assistantMessage.id
     pendingSessionIdRef.current = sessionId
     pendingStartedAtRef.current = Date.now()
@@ -886,7 +1013,11 @@ export function ChatPanel() {
             </div>
           </header>
 
-          <div className="chat-main__transcript" ref={transcriptRef}>
+          <div
+            className="chat-main__transcript"
+            ref={transcriptRef}
+            onScroll={handleTranscriptScroll}
+          >
             {!activeSession || activeSession.messages.length === 0 ? (
               <div className="empty-state" style={{ padding: 60 }}>
                 <strong>开始对话</strong>
@@ -897,75 +1028,13 @@ export function ChatPanel() {
               </div>
             ) : (
               activeSession.messages.map((message) => (
-                <div
+                <MessageRow
                   key={message.id}
-                  className={`chat-msg chat-msg--${message.type}`}
-                >
-                  <div className="chat-msg__head">
-                    <span className="chat-msg__role">
-                      {message.type === 'user'
-                        ? '用户'
-                        : message.type === 'assistant'
-                        ? message.agent_name || 'assistant'
-                        : '系统'}
-                    </span>
-                    {message.type === 'assistant' &&
-                      (() => {
-                        const name = message.agent_name || 'assistant'
-                        const model = agentMeta[name]?.model
-                        return model ? (
-                          <small
-                            className="agent-model-badge"
-                            title={`LLM 模型：${model}`}
-                          >
-                            {model}
-                          </small>
-                        ) : null
-                      })()}
-                    <span className="chat-msg__time">
-                      {formatTime(message.timestamp)}
-                    </span>
-                    {message.elapsedMs != null && (
-                      <span className="chat-msg__stat">
-                        {(message.elapsedMs / 1000).toFixed(1)}s
-                      </span>
-                    )}
-                    {message.memoriesUsed != null && message.memoriesUsed > 0 && (
-                      <span className="chat-msg__stat">
-                        记忆 {message.memoriesUsed}
-                      </span>
-                    )}
-                    {message.usage?.total_tokens != null && (
-                      <span className="chat-msg__stat">
-                        {message.usage.total_tokens} tokens
-                      </span>
-                    )}
-                  </div>
-                  {message.content.trim() ? (
-                    <MessageBody content={message.content} />
-                  ) : message.type === 'assistant' &&
-                    sending &&
-                    message.id === pendingAssistantIdRef.current ? (
-                    <div className="chat-msg__body chat-msg__body--pending">
-                      <span className="chat-typing">
-                        <span />
-                        <span />
-                        <span />
-                      </span>
-                    </div>
-                  ) : null}
-                  {message.type === 'assistant' &&
-                    (message.toolCalls?.length ||
-                      message.artifacts?.length ||
-                      message.content.trim()) && (
-                      <>
-                        <ToolCallList calls={message.toolCalls} />
-                        <ArtifactList artifacts={message.artifacts} />
-                      </>
-                    )}
-                  {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}
-                  <AttachmentList ids={message.attachments} />
-                </div>
+                  message={message}
+                  agentMeta={agentMeta}
+                  sending={sending}
+                  isPending={message.id === pendingAssistantIdRef.current}
+                />
               ))
             )}
             {sending &&

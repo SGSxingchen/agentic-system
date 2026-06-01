@@ -1,6 +1,8 @@
 import {
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -119,7 +121,7 @@ function MentionText({ text }: { text: string }) {
   return <>{segments}</>
 }
 
-function MarkdownBody({ content }: { content: string }) {
+const MarkdownBody = memo(function MarkdownBody({ content }: { content: string }) {
   return (
     <div className="chatroom-msg__body">
       <ReactMarkdown
@@ -141,7 +143,7 @@ function MarkdownBody({ content }: { content: string }) {
       </ReactMarkdown>
     </div>
   )
-}
+})
 
 function wrapMentionsInChildren(children: ReactNode): ReactNode {
   if (typeof children === 'string') {
@@ -232,6 +234,12 @@ export function ChatroomPanel() {
   // 保存当前活跃 room 的 id，便于 onMessage 闭包内访问最新值
   const activeRoomIdRef = useRef<string | null>(null)
   activeRoomIdRef.current = activeRoom?.id ?? null
+  // 流式 thinking 节流：按 message_id 累积未刷新的 delta，rAF 合帧统一 append。
+  // thinking_buffer 是前端运行时字段（快照不携带，见 mergeMessage），所以延迟刷新不会与快照重复追加。
+  const pendingThinkingRef = useRef<Map<string, string>>(new Map())
+  const rafIdRef = useRef<number | null>(null)
+  // 用户是否贴着底部：决定流式时是否自动跟随。
+  const [stuckToBottom, setStuckToBottom] = useState(true)
 
   // ─── 数据加载 ───────────────────────────────────────────
   const loadRooms = useCallback(
@@ -283,6 +291,7 @@ export function ChatroomPanel() {
       setActiveRoom(null)
       return
     }
+    setStuckToBottom(true) // 切换房间：默认贴底打开
     let cancelled = false
     api.getChatroom(selectedRoomId).then((res) => {
       if (cancelled) return
@@ -305,6 +314,34 @@ export function ChatroomPanel() {
     const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : ''
     return `${protocol}//${window.location.host}/ws${tokenSuffix}`
   }, [])
+
+  // 把累积的 thinking delta 一次性 append 到各自消息（rAF 回调里执行，单帧最多一次）。
+  const applyPendingThinking = useCallback(() => {
+    rafIdRef.current = null
+    const pending = pendingThinkingRef.current
+    if (pending.size === 0) return
+    pendingThinkingRef.current = new Map()
+    setActiveRoom((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        messages: prev.messages.map((m) => {
+          const chunk = pending.get(m.id)
+          if (chunk == null) return m
+          return {
+            ...m,
+            thinking_buffer: (m.thinking_buffer || '') + chunk,
+            status: m.status === 'pending' ? 'streaming' : m.status,
+          }
+        }),
+      }
+    })
+  }, [])
+
+  const scheduleThinkingFlush = useCallback(() => {
+    if (rafIdRef.current != null) return
+    rafIdRef.current = requestAnimationFrame(applyPendingThinking)
+  }, [applyPendingThinking])
 
   const handleWSMessage = useCallback((raw: unknown) => {
     const event = raw as WSEvent
@@ -332,22 +369,10 @@ export function ChatroomPanel() {
         const messageId: string | undefined = data.message_id
         const delta: string = data.delta || ''
         if (!messageId) return
-        setActiveRoom((prev) => {
-          if (!prev || prev.id !== roomId) return prev
-          return {
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === messageId
-                ? {
-                    ...m,
-                    thinking_buffer: (m.thinking_buffer || '') + delta,
-                    status:
-                      m.status === 'pending' ? 'streaming' : m.status,
-                  }
-                : m
-            ),
-          }
-        })
+        // 不再每 token 直接 setState：累积到 ref，由 rAF 合帧刷新（见 applyPendingThinking）。
+        const prevChunk = pendingThinkingRef.current.get(messageId) || ''
+        pendingThinkingRef.current.set(messageId, prevChunk + delta)
+        scheduleThinkingFlush()
         break
       }
       case 'chatroom_tool_call': {
@@ -558,7 +583,7 @@ export function ChatroomPanel() {
         }
         break
     }
-  }, [loadActiveRoom, loadRooms])
+  }, [loadActiveRoom, loadRooms, scheduleThinkingFlush])
 
   const subscribeRef = useRef<((data: unknown) => void) | null>(null)
 
@@ -607,12 +632,28 @@ export function ChatroomPanel() {
     }
   }, [])
 
-  // 自动滚到底部
-  useEffect(() => {
-    if (transcriptRef.current) {
+  // 贴底自动滚动：仅当用户当前贴着底部才跟随生成；依赖整个 messages 数组，
+  // 使流式（thinking flush / 新消息）时持续跟到底部，手动上滑后不再抢滚动。
+  useLayoutEffect(() => {
+    if (stuckToBottom && transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight
     }
-  }, [activeRoom?.messages?.length])
+  }, [activeRoom?.messages, stuckToBottom])
+
+  // 监听滚动：离底 > 40px 视为「已上滑」，暂停自动跟随；滑回底部恢复。
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptRef.current
+    if (!el) return
+    setStuckToBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+  }, [])
+
+  // 卸载时清理挂起的 rAF。
+  useEffect(
+    () => () => {
+      if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current)
+    },
+    []
+  )
 
   // ─── 派生数据 ───────────────────────────────────────────
   const allMemberNames = useMemo(() => {
@@ -893,17 +934,17 @@ export function ChatroomPanel() {
     }
   }
 
-  const handleRetry = async (message: ChatroomMessage) => {
-    if (!activeRoom) return
+  const handleRetry = useCallback(async (message: ChatroomMessage) => {
+    if (!selectedRoomId) return
     if (!message.sender.startsWith('agent:')) return
     const agentName = message.sender.slice(6)
     if (!agentName) return
     const prompt = (message.meta as any)?.prompt || ''
-    const res = await api.invokeChatroom(activeRoom.id, agentName, prompt)
+    const res = await api.invokeChatroom(selectedRoomId, agentName, prompt)
     if (res.status !== 'ok') {
       setError(res.message || '重试失败')
     }
-  }
+  }, [selectedRoomId])
 
   const handleCancelAll = async () => {
     if (!activeRoom) return
@@ -954,7 +995,11 @@ export function ChatroomPanel() {
 
               <TodoBanner room={activeRoom} />
 
-              <div className="chatroom-transcript" ref={transcriptRef}>
+              <div
+                className="chatroom-transcript"
+                ref={transcriptRef}
+                onScroll={handleTranscriptScroll}
+              >
                 {activeRoom.messages.length === 0 ? (
                   <div className="empty-state" style={{ padding: 60 }}>
                     <strong>开始对话</strong>
@@ -1313,7 +1358,7 @@ function TodoRow({ todo }: { todo: ChatroomTodo }) {
 
 // ─── 子组件：消息卡片 ────────────────────────────────────
 
-function ChatroomMessageCard({
+const ChatroomMessageCard = memo(function ChatroomMessageCard({
   message,
   onRetry,
   agentMeta,
@@ -1451,7 +1496,7 @@ function ChatroomMessageCard({
       )}
     </div>
   )
-}
+})
 
 function ToolCallCard({ call }: { call: ChatroomToolCallRecord }) {
   const [open, setOpen] = useState(false)
