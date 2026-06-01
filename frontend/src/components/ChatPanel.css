@@ -507,6 +507,12 @@
   padding: 11px 14px;
 }
 
+.chat-msg__body--pending {
+  display: inline-flex;
+  align-items: center;
+  min-width: 46px;
+}
+
 .chat-typing {
   display: inline-flex;
   gap: 5px;

@@ -952,33 +952,53 @@ export function ChatPanel() {
                       </span>
                     )}
                   </div>
-                  <MessageBody content={message.content} />
-                  {message.type === 'assistant' && (
-                    <>
-                      <ToolCallList calls={message.toolCalls} />
-                      <ArtifactList artifacts={message.artifacts} />
-                      <div className="chat-msg__actions">
-                        <button
-                          type="button"
-                          className="btn-xs"
-                          onClick={() =>
-                            downloadTextFile(
-                              `${message.agent_name || 'assistant'}-${message.id}.md`,
-                              message.content || ''
-                            )
-                          }
-                        >
-                          下载回复
-                        </button>
-                      </div>
-                    </>
-                  )}
+                  {message.content.trim() ? (
+                    <MessageBody content={message.content} />
+                  ) : message.type === 'assistant' &&
+                    sending &&
+                    message.id === pendingAssistantIdRef.current ? (
+                    <div className="chat-msg__body chat-msg__body--pending">
+                      <span className="chat-typing">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    </div>
+                  ) : null}
+                  {message.type === 'assistant' &&
+                    (message.toolCalls?.length ||
+                      message.artifacts?.length ||
+                      message.content.trim()) && (
+                      <>
+                        <ToolCallList calls={message.toolCalls} />
+                        <ArtifactList artifacts={message.artifacts} />
+                        {message.content.trim() && message.id !== pendingAssistantIdRef.current && (
+                          <div className="chat-msg__actions">
+                            <button
+                              type="button"
+                              className="btn-xs"
+                              onClick={() =>
+                                downloadTextFile(
+                                  `${message.agent_name || 'assistant'}-${message.id}.md`,
+                                  message.content || ''
+                                )
+                              }
+                            >
+                              {'\u4e0b\u8f7d\u56de\u590d'}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
                   {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}
                   <AttachmentList ids={message.attachments} />
                 </div>
               ))
             )}
-            {sending && (
+            {sending &&
+              !activeSession?.messages?.some(
+                (message) => message.id === pendingAssistantIdRef.current
+              ) && (
               <div className="chat-msg chat-msg--assistant chat-msg--loading">
                 <div className="chat-msg__head">
                   <span className="chat-msg__role">{agentName}</span>
