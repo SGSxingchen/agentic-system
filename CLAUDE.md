@@ -31,7 +31,7 @@
 | 能力插件系统 | ✅ 已实现 | CodeParser + StaticAnalyzer + TestRunner |
 | YAML 配置体系 | ✅ 已实现 | config/ 目录主配置，动态加载，fallback 机制 |
 | 前后端分离 | ✅ 已实现 | FastAPI + React/TypeScript + WebSocket |
-| Agent 多 Agent 群聊（Chatroom） | ✅ 已实现 | 多 Agent 房间、@ 接力、auto-host、摘要压缩、动态拉人造人、工作区绑定 |
+| Agent 多 Agent 群聊（Chatroom） | ✅ 已实现 | 多 Agent 房间、@ 接力、auto-host、摘要压缩、动态拉人造人、工作区绑定、聊天室原生协作团队（7 个 text Agent） |
 | MCP 集成 | ❌ 预留接口 | CapabilityRegistry 预留了 MCP 类型支持 |
 | 消息持久化 | ❌ 预留接口 | 当前仅内存队列 |
 
@@ -247,6 +247,8 @@ LLM 客户端层 (OpenAI / Anthropic)
 | CoderAgent | task/plan | 代码 + 文件路径 + 说明 (JSON) | code_generated |
 | ReviewerAgent | code | 六维度审查报告 (JSON) | review_passed / review_failed |
 
+> 另有 7 个**聊天室原生** Agent（`facilitator` / `chat_planner` / `chat_coder` / `chat_reviewer` / `researcher` / `critic` / `scribe`，均 `output_format: text`）专供群聊协作，详见 §3.10。
+
 **标准事件链:**
 ```
 user_message → Assistant → assistant_completed → 前端 WebSocket
@@ -365,6 +367,12 @@ plan_request → Planner → plan_created → Coder → code_generated → Revie
 - `ChatroomStore`：JSON 持久化（`data/chatrooms/{room_id}.json` + `_index.json`），原子写；新增 `apply_goal_subgoal_op` / `add_todo` / `update_todo` / `list_todos` / `delete_todo` / `find_todos_by_dispatch`
 - 工具：`parse_mentions(content, valid)` 解析 `@AgentName`（跳过反引号代码段，含未闭合）；`build_room_context(room, target)` 现在产出 XML 化的 `<chatroom_context>` system 块（含 `<topic>` `<goal>` `<summary>` `<members self="...">` `<protocol>`）
 - `_format_history_message` 重构：自己的发言用 `assistant` role 原文返回，其他成员/用户/system 一律 `user` role 包成 `<msg id="" from="" at="" mentions="" parent="">...</msg>` 或 `<system_event>...</system_event>`，避免 LM 角色混淆
+
+**聊天室原生协作团队（2026-06-01）**：新增 7 个 `output_format: text` 的群聊原生 Agent，身份天生无 JSON 输出契约，专为自然语言协作设计：
+- 开发三角：`chat_planner`（规划者）/ `chat_coder`（开发者）/ `chat_reviewer`（评审者）
+- 通用角色：`facilitator`（主持人，**房间默认 host**）/ `researcher`（研究员）/ `critic`（批评者/红队）/ `scribe`（记录员/书记）
+
+房间默认 `host_agent` 由 `planner` 改为 `facilitator`，根治「auto-host 召唤 JSON Agent」。老的 planner/coder/reviewer 不变，继续服务 Agent Run 流水线。详见 `docs/superpowers/specs/2026-06-01-chatroom-native-team-design.md`。
 
 **编排** (`core/chatroom_orchestrator.py`)：
 - `dispatch_speaking_task(room_id, agent_name, parent_message_id?)` —— 同步入口，不阻塞
