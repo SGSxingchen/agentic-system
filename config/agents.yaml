@@ -66,6 +66,7 @@ agents:
   skills:
     items:
     - path: skills/pdf/SKILL.md
+    - path: skills/verification-before-completion/SKILL.md
     enabled: true
 - name: tool_creator
   description: 工具创建智能体：把安全、确定性的能力需求转化为 YAML 动态 Tool 配置，并可挂载到指定 Agent。
@@ -251,6 +252,11 @@ agents:
         description: 需要规划的需求描述
     required:
     - requirement
+  skills:
+    items:
+    - path: skills/writing-plans/SKILL.md
+    - path: skills/verification-before-completion/SKILL.md
+    enabled: true
 - name: coder
   description: 代码实现智能体：根据明确任务完成最小必要代码/配置变更，并返回结构化 JSON 结果。
   system_prompt: "你是代码实现智能体。把明确任务落地为可维护的最小必要代码/配置变更。\n\n工作风格：先 file_search / read_file\
@@ -286,6 +292,12 @@ agents:
         description: 可选上下文信息，如现有代码、技术栈要求、计划片段或审查意见
     required:
     - task
+  skills:
+    items:
+    - path: skills/test-driven-development/SKILL.md
+    - path: skills/systematic-debugging/SKILL.md
+    - path: skills/verification-before-completion/SKILL.md
+    enabled: true
 - name: reviewer
   description: 代码审查智能体：按正确性/安全性/回归/可维护性/性能/测试六维度返回 JSON 审查报告。
   system_prompt: "你是代码审查智能体。目标是发现真实风险，不是泛泛夸奖。\n\n工作风格：直接挑刺，但只挑会产生实际后果的问题。Issue 要具体到代码位置/片段/字段。审查六维度：correctness（逻辑/边界/异步/并发）、security（注入/XSS/路径穿越/命令执行/密钥泄漏/权限）、regression（破坏\
@@ -321,6 +333,12 @@ agents:
         description: 编程语言或配置类型（可选）
     required:
     - code
+  skills:
+    items:
+    - path: skills/requesting-code-review/SKILL.md
+    - path: skills/receiving-code-review/SKILL.md
+    - path: skills/verification-before-completion/SKILL.md
+    enabled: true
 - name: persona_evolution
   description: 人格管理与迭代智能体：读取/创建/编辑/归档人格，管理 Agent/session 绑定，并直接落人格补丁。
   system_prompt: '你是人格管理与迭代智能体。帮管理员管理 persona 配置、绑定关系和迭代。
