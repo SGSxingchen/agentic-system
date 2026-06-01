@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
-import type { AgentInfo, RunEvent, Task } from '../types'
+import type { AgentInfo, ChatArtifactRecord, RunEvent, Task } from '../types'
 import { Select } from './Select'
 import './RunsPanel.css'
 
@@ -64,6 +64,105 @@ function formatDuration(start?: string | null, end?: string | null) {
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
   return `${Math.floor(minutes / 60)} 时 ${minutes % 60} 分`
+}
+
+function stringifyValue(value: any) {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function collectRunArtifacts(...values: any[]): ChatArtifactRecord[] {
+  const artifacts: ChatArtifactRecord[] = []
+  const push = (item: any) => {
+    if (item && typeof item === 'object' && (item.id || item.download_url || item.open_url)) {
+      artifacts.push(item as ChatArtifactRecord)
+    }
+  }
+  const visit = (value: any) => {
+    if (!value || typeof value !== 'object') return
+    push(value.artifact)
+    if (Array.isArray(value.artifacts)) value.artifacts.forEach(push)
+    if (value.result && typeof value.result === 'object') visit(value.result)
+    if (value.payload && typeof value.payload === 'object') visit(value.payload)
+  }
+  values.forEach(visit)
+  return artifacts
+}
+
+function buildVisualEvents(events: RunEvent[]) {
+  const rows: Array<{ ts: string; type: string; title: string; detail?: string; status?: string }> = []
+  let thinking = ''
+  let thinkingTs = ''
+  const flushThinking = () => {
+    const content = thinking.trim()
+    if (!content) {
+      thinking = ''
+      return
+    }
+    rows.push({
+      ts: thinkingTs,
+      type: 'thinking',
+      title: '思考中',
+      detail: content.length > 1000 ? `${content.slice(0, 1000)}...` : content,
+    })
+    thinking = ''
+  }
+  events.forEach((event) => {
+    const payload = event.payload || {}
+    const content = typeof payload.content === 'string' ? payload.content : ''
+    if (event.type === 'thinking') {
+      if (!thinkingTs) thinkingTs = event.ts
+      thinking += content
+      return
+    }
+    flushThinking()
+    thinkingTs = ''
+    if (event.type === 'tool_call') {
+      rows.push({
+        ts: event.ts,
+        type: 'tool_call',
+        title: `调用工具：${payload.tool || 'tool'}`,
+        detail: stringifyValue(payload.args),
+        status: 'running',
+      })
+      return
+    }
+    if (event.type === 'tool_result') {
+      rows.push({
+        ts: event.ts,
+        type: 'tool_result',
+        title: `工具完成：${payload.tool || 'tool'}`,
+        detail: stringifyValue(payload.result).slice(0, 1200),
+        status: payload.result?.error ? 'error' : 'success',
+      })
+      return
+    }
+    rows.push({
+      ts: event.ts,
+      type: event.type,
+      title: event.type,
+      detail: stringifyValue(payload).slice(0, 1200),
+    })
+  })
+  flushThinking()
+  return rows
+}
+
+function downloadRunText(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename.replace(/[\\/:*?"<>|]+/g, '-')
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 export function RunsPanel() {
@@ -150,6 +249,12 @@ export function RunsPanel() {
     () => runs.find((r) => r.id === selectedRunId) || null,
     [runs, selectedRunId]
   )
+  const visualEvents = useMemo(() => buildVisualEvents(runEvents), [runEvents])
+  const runArtifacts = useMemo(
+    () => collectRunArtifacts(selectedRun?.output, ...runEvents.map((event) => event.payload)),
+    [runEvents, selectedRun?.output]
+  )
+  const runOutputText = useMemo(() => stringifyValue(selectedRun?.output), [selectedRun?.output])
 
   const handleSubmit = async () => {
     if (!formGoal.trim()) {
@@ -490,35 +595,76 @@ export function RunsPanel() {
                 </dl>
               </div>
 
+              {(runOutputText || runArtifacts.length > 0) && (
+                <>
+                  <header className="console-card__header">
+                    <span className="console-card__title">Final Output</span>
+                    {runOutputText && (
+                      <button
+                        type="button"
+                        className="btn-xs"
+                        onClick={() =>
+                          downloadRunText(`${selectedRun.id || 'run'}-output.md`, runOutputText)
+                        }
+                      >
+                        Download Output
+                      </button>
+                    )}
+                  </header>
+                  <div className="run-output">
+                    {runOutputText && <pre>{runOutputText}</pre>}
+                    {runArtifacts.length > 0 && (
+                      <div className="run-artifacts">
+                        {runArtifacts.map((artifact, index) => (
+                          <div className="run-artifact" key={artifact.id || index}>
+                            <div>
+                              <strong>{artifact.title || artifact.filename || artifact.id}</strong>
+                              <span>{artifact.kind || artifact.mime_type || 'file'}</span>
+                            </div>
+                            <div className="run-artifact__actions">
+                              {artifact.open_url && (
+                                <a href={artifact.open_url} target="_blank" rel="noopener noreferrer">
+                                  Open
+                                </a>
+                              )}
+                              {artifact.download_url && (
+                                <a href={artifact.download_url} download>
+                                  Download
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
               <header className="console-card__header">
-                <span className="console-card__title">事件时间线</span>
-                <span className="text-muted">{runEvents.length} 条</span>
+                <span className="console-card__title">Process View</span>
+                <span className="text-muted">
+                  {visualEvents.length} items · raw events {runEvents.length}
+                </span>
               </header>
               <div className="run-detail__events">
-                {runEvents.length === 0 ? (
+                {visualEvents.length === 0 ? (
                   <div className="empty-state">
-                    <span>暂无事件</span>
+                    <span>No events yet</span>
                   </div>
                 ) : (
-                  runEvents.map((event, index) => (
-                    <div className="run-event-row" key={index}>
-                      <span className="run-event-row__time">
-                        {formatTimeShort(event.ts)}
-                      </span>
-                      <span className="run-event-row__type">{event.type}</span>
-                      <span className="run-event-row__detail">
-                        {event.payload?.tool ? `${event.payload.tool}` : ''}
-                        {event.payload?.error && ` 错误：${event.payload.error}`}
-                        {!event.payload?.tool &&
-                          !event.payload?.error &&
-                          (() => {
-                            try {
-                              return JSON.stringify(event.payload).slice(0, 240)
-                            } catch {
-                              return ''
-                            }
-                          })()}
-                      </span>
+                  visualEvents.map((event, index) => (
+                    <div className={`run-event-card run-event-card--${event.type}`} key={index}>
+                      <div className="run-event-card__head">
+                        <span>{formatTimeShort(event.ts)}</span>
+                        <strong>{event.title}</strong>
+                        {event.status && (
+                          <span className={`pill pill--${event.status === 'error' ? 'danger' : 'success'}`}>
+                            {event.status}
+                          </span>
+                        )}
+                      </div>
+                      {event.detail && <pre>{event.detail}</pre>}
                     </div>
                   ))
                 )}

@@ -329,15 +329,16 @@ async def _handle_user_message(
     if not user_message:
         return
 
+    agent_name = str(payload.get("agent_name") or payload.get("agent") or "assistant").strip() or "assistant"
     cap_registry = get_capability_registry()
-    cap = cap_registry.get("assistant") if cap_registry and hasattr(cap_registry, "get") else None
-    if cap_registry is None or (cap is None and "assistant" not in cap_registry):
+    cap = cap_registry.get(agent_name) if cap_registry and hasattr(cap_registry, "get") else None
+    if cap_registry is None or cap is None:
         await manager.send_to(
             websocket,
             _ws_message(
                 "assistant_response",
                 {
-                    "response": "Assistant is not initialized.",
+                    "response": f"Agent '{agent_name}' is not initialized.",
                     "original_message": user_message,
                 },
             ),
@@ -347,13 +348,17 @@ async def _handle_user_message(
     memory_context, memories_used = await build_memory_context(user_message)
     session_id = payload.get("session_id") or payload.get("chat_session_id")
     assistant_payload = {"message": user_message}
+    if isinstance(payload.get("messages"), list):
+        assistant_payload["messages"] = payload.get("messages")
+    if isinstance(payload.get("attachments"), list):
+        assistant_payload["attachments"] = payload.get("attachments")
     if session_id:
         assistant_payload["session_id"] = str(session_id)
     if payload.get("persona_id"):
         assistant_payload["persona_id"] = str(payload.get("persona_id"))
     workspace_error = _attach_workspace_context(assistant_payload, payload)
     if workspace_error:
-        await manager.send_personal_message(
+        await manager.send_to(
             websocket,
             _ws_message(
                 "assistant_response",
@@ -363,6 +368,12 @@ async def _handle_user_message(
         return
     if memory_context:
         assistant_payload["memory_context"] = memory_context
+    try:
+        from ..routes.agents import _attach_attachment_context
+
+        _attach_attachment_context(assistant_payload)
+    except Exception:
+        pass
 
     stream_fn = getattr(cap, "execute_stream", None)
     if stream_fn is None:
@@ -400,7 +411,7 @@ async def _handle_user_message(
             _ws_message(
                 "event",
                 {
-                    "agent": "assistant",
+                    "agent": agent_name,
                     "activity": "planning",
                     "status": "running",
                     "message": "Preparing context and contacting LLM",
@@ -411,7 +422,7 @@ async def _handle_user_message(
         await broadcast_monitor_event(
             "agent_progress",
             {
-                "agent": "assistant",
+                "agent": agent_name,
                 "activity": "planning",
                 "status": "running",
                 "message": "Preparing context and contacting LLM",
@@ -437,7 +448,7 @@ async def _handle_user_message(
                 call_id = str(event.get("tool_call_id") or f"{tool_name}:{len(tool_started_at) + 1}")
                 tool_started_at[call_id] = datetime.utcnow()
                 progress_data = {
-                    "agent": "assistant",
+                    "agent": agent_name,
                     "activity": "calling_tool",
                     "status": "running",
                     "tool": tool_name,
@@ -545,7 +556,7 @@ async def _handle_user_message(
                     _ws_message(
                         "event",
                         {
-                            "agent": "assistant",
+                            "agent": agent_name,
                             "activity": "completed",
                             "status": "completed",
                             "elapsed_ms": event.get("elapsed_ms"),
@@ -556,7 +567,7 @@ async def _handle_user_message(
                 await broadcast_monitor_event(
                     "agent_progress",
                     {
-                        "agent": "assistant",
+                        "agent": agent_name,
                         "activity": "completed",
                         "status": "completed",
                         "elapsed_ms": event.get("elapsed_ms"),

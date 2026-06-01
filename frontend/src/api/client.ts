@@ -638,6 +638,7 @@ export async function addChatSessionMessage(
     elapsedMs?: number
     usage?: Record<string, number>
     toolCalls?: Array<Record<string, unknown>>
+    artifacts?: Array<Record<string, unknown>>
     agent_name?: string
     error?: string
     attachments?: string[]

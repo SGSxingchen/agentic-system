@@ -3,12 +3,16 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import * as api from '../api/client'
 import { useAppStore } from '../store/appStore'
+import { useWebSocket } from '../hooks/useWebSocket'
 import type {
   AgentInfo,
   Attachment,
+  ChatArtifactRecord,
   ChatMessage,
+  ChatToolCallRecord,
   ChatSession,
   ChatSessionSummary,
+  WSEvent,
 } from '../types'
 import { Select } from './Select'
 import { AttachmentList } from './AttachmentChip'
@@ -60,6 +64,45 @@ function makeMessageId() {
   return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename.replace(/[\\/:*?"<>|]+/g, '-')
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+function collectArtifacts(payload: any): ChatArtifactRecord[] {
+  if (!payload || typeof payload !== 'object') return []
+  const found: ChatArtifactRecord[] = []
+  const push = (item: any) => {
+    if (item && typeof item === 'object' && (item.id || item.download_url || item.open_url)) {
+      found.push(item as ChatArtifactRecord)
+    }
+  }
+  push(payload.artifact)
+  if (Array.isArray(payload.artifacts)) payload.artifacts.forEach(push)
+  if (payload.result && typeof payload.result === 'object') {
+    push(payload.result.artifact)
+    if (Array.isArray(payload.result.artifacts)) payload.result.artifacts.forEach(push)
+  }
+  return found
+}
+
+function formatToolPayload(value: any) {
+  if (value == null || value === '') return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
 function toAgentHistory(messages: ChatMessage[], nextMessage: ChatMessage) {
   const history = [...messages, nextMessage].flatMap((message) => {
     if (message.type !== 'user' && message.type !== 'assistant') return []
@@ -95,6 +138,54 @@ function extractAssistantText(payload: any): string {
   return JSON.stringify(payload)
 }
 
+function ToolCallList({ calls }: { calls?: ChatToolCallRecord[] }) {
+  if (!calls?.length) return null
+  return (
+    <div className="chat-tools">
+      {calls.map((call, index) => (
+        <details className="chat-tool" key={call.id || `${call.name}-${index}`} open={call.status === 'running'}>
+          <summary>
+            <span className={`chat-tool__status chat-tool__status--${call.status || 'running'}`} />
+            <strong>{call.name || 'tool'}</strong>
+            <span>{call.status || 'running'}</span>
+            {call.elapsedMs != null && <span>{(call.elapsedMs / 1000).toFixed(1)}s</span>}
+          </summary>
+          {call.arguments != null && <pre>{formatToolPayload(call.arguments)}</pre>}
+          {call.result != null && <pre>{formatToolPayload(call.result)}</pre>}
+        </details>
+      ))}
+    </div>
+  )
+}
+
+function ArtifactList({ artifacts }: { artifacts?: ChatArtifactRecord[] }) {
+  if (!artifacts?.length) return null
+  return (
+    <div className="chat-artifacts">
+      {artifacts.map((artifact, index) => (
+        <div className="chat-artifact" key={artifact.id || index}>
+          <div>
+            <strong>{artifact.title || artifact.filename || artifact.id}</strong>
+            <span>{artifact.kind || artifact.mime_type || 'file'}</span>
+          </div>
+          <div className="chat-artifact__actions">
+            {artifact.open_url && (
+              <a href={artifact.open_url} target="_blank" rel="noopener noreferrer">
+                打开
+              </a>
+            )}
+            {artifact.download_url && (
+              <a href={artifact.download_url} download>
+                下载
+              </a>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function ChatPanel() {
   const { state } = useAppStore()
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
@@ -121,6 +212,19 @@ export function ChatPanel() {
   }, [sessionsCollapsed])
 
   const transcriptRef = useRef<HTMLDivElement | null>(null)
+  const pendingAssistantIdRef = useRef<string | null>(null)
+  const pendingSessionIdRef = useRef<string | null>(null)
+  const pendingStartedAtRef = useRef<number>(0)
+  const pendingContentRef = useRef('')
+  const pendingToolCallsRef = useRef<ChatToolCallRecord[]>([])
+  const pendingArtifactsRef = useRef<ChatArtifactRecord[]>([])
+  const finalPersistedRef = useRef(false)
+  const wsUrl = useMemo(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const token = api.getAuthToken()
+    const suffix = token ? `?token=${encodeURIComponent(token)}` : ''
+    return `${protocol}//${window.location.host}/ws${suffix}`
+  }, [])
 
   // Load agent list
   useEffect(() => {
@@ -151,6 +255,193 @@ export function ChatPanel() {
       return sorted[0]?.id || null
     })
   }, [])
+
+  const persistAssistantMessage = useCallback(
+    async (patch: Partial<ChatMessage> = {}) => {
+      const sessionId = pendingSessionIdRef.current
+      const messageId = pendingAssistantIdRef.current
+      if (!sessionId || !messageId || finalPersistedRef.current) return
+      finalPersistedRef.current = true
+      const assistantMsg: ChatMessage = {
+        id: messageId,
+        type: 'assistant',
+        content: patch.content || pendingContentRef.current || '（无回复）',
+        timestamp: new Date().toISOString(),
+        memoriesUsed: patch.memoriesUsed,
+        elapsedMs: patch.elapsedMs ?? Date.now() - pendingStartedAtRef.current,
+        usage: patch.usage,
+        toolCalls: patch.toolCalls || pendingToolCallsRef.current,
+        artifacts: patch.artifacts || pendingArtifactsRef.current,
+        agent_name: agentName,
+      }
+      setActiveSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: prev.messages.map((message) =>
+                message.id === messageId ? { ...message, ...assistantMsg } : message
+              ),
+            }
+          : prev
+      )
+      await api.addChatSessionMessage(sessionId, {
+        id: assistantMsg.id,
+        type: 'assistant',
+        content: assistantMsg.content,
+        timestamp: assistantMsg.timestamp,
+        memoriesUsed: assistantMsg.memoriesUsed,
+        elapsedMs: assistantMsg.elapsedMs,
+        usage: assistantMsg.usage as Record<string, number> | undefined,
+        toolCalls: assistantMsg.toolCalls as Array<Record<string, unknown>>,
+        artifacts: assistantMsg.artifacts as Array<Record<string, unknown>>,
+        agent_name: assistantMsg.agent_name,
+      })
+      pendingAssistantIdRef.current = null
+      pendingSessionIdRef.current = null
+      setSending(false)
+      await loadSessions(sessionId)
+    },
+    [agentName, loadSessions]
+  )
+
+  const handleStreamEvent = useCallback(
+    (raw: unknown) => {
+      const event = raw as WSEvent
+      const eventType = event.event_type || event.type
+      const data = (event.data || {}) as Record<string, any>
+      const assistantId = pendingAssistantIdRef.current
+      if (!assistantId) return
+
+      if (eventType === 'agent_thinking') {
+        const delta = String(data.content || data.delta || '')
+        if (!delta) return
+        pendingContentRef.current += delta
+        setActiveSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                messages: prev.messages.map((message) =>
+                  message.id === assistantId ? { ...message, content: pendingContentRef.current } : message
+                ),
+              }
+            : prev
+        )
+        return
+      }
+
+      if (eventType === 'agent_tool_call') {
+        const callId = String(data.tool_call_id || `${data.tool || 'tool'}-${Date.now()}`)
+        pendingToolCallsRef.current = [
+          ...pendingToolCallsRef.current.filter((item) => item.id !== callId),
+          {
+            id: callId,
+            name: String(data.tool || ''),
+            arguments: data.args,
+            status: 'running',
+            started_at: new Date().toISOString(),
+          },
+        ]
+        setActiveSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                messages: prev.messages.map((message) =>
+                  message.id === assistantId ? { ...message, toolCalls: pendingToolCallsRef.current } : message
+                ),
+              }
+            : prev
+        )
+        return
+      }
+
+      if (eventType === 'agent_tool_result') {
+        const callId = String(data.tool_call_id || `${data.tool || 'tool'}-latest`)
+        const extraArtifacts = collectArtifacts(data)
+        if (extraArtifacts.length) {
+          pendingArtifactsRef.current = [...pendingArtifactsRef.current, ...extraArtifacts]
+        }
+        pendingToolCallsRef.current = pendingToolCallsRef.current.map((item) =>
+          item.id === callId
+            ? {
+                ...item,
+                result: data.result,
+                error: data.status === 'error' ? formatToolPayload(data.result) : undefined,
+                status: data.status || 'success',
+                ended_at: new Date().toISOString(),
+                elapsedMs: data.elapsed_ms,
+              }
+            : item
+        )
+        if (!pendingToolCallsRef.current.some((item) => item.id === callId)) {
+          pendingToolCallsRef.current.push({
+            id: callId,
+            name: String(data.tool || ''),
+            result: data.result,
+            status: data.status || 'success',
+            ended_at: new Date().toISOString(),
+            elapsedMs: data.elapsed_ms,
+          })
+        }
+        setActiveSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                messages: prev.messages.map((message) =>
+                  message.id === assistantId
+                    ? { ...message, toolCalls: pendingToolCallsRef.current, artifacts: pendingArtifactsRef.current }
+                    : message
+                ),
+              }
+            : prev
+        )
+        return
+      }
+
+      if (eventType === 'agent_done') {
+        pendingContentRef.current =
+          typeof data.final === 'string' ? data.final : pendingContentRef.current
+        setActiveSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                messages: prev.messages.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        content: pendingContentRef.current || message.content,
+                        usage: data.usage,
+                        elapsedMs: data.elapsed_ms ?? Date.now() - pendingStartedAtRef.current,
+                      }
+                    : message
+                ),
+              }
+            : prev
+        )
+        return
+      }
+
+      if (eventType === 'assistant_response') {
+        const finalText = extractAssistantText(data) || pendingContentRef.current
+        pendingContentRef.current = finalText
+        const artifacts = [...pendingArtifactsRef.current, ...collectArtifacts(data)]
+        pendingArtifactsRef.current = artifacts
+        persistAssistantMessage({
+          content: finalText,
+          usage: data.usage,
+          elapsedMs: data.elapsed_ms,
+          memoriesUsed: typeof data.memories_used === 'number' ? data.memories_used : undefined,
+          toolCalls: pendingToolCallsRef.current,
+          artifacts,
+        })
+      }
+    },
+    [persistAssistantMessage]
+  )
+
+  const { send: sendWS, connected: wsConnected } = useWebSocket({
+    url: wsUrl,
+    onMessage: handleStreamEvent,
+  })
 
   useEffect(() => {
     loadSessions()
@@ -278,62 +569,13 @@ export function ChatPanel() {
       attachments: userMessage.attachments,
     })
 
-    const startedAt = Date.now()
-    const result = await api.invokeAgent(agentName, value, {
-      session_id: sessionId,
-      workspace_id: session.workspace_id || state.selectedWorkspace?.id || undefined,
-      messages: toAgentHistory(session.messages || [], userMessage),
-    })
-    const elapsedMs = Date.now() - startedAt
-
-    if (result.status === 'ok') {
-      const text = extractAssistantText(result.data) || '（无回复）'
-      const memoriesUsed = (() => {
-        const data = result.data as any
-        if (data && typeof data === 'object') {
-          const ctx = data.memories_used ?? data.memory_context ?? data.memoriesUsed
-          if (typeof ctx === 'number') return ctx
-          if (Array.isArray(data.memories)) return data.memories.length
-        }
-        return undefined
-      })()
-      const usage = (() => {
-        const data = result.data as any
-        if (data && typeof data === 'object' && data.usage && typeof data.usage === 'object') {
-          return data.usage as Record<string, number>
-        }
-        return undefined
-      })()
-      const assistantMsg: ChatMessage = {
-        id: makeMessageId(),
-        type: 'assistant',
-        content: text,
-        timestamp: new Date().toISOString(),
-        memoriesUsed,
-        elapsedMs,
-        usage,
-        agent_name: agentName,
-      }
-      setActiveSession((prev) =>
-        prev ? { ...prev, messages: [...prev.messages, assistantMsg] } : prev
-      )
-      await api.addChatSessionMessage(sessionId, {
-        id: assistantMsg.id,
-        type: 'assistant',
-        content: assistantMsg.content,
-        timestamp: assistantMsg.timestamp,
-        memoriesUsed,
-        elapsedMs,
-        usage,
-        agent_name: assistantMsg.agent_name,
-      })
-    } else {
+    if (!wsConnected) {
       const errorMsg: ChatMessage = {
         id: makeMessageId(),
         type: 'system',
-        content: result.message || '调用失败',
+        content: 'WebSocket is not connected, so the live process cannot be shown yet. Please retry shortly.',
         timestamp: new Date().toISOString(),
-        error: result.message || 'invoke_failed',
+        error: 'websocket_disconnected',
       }
       setActiveSession((prev) =>
         prev ? { ...prev, messages: [...prev.messages, errorMsg] } : prev
@@ -345,11 +587,39 @@ export function ChatPanel() {
         timestamp: errorMsg.timestamp,
         error: errorMsg.error,
       })
-      setError(result.message || '调用失败')
+      setError(errorMsg.content)
+      setSending(false)
+      return
     }
 
-    setSending(false)
-    await loadSessions(sessionId)
+    const assistantMessage: ChatMessage = {
+      id: makeMessageId(),
+      type: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      toolCalls: [],
+      artifacts: [],
+      agent_name: agentName,
+    }
+    pendingAssistantIdRef.current = assistantMessage.id
+    pendingSessionIdRef.current = sessionId
+    pendingStartedAtRef.current = Date.now()
+    pendingContentRef.current = ''
+    pendingToolCallsRef.current = []
+    pendingArtifactsRef.current = []
+    finalPersistedRef.current = false
+    setActiveSession((prev) =>
+      prev ? { ...prev, messages: [...prev.messages, assistantMessage] } : prev
+    )
+    sendWS({
+      event_type: 'user_message',
+      text: value,
+      agent_name: agentName,
+      session_id: sessionId,
+      workspace_id: session.workspace_id || state.selectedWorkspace?.id || undefined,
+      messages: toAgentHistory(session.messages || [], userMessage),
+      attachments: attachmentIds,
+    })
   }
 
   const onInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -683,6 +953,26 @@ export function ChatPanel() {
                     )}
                   </div>
                   <MessageBody content={message.content} />
+                  {message.type === 'assistant' && (
+                    <>
+                      <ToolCallList calls={message.toolCalls} />
+                      <ArtifactList artifacts={message.artifacts} />
+                      <div className="chat-msg__actions">
+                        <button
+                          type="button"
+                          className="btn-xs"
+                          onClick={() =>
+                            downloadTextFile(
+                              `${message.agent_name || 'assistant'}-${message.id}.md`,
+                              message.content || ''
+                            )
+                          }
+                        >
+                          下载回复
+                        </button>
+                      </div>
+                    </>
+                  )}
                   {/* B1 Plan 3 P3 Task 27 — 已发出消息上的附件 chip 列表。 */}
                   <AttachmentList ids={message.attachments} />
                 </div>

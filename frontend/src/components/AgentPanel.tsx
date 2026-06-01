@@ -124,6 +124,7 @@ export function AgentPanel() {
   const [mcpImportText, setMcpImportText] = useState('')
   const [mcpImportMode, setMcpImportMode] = useState<'merge' | 'replace'>('merge')
   const [mcpImportFormat, setMcpImportFormat] = useState<'auto' | 'json' | 'yaml'>('auto')
+  const [customToolName, setCustomToolName] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   // A8 — 重新装载动态能力 + Agent 工具挂载（POST /api/evolution/reload）
@@ -351,6 +352,14 @@ export function AgentPanel() {
     })
   }
 
+  const addCustomTool = () => {
+    if (!draft) return
+    const name = customToolName.trim()
+    if (!name || draft.tools.includes(name)) return
+    updateDraft({ tools: [...draft.tools, name] })
+    setCustomToolName('')
+  }
+
   const renderListItem = (agent: AgentInfo) => {
     const isActive = agent.name === selectedName
     const skillCount = agent.skills?.items?.length || 0
@@ -377,6 +386,40 @@ export function AgentPanel() {
     if (!draft) return null
     return (
       <div className="agent-tools-picker">
+        <div className="agent-tools-picker__custom">
+          <input
+            value={customToolName}
+            disabled={!editing}
+            onChange={(event) => setCustomToolName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                addCustomTool()
+              }
+            }}
+            placeholder="输入本地 Tool 名称后直接挂载"
+          />
+          <button type="button" disabled={!editing || !customToolName.trim()} onClick={addCustomTool}>
+            挂载
+          </button>
+        </div>
+        {draft.tools
+          .filter((tool) => !capabilities.some((cap) => cap.name === tool))
+          .map((tool) => (
+            <div key={tool} className="agent-tools-picker__row agent-tools-picker__row--custom">
+              <input
+                id={`tool-${tool}`}
+                type="checkbox"
+                checked
+                disabled={!editing}
+                onChange={() => toggleTool(tool)}
+              />
+              <label htmlFor={`tool-${tool}`}>
+                <strong>{tool}</strong>
+                <span>自定义挂载；重新装载后若本地 Tool 可发现，会自动补齐描述</span>
+              </label>
+            </div>
+          ))}
         {capabilities.length === 0 && (
           <div className="empty-state" style={{ padding: 14 }}>
             <span>未发现可用能力</span>

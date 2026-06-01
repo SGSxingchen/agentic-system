@@ -299,6 +299,18 @@ export interface ChatToolCallRecord {
   status?: 'running' | 'success' | 'error' | string
   started_at?: string
   ended_at?: string
+  elapsedMs?: number | null
+}
+
+export interface ChatArtifactRecord {
+  id?: string
+  title?: string
+  filename?: string
+  kind?: string
+  mime_type?: string
+  download_url?: string
+  open_url?: string
+  content_url?: string
 }
 
 export interface ChatMessage {
@@ -310,6 +322,7 @@ export interface ChatMessage {
   elapsedMs?: number
   usage?: ChatTokenUsage
   toolCalls?: ChatToolCallRecord[]
+  artifacts?: ChatArtifactRecord[]
   agent_name?: string
   error?: string
   attachments?: string[]

@@ -194,6 +194,24 @@
   background: var(--color-surface);
 }
 
+.agent-tools-picker__custom {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.agent-tools-picker__custom input {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .agent-tools-picker__row {
   display: grid;
   grid-template-columns: 24px 1fr;
@@ -203,6 +221,10 @@
   font-size: 12.5px;
 }
 .agent-tools-picker__row:last-child { border-bottom: none; }
+
+.agent-tools-picker__row--custom {
+  background: var(--color-primary-light);
+}
 
 .agent-tools-picker__row label {
   display: flex;

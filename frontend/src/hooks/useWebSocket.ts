@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
 
 interface UseWebSocketOptions {
   url: string
@@ -24,6 +24,7 @@ export function useWebSocket({
 }: UseWebSocketOptions): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null)
   const connectedRef = useRef(false)
+  const [connected, setConnected] = useState(false)
   const reconnectAttemptsRef = useRef(0)
   const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -64,6 +65,7 @@ export function useWebSocket({
           return
         }
         connectedRef.current = true
+        setConnected(true)
         reconnectAttemptsRef.current = 0
         onConnectRef.current?.()
       }
@@ -71,6 +73,7 @@ export function useWebSocket({
       ws.onclose = () => {
         if (wsRef.current !== ws) return
         connectedRef.current = false
+        setConnected(false)
         wsRef.current = null
         onDisconnectRef.current?.()
 
@@ -132,6 +135,8 @@ export function useWebSocket({
         wsRef.current.onclose = null // prevent reconnect on unmount
         wsRef.current.close()
         wsRef.current = null
+        connectedRef.current = false
+        setConnected(false)
       }
     }
   }, [connect, clearConnectTimer, clearReconnectTimer])
@@ -144,5 +149,5 @@ export function useWebSocket({
     }
   }, [])
 
-  return { send, connected: connectedRef.current }
+  return { send, connected }
 }

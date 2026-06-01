@@ -83,6 +83,8 @@ class CapabilityRegistry:
 
                 try:
                     module = importlib.import_module(module_name)
+                    if module_name in sys.modules:
+                        module = importlib.reload(module)
                 except Exception as exc:
                     logger.warning("加载模块 %s 失败: %s", module_name, exc)
                     continue

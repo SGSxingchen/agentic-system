@@ -726,6 +726,8 @@ async def reload_evolution_extensions() -> APIResponse:
         return APIResponse(status="error", message="CapabilityRegistry 未初始化")
 
     data = _load_capabilities_config()
+    capabilities_dir = Path(__file__).resolve().parents[2] / "capabilities"
+    discovered = cap_registry.discover_plugins([str(capabilities_dir)]) if capabilities_dir.is_dir() else 0
     loaded = load_dynamic_capabilities(cap_registry, data["capabilities"])
     prompt_overrides = apply_prompt_overrides(cap_registry, data["capabilities"])
     _clear_cache()
@@ -737,5 +739,9 @@ async def reload_evolution_extensions() -> APIResponse:
     return APIResponse(
         status="ok",
         message="动态能力已重新装载",
-        data={"loaded_dynamic_tools": loaded, "prompt_overrides": prompt_overrides},
+        data={
+            "discovered_local_tools": discovered,
+            "loaded_dynamic_tools": loaded,
+            "prompt_overrides": prompt_overrides,
+        },
     )

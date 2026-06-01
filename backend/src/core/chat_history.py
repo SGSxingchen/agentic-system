@@ -148,6 +148,10 @@ class ChatHistoryStore:
             normalized["artifacts"] = [
                 item for item in message["artifacts"] if isinstance(item, dict)
             ]
+        if isinstance(message.get("attachments"), list):
+            normalized["attachments"] = [
+                str(item) for item in message["attachments"] if item
+            ]
 
         session["messages"].append(normalized)
         session["updated_at"] = _utc_now()
