@@ -1,6 +1,7 @@
 # 部署指南
 
-> 最后更新: 2026-03-25
+> 最后更新: 2026-06-02
+> 当前部署口径已按 Agent Run、Project 工作区、能力库、MCP 模板和全局访问密码同步。
 
 ## 开发环境搭建
 
@@ -126,6 +127,7 @@ uvicorn api.main:app --host 127.0.0.1 --port 8001 --workers 1
 | `config.yaml` | `backend/src/` | LLM API Key、模型等运行时配置 |
 | `agents.yaml` | `config/` | 智能体定义 |
 | `capabilities.yaml` | `config/` | 能力插件定义 |
+| `mcp_servers.yaml` | `config/` | MCP 模板库，默认禁用，按 Agent 装配 |
 | `system.yaml` | `config/` | 全局系统配置 |
 
 ### 环境变量
@@ -139,8 +141,21 @@ uvicorn api.main:app --host 127.0.0.1 --port 8001 --workers 1
 | `MEMORY_BACKEND` | 记忆后端 | chroma |
 | `MEMORY_PERSIST_DIR` | ChromaDB 持久化目录 | ./data/chroma |
 | `MEMORY_FALLBACK_TO_MEMORY_ON_ERROR` | Chroma 初始化失败时降级内存 | true |
+| `AGENTIC_WORKSPACE_ROOT` | 文件工具、Artifact、transcript 的统一工作区根 | ./workspace |
+| `ENABLE_SHELL_TOOL` | 是否启用 bash 工具 | false |
 | `BUS_QUEUE_SIZE` | 消息队列大小 | 1000 |
 | `BUS_HISTORY_SIZE` | 消息历史保留数 | 500 |
+
+运行态目录说明：
+
+- `workspace/projects/`：导入的 Project 工作区。
+- `workspace/runs/`：未显式绑定工作区的 Agent Run 临时目录。
+- `workspace/sessions/`：聊天会话自动工作区。
+- `workspace/tasks/`：transcript JSONL。
+- `workspace/artifacts/`：前端可预览/下载的 Artifact。
+- `data/`：人格、记忆和运行时本地数据。
+
+这些目录通常不入库，也不应提交密钥或用户上传资料。
 
 ### CORS 配置
 
@@ -330,4 +345,3 @@ server {
   反代的 access_log 必须按上面 `map` 屏蔽 token；前端不要把 token 拼到 `<a href="/ws?token=...">`
   之类的可见 DOM 里。
 - **不要复用密码**：这只是“一道门”，不是身份系统。多用户场景请加正经鉴权（OIDC / Session）。
-

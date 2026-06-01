@@ -1,14 +1,15 @@
 # 快速开始
 
-> 5 分钟启动多智能体代码生成与审查系统
+> 5 分钟启动当前版多智能体代码生成与审查系统
+> 同步时间: 2026-06-02
 
-## 前置要求
+## 1. 环境要求
 
 - Python 3.10+
 - Node.js 18+
-- pip / npm
+- npm
 
-## 1. 安装依赖
+## 2. 安装依赖
 
 ```bash
 # 后端
@@ -20,124 +21,121 @@ cd ../frontend
 npm install
 ```
 
-## 2. 配置 LLM
+## 3. 配置 LLM
 
-编辑 `backend/src/config.yaml`：
+推荐把本地密钥写入 `backend/src/config.yaml`，该文件已被 `.gitignore` 忽略。
 
 ```yaml
 llm:
-  provider: "openai"             # openai / anthropic
-  model: "gpt-4"                 # 模型名称
-  api_key: "your-api-key-here"   # API Key
-  base_url: ""                   # 自定义端点 (可选)
+  provider: "openai"
+  model: "gpt-5.5"
+  api_key: "your-api-key"
+  base_url: "https://your-openai-compatible-endpoint/v1"
 ```
 
-或使用环境变量：
+也可以使用环境变量：
 
 ```bash
 export LLM_PROVIDER=openai
 export LLM_API_KEY=sk-your-key
-export LLM_MODEL=gpt-4
+export LLM_MODEL=gpt-5.5
+export LLM_BASE_URL=https://your-openai-compatible-endpoint/v1
 ```
 
-也可以启动后在前端 Settings 面板中配置（支持热重载）。
+如果配置了 `server.access_password`，前端会先进入登录页；后端 `/api/*` 请求需要 `Authorization: Bearer <token>`。
 
-## 3. 启动
+## 4. 启动
 
-### 后端 (端口 8001)
+后端：
 
 ```bash
 cd backend/src
 uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-### 前端 (端口 3000)
+前端：
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-## 4. 访问
+## 5. 访问入口
 
 | 地址 | 说明 |
 |------|------|
-| http://localhost:3000 | 前端界面 |
-| http://localhost:8001/docs | Swagger API 文档 |
-| http://localhost:8001/api/health | 健康检查 |
-| ws://localhost:8001/ws | WebSocket 实时通信 |
+| `http://localhost:3000` | 前端工作台 |
+| `http://localhost:8001/docs` | Swagger API 文档 |
+| `http://localhost:8001/api/health` | 健康检查 |
+| `ws://localhost:8001/ws` | WebSocket 实时事件 |
 
-## 5. 使用
+## 6. 当前推荐演示流程
 
-1. **对话** — 在 ChatPanel 输入消息，AssistantAgent 自动回复（带记忆检索）
-2. **答辩 Demo** — 在“运行 / Agent Run 答辩演示台”点击一键 Demo，快速创建小型 Flask API、Python 工具函数或 CSV 数据处理脚本任务
-3. **Run 时间线** — 展开 Agent Run，查看 run_id、agent、workspace、status、耗时、流式生成片段和 transcript 事件
-4. **最终输出** — Run 完成后展开最终输出，查看生成代码、运行命令、测试/验收说明
-5. **提交任务** — 也可以在 TaskPanel 手动描述需求，创建自定义 Agent Run
-6. **查看智能体** — 在 AgentPanel 查看各 Agent 的状态和能力
-7. **记忆管理** — 在 MemoryPanel 查看、搜索、创建、删除记忆，并管理遗忘周期
-8. **系统监控** — 在 MonitorPanel 按 Agent 查看实时进展和事件流
+1. 在“总览”页确认后端健康、WebSocket 状态和最近运行。
+2. 在“工作区”页导入一个 zip 项目，得到受管理的 `workspace_id`。
+3. 在“运行”页选择 `coder` 或 `assistant`，绑定工作区并创建 Agent Run。
+4. 展开运行详情，查看 transcript、工具调用、输出和错误状态。
+5. 在“聊天室”页创建多 Agent 房间，用 `facilitator`、`chat_planner`、`chat_coder`、`chat_reviewer` 等展示协作。
+6. 在“工具 / Skills / MCP / 智能体”页展示能力库装配、Agent 配置、默认工作区和 MCP 模板。
+7. 在“记忆 / 人格”页展示长期记忆、人格绑定、版本和审核式迭代。
 
-答辩材料图、讲稿和兜底方案见 `docs/demo/DEFENSE_MATERIALS.md`；Demo 验收步骤见 `docs/demo/DEMO_ACCEPTANCE_2026-05-11.md`.
+注意：当前前端不再使用旧 `TaskPanel` 和 `EvolutionPanel`；运行入口是 `RunsPanel`，能力入口拆分为 Tools、Skills、MCP。
 
-## 6. 运行测试
+## 7. 常用 API
 
 ```bash
-# 全部测试 (当前约 605 个用例)
-python3 -m pytest backend/tests/ -q
+# 健康检查
+curl http://127.0.0.1:8001/api/health
 
-# 单元测试
-python3 -m pytest backend/tests/unit/ -v
+# 创建 Agent Run
+curl -X POST http://127.0.0.1:8001/api/runs \
+  -H "Content-Type: application/json" \
+  -d '{"goal":"生成一个小型 Python CLI 项目","agent_name":"coder","auto_memory":false}'
 
-# 集成测试
-python3 -m pytest backend/tests/integration/ -v
+# 查询运行详情
+curl http://127.0.0.1:8001/api/runs/<run_id>
 
-# 基础设施验收（不依赖真实 LLM，需先启动后端）
-python3 tests/api_live_test.py --suite infra
-
-# 真实 LLM 冒烟验证（需先启动后端）
-python3 tests/api_live_test.py --suite smoke
-
-# 真实 LLM 全量 API 验证
-python3 tests/api_live_test.py
+# 查询运行事件流
+curl http://127.0.0.1:8001/api/runs/<run_id>/events
 ```
 
-Windows 终端如遇 emoji/编码问题，可先设置：
+## 8. 测试
+
+后端：
+
+```bash
+python -m pytest backend/tests/ -q
+```
+
+前端：
+
+```bash
+cd frontend
+npm run test
+npm run build
+```
+
+真实 API 冒烟：
+
+```bash
+python tests/api_live_test.py --suite infra
+python tests/api_live_test.py --suite smoke
+```
+
+Windows 终端遇到中文显示问题时可设置：
 
 ```powershell
 $env:PYTHONUTF8='1'
 $env:PYTHONIOENCODING='utf-8'
 ```
 
-## 核心架构
+## 9. 当前能力速览
 
-```
-用户 → 前端 (React) → WebSocket / REST → FastAPI
-                                            ↓
-                                    UnifiedBus (消息总线)
-                                    ↙    ↓    ↘
-                            Planner  Coder  Reviewer
-                               ↓       ↓       ↓
-                             计划  →  代码  →  审查 → 完成
-```
+- 15 个配置化 Agent，包括核心 assistant/planner/coder/reviewer、系统管理 Agent 和聊天室原生团队。
+- 22 个能力配置，包括代码解析、测试运行、文件读写、编辑、Web、Artifact、Agent 管理等。
+- Agent Run 多实例调度，支持 session/workspace/agent 维度隔离和 transcript 事件流。
+- Project 工作区导入、文件树、文本读取/编辑和 Agent 工具边界。
+- Tools / Skills / MCP 能力库装配与卸下。
+- 附件、Artifact、长期记忆、人格系统和可选全局访问密码。
 
-## 功能速览
-
-- ✅ 4 个专业智能体 (Assistant / Planner / Coder / Reviewer)
-- ✅ 统一消息总线 (发布订阅 / 请求响应 / 广播 / 优先级队列)
-- ✅ Agent Run 调度 (多 Agent / 会话 / 工作区实例 + transcript 事件流)
-- ✅ 长期记忆系统 (情景/语义/程序记忆 + 多信号加权检索)
-- ✅ 能力插件 (代码解析 / 静态分析 / 测试运行)
-- ✅ 上下文管理 (全局/会话/智能体三层作用域)
-- ✅ 31 个 REST API + WebSocket 实时通信
-- ✅ React 前端 (9 个面板)
-- ✅ ~605 个测试用例 (单元 + 集成)
-- ✅ YAML 配置体系 (4 个主配置文件 + 动态加载 + fallback)
-- ✅ 结构化日志 + 链路追踪
-
-## 更多文档
-
-- 架构详情 → `CLAUDE.md`
-- API 文档 → `docs/api.md`
-- 部署指南 → `docs/deployment.md`
-- 交接文档 → `HANDOFF.md`
+更多细节见 `README.md`、`AGENTS.md`、`docs/api.md`、`docs/architecture.md`。

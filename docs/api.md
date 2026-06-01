@@ -1,6 +1,29 @@
 ﻿# API 文档
 
-> 最后更新: 2026-05-05 | 基于 backend/src/api/routes/ 实际代码
+> 最后更新: 2026-06-02 | 基于 `backend/src/api/routes/` 实际代码与 `db26ae4..HEAD` 提交追溯
+
+## 当前 API 总览
+
+当前后端暴露约 98 个 route decorator，主入口如下：
+
+| 模块 | 关键端点 |
+|------|----------|
+| 健康与配置 | `GET /api/health`、`GET/POST /api/config`、`POST /api/config/models` |
+| Agent | `GET/POST /api/agents`、`GET/PUT/DELETE /api/agents/{name}`、`GET /api/agents/configs`、`GET /api/agents/{name}/config`、`POST /api/agents/{name}/invoke`、`POST /api/agents/{name}/mcp/import` |
+| 人格绑定 | `GET /api/agents/persona-bindings`、`PUT/DELETE /api/agents/persona-bindings/agents/{agent_name}`、`PUT/DELETE /api/agents/persona-bindings/sessions/{session_id}` |
+| Agent Run | `POST /api/runs`、`GET /api/runs`、`GET /api/runs/workspaces`、`GET /api/runs/{run_id}`、`GET /api/runs/{run_id}/events`、`GET /api/runs/{run_id}/memory-context`、`POST /api/runs/{run_id}/control`、`DELETE /api/runs/{run_id}` |
+| 任务兼容入口 | `POST /api/tasks`、`GET /api/tasks`、`GET /api/tasks/{task_id}`、`GET /api/tasks/{task_id}/transcript`、`DELETE /api/tasks/{task_id}` |
+| 工作区 | `GET /api/workspaces`、`POST /api/workspaces/import`、`GET/DELETE /api/workspaces/{workspace_id}`、`GET /api/workspaces/{workspace_id}/files`、`GET/PUT /api/workspaces/{workspace_id}/files/content` |
+| 聊天室 | `GET/POST /api/chatrooms`、`GET/PUT/DELETE /api/chatrooms/{room_id}`、`GET/POST /api/chatrooms/{room_id}/messages`、`POST /api/chatrooms/{room_id}/invoke`、`POST /api/chatrooms/{room_id}/cancel` |
+| 聊天会话 | `GET/POST /api/chat-sessions`、`GET/PUT/DELETE /api/chat-sessions/{session_id}`、`POST /api/chat-sessions/{session_id}/messages` |
+| 附件 | `GET/POST /api/attachments`、`GET /api/attachments/{attachment_id}`、`GET /api/attachments/{attachment_id}/content`、`DELETE /api/attachments/{attachment_id}` |
+| Artifact | `GET/POST /api/artifacts`、`GET /api/artifacts/{artifact_id}`、`GET /api/artifacts/{artifact_id}/content`、`GET /api/artifacts/{artifact_id}/download`、`GET /api/artifacts/{artifact_id}/open`、`DELETE /api/artifacts/{artifact_id}` |
+| 记忆 | `GET /api/memory/stats`、`GET /api/memory/list`、`POST /api/memory/search`、`POST /api/memory/create`、`GET/POST /api/memory/settings`、`PUT/DELETE /api/memory/{memory_id}`、`POST /api/memory/consolidate`、`POST /api/memory/forget` |
+| 能力库 | `GET /api/catalog/tools`、`GET /api/catalog/skills`、`GET /api/catalog/mcp`、`POST /api/catalog/{kind}/{name}/assemble`、`POST /api/catalog/{kind}/{name}/unassemble` |
+| 人格 | `GET/POST /api/personas`、`GET/PUT/DELETE /api/personas/{persona_id}`、`POST /api/personas/{persona_id}/restore`、`GET /api/personas/{persona_id}/versions`、`POST /api/personas/{persona_id}/rollback`、`GET/POST /api/personas/proposals*` |
+| 进化中心 | `GET /api/evolution/graph`、`GET /api/evolution/system-status`、`POST /api/evolution/command`、`GET/PUT /api/evolution/tool-prompts*`、`POST /api/evolution/dynamic-tools`、`POST /api/evolution/reload` |
+
+固定 Pipeline、`/api/pipelines/*`、`config/pipelines.yaml` 和旧 `TaskPanel` 已从现行生产路径移除；当前默认任务模型是 Agent Run。
 
 ## 基础信息
 
@@ -38,11 +61,13 @@
     "bus_running": true,
     "agent_loaded": true,
     "memory_initialized": true,
-    "agents_registered": 4,
+    "agents_registered": 15,
     "version": "0.3.0",
     "uptime": 123,
     "agents": {
-      "assistant": "idle"
+      "assistant": "idle",
+      "coder": "idle",
+      "facilitator": "idle"
     }
   }
 }
@@ -275,7 +300,7 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
 
 ### PUT /api/agents/{name}
 
-部分更新配置化 Agent，写入 `config/agents.yaml` 并热重载。支持字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`skills`、`mcp_servers`。传入 `"skills": null` 表示清除该 Agent 的 skills 配置。
+部分更新配置化 Agent，写入 `config/agents.yaml` 并热重载。支持字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`model`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。传入 `"skills": null` 表示清除该 Agent 的 skills 配置。响应会对 `llm.api_key` 脱敏，只返回 `api_key_set`。
 
 ### POST /api/agents/{name}/mcp/import
 
@@ -422,10 +447,10 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
   "data": [
     {
       "task_id": "uuid-xxx",
-      "status": "planning",
+      "status": "running",
       "requirement": "实现一个用户登录功能",
-      "created_at": "2026-03-25T10:00:00",
-      "updated_at": "2026-03-25T10:01:00"
+      "created_at": "2026-06-02T10:00:00",
+      "updated_at": "2026-06-02T10:01:00"
     }
   ]
 }
@@ -436,6 +461,10 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
 获取任务详情（包含状态、进度、最终输出、错误和 transcript 文件路径等运行信息）。
 
 **路径参数:** `task_id` — 任务 UUID
+
+### GET /api/tasks/{task_id}/transcript
+
+读取任务 transcript JSONL 事件流，支持 `offset` 查询参数。
 
 ### DELETE /api/tasks/{task_id}
 
@@ -458,14 +487,18 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
   "workspace_id": "algo-demo",
   "mode": "autonomous",
   "strategy": "agent_decides",
+  "max_iterations": 50,
+  "completion_criteria": "代码已写入工作区并说明验证方式",
+  "auto_memory": true,
   "input": {}
 }
 ```
 
 说明:
 - `agent_name` 默认 `assistant`。
-- `workspace_id` 为空时系统会自动创建 `run-` 前缀工作区。
+- `workspace_id` 为空时，解析顺序为：会话绑定工作区 > Agent 默认工作区 > Agent 默认工作区根目录 > 自动 `run-` 前缀工作区。
 - `strategy=agent_decides` 表示调度层不假定固定步骤，由 Agent 自主决定工具调用和下一步动作。
+- `auto_memory=true` 时会在运行前召回长期记忆，结束后安排后台反思；请求体里伪造的 `memory_context` 会被忽略。
 
 **响应:**
 ```json
@@ -500,8 +533,14 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
 控制运行。当前支持:
 
 ```json
-{ "action": "cancel" }
+{ "action": "pause" }
 ```
+
+`action` 可取 `pause`、`resume`、`cancel`。
+
+### GET /api/runs/{run_id}/memory-context
+
+返回该运行目标可召回的记忆上下文和检索解释，支持 `max_results` 查询参数。该接口用于运行详情页展示“为什么这个 Run 看到了这些记忆”，不会接受前端伪造的 `memory_context`。
 
 ### DELETE /api/runs/{run_id}
 
@@ -629,8 +668,8 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
   "status": "ok",
   "data": {
     "summary": {
-      "agents": 4,
-      "tools": 8,
+      "agents": 15,
+      "tools": 22,
       "dynamic_tools": 1,
       "edges": 12,
       "master_agent": "assistant"
@@ -671,8 +710,8 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
     "overview": {
       "system_name": "Multi-Agent Code System",
       "readiness": "ready",
-      "agent_count": 6,
-      "tool_count": 14,
+      "agent_count": 15,
+      "tool_count": 22,
       "run_count": 3,
       "model": "openai / gpt-3.5-turbo"
     },
@@ -682,11 +721,11 @@ MCP server 不应注册代理工具；已注册的 MCP proxy tool 名称必须�
         "title": "Assistants / Agents",
         "status": "healthy",
         "summary": "assistant 是协作入口之一；planner/coder/reviewer/creator 等 Agent 共同构成运行时。",
-        "metrics": { "total": 6, "idle": 6 },
+        "metrics": { "total": 15, "idle": 15 },
         "items": []
       }
     ],
-    "graph": { "summary": { "agents": 6, "tools": 14 } }
+    "graph": { "summary": { "agents": 15, "tools": 22 } }
   }
 }
 ```
@@ -801,7 +840,7 @@ ws://localhost:8001/ws
     "response": "AI 的回复内容",
     "memories_used": 2
   },
-  "timestamp": "2026-03-25T10:00:00"
+  "timestamp": "2026-06-02T10:00:00"
 }
 ```
 
@@ -884,12 +923,13 @@ Agent 工具 `create_frontend_artifact` 会返回同样的元数据，前端会�
 
 ## 人格迭代工具与智能体
 
-`persona_evolution` Agent 挂载受控管理工具 `manage_persona_definition`、`manage_persona_binding`，以及审核式迭代工具 `read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。
+`persona_evolution` Agent 挂载受控管理工具 `manage_persona_definition`、`manage_persona_binding`，直接更新工具 `update_persona`，以及历史/审核式迭代工具 `read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。
 
 - `manage_persona_definition`：`list|get|create|update|archive|delete|restore`，其中 `delete` 等价于安全归档。
 - `manage_persona_binding`：`list|resolve|bind_agent|unbind_agent|bind_session|unbind_session`。
+- `update_persona`：A10 之后的默认更新路径，接收 `persona_id + patch`，调用即生效并自动生成版本，审计走 `config_change` 日志和 git 追溯。
 
-所有写入/绑定工具必须显式 `admin_approved=true` 和 `reviewer`，配置 `PERSONA_ADMIN_TOKEN` 时还需要匹配 token。普通 Assistant 遇到 Persona 创建、编辑、禁用或绑定诉求时应委派 `persona_evolution`，不要用 `agent_creator` 创建一个语气 Agent 来替代 Persona。
+`manage_persona_definition` / `manage_persona_binding` 的写入类 operation 仍要求显式 `admin_approved=true` 和 `reviewer`，配置 `PERSONA_ADMIN_TOKEN` 时还需要匹配 token。`update_persona` 不再要求这些审批字段。普通 Assistant 遇到 Persona 创建、编辑、禁用或绑定诉求时应委派 `persona_evolution`，不要用 `agent_creator` 创建一个语气 Agent 来替代 Persona。
 
 ---
 
@@ -940,6 +980,7 @@ WebSocket 监控事件 `agent_run_started`、`agent_run_event`、`agent_run_comp
 - `GET /api/workspaces`：列出已导入的 Project 工作区。
 - `POST /api/workspaces/import`：multipart 上传 zip，字段 `file` 必填，`name`、`description` 可选。
 - `GET /api/workspaces/{workspace_id}`：获取工作区详情，可通过 `include_files`、`depth`、`limit` 控制文件摘要。
+- `DELETE /api/workspaces/{workspace_id}`：删除受管理工作区记录和对应目录。
 - `GET /api/workspaces/{workspace_id}/files?path=`：列出工作区内相对路径下的文件。
 - `GET /api/workspaces/{workspace_id}/files/content?path=`：读取工作区内文本文件。
 - `PUT /api/workspaces/{workspace_id}/files/content`：保存工作区内文本文件，body 为 `path`、`content`、`encoding`。
@@ -961,7 +1002,6 @@ WebSocket 监控事件 `agent_run_started`、`agent_run_event`、`agent_run_comp
 
 - `read_agent_config`：读取 Agent 配置，密钥只返回 `api_key_set`。
 - `validate_agent_config_patch`：校验字段白名单、高风险工具、MCP、模型和工作区字段，不写入。
-- `propose_agent_config_patch`：生成字段级补丁预览和风险说明，不写入、不生效。
-- `apply_agent_config_patch`：要求 `admin_approved=true`、`reviewer` 非空；若配置 `AGENT_MANAGER_ADMIN_TOKEN`，还要求 `admin_token` 匹配。热重载失败会回滚。
+- `update_agent_config`：A10 之后替代旧 propose/apply 两段式流程，合并字段级 patch 到目标 Agent，调用即生效并触发热重载；热重载失败会回滚。
 
-允许修改的字段仅限：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。高风险工具 `bash`、`write_file`、`create_agent_config`、`create_dynamic_tool_config`、`dispatch_agent` 默认拒绝写入，除非显式传入 `allow_high_risk_tools=true`。MCP 配置保存后，配置视图无运行态时状态为 `configured_pending_runtime`；运行时会为启用的 stdio server 注册 Agent 作用域代理工具，并进入 `proxy_available`、`partial` 或 `adapter_unavailable` 等运行态。
+允许修改的字段仅限：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。管理工具本身只能挂到 `agent_manager`；高风险工具治理由字段校验和 `system.yaml` 风险策略兜底。MCP 配置保存后，配置视图无运行态时状态为 `configured_pending_runtime`；运行时会为启用的 stdio server 注册 Agent 作用域代理工具，并进入 `proxy_available`、`partial` 或 `adapter_unavailable` 等运行态。

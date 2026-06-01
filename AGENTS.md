@@ -1,7 +1,7 @@
 ﻿# 基于多智能体协作的自动化代码生成与审查系统 — 架构设计文档
 
-**版本**: v2.6 (Pipeline 移除后)
-**日期**: 2026-05-05
+**版本**: v2.7 (README/工作区/聊天室/能力库同步后)
+**日期**: 2026-06-02
 **作者**: 黄宇鑫
 
 > 本文档面向后续 AI 和开发者，完整描述系统架构、模块关系和开发规范。
@@ -25,27 +25,30 @@
 |------|----------|------|
 | 统一消息总线 (UnifiedBus) | ✅ 已实现 | 优先级队列、消息历史、运行指标、向后兼容 SimpleBus |
 | Agent Run 监控事件 | ✅ 已实现 | 运行进展通过 UnifiedBus 广播到前端监控 |
-| 4 个专业智能体 | ✅ 已实现 | Assistant / Planner / Coder / Reviewer |
+| 15 个配置化智能体 | ✅ 已实现 | 核心 Agent + 系统管理 Agent + 聊天室原生协作团队 |
 | 长期记忆系统 | ✅ 已实现 | 默认 ChromaDB 持久化，自动对话反思生成，检索注入，InMemory 降级 |
 | Agent Run 调度 | ✅ 已实现 | 多 Agent / 会话 / 工作区实例，transcript 事件流 |
-| 能力插件系统 | ✅ 已实现 | CodeParser + StaticAnalyzer + TestRunner |
+| 能力插件系统 | ✅ 已实现 | 22 个 YAML 能力 + Python Capability + Agent-as-Tool + 动态 Tool |
 | YAML 配置体系 | ✅ 已实现 | config/ 目录主配置，动态加载，fallback 机制 |
 | 前后端分离 | ✅ 已实现 | FastAPI + React/TypeScript + WebSocket |
-| MCP 集成 | ❌ 预留接口 | CapabilityRegistry 预留了 MCP 类型支持 |
+| Project 工作区 | ✅ 已实现 | zip 导入、文件树、文本读写、Run/Session/Agent 绑定 |
+| 聊天室协作团队 | ✅ 已实现 | facilitator + 6 个协作角色，支持目标/Todo/派发/取消 |
+| 能力库 Catalog | ✅ 已实现 | Tools / Skills / MCP 模板浏览、装配、卸下 |
+| MCP 集成 | ✅ 部分实现 | Agent-scoped 配置、stdio adapter、模板库；默认未启用 server |
 | 消息持久化 | ❌ 预留接口 | 当前仅内存队列 |
 
 ### 1.3 项目统计
 
 | 指标 | 数值 |
 |------|------|
-| Python 源文件 | 82 个 |
-| 前端 TS/TSX 文件 | 16 个 |
-| 前端 CSS 文件 | 11 个 |
-| 后端代码行数 | ~8,300 行 |
-| 前端代码行数 | ~5,100 行 (TS+CSS) |
-| 测试用例 | ~605 个 |
-| 测试代码行数 | ~4,900 行 |
-| YAML 配置文件 | 4 个主配置 (config/) + 1 个运行时配置 (src/config.yaml) |
+| 后端 Python 源文件 | 118 个 |
+| 后端测试文件 | 73 个 |
+| 前端 TS/TSX 文件 | 30 个 |
+| 前端 CSS 文件 | 21 个 |
+| Agent 配置 | 15 个 |
+| Capability 配置 | 22 个 |
+| 本地 Skill | 12 个 |
+| YAML 配置文件 | 4 个主配置 (agents/capabilities/mcp_servers/system) + 1 个运行时配置 (src/config.yaml) |
 
 ---
 
@@ -63,9 +66,10 @@ agentic-system/
 ├── example_simple.py                   # 独立演示脚本
 │
 ├── config/                             # ★ YAML 配置目录 (被 config.py 动态加载)
-│   ├── agents.yaml                     #   智能体定义
-│   ├── capabilities.yaml               #   能力插件
-│   └── system.yaml                     #   全局系统配置 (LLM/Bus/Memory 等)
+│   ├── agents.yaml                     #   15 个 Agent 定义
+│   ├── capabilities.yaml               #   22 个能力插件
+│   ├── mcp_servers.yaml                #   MCP 模板库 (filesystem/git/fetch/sqlite)
+│   └── system.yaml                     #   全局系统配置 (LLM/Bus/Memory/Auth/Tools 等)
 │
 ├── backend/
 │   ├── requirements.txt                # Python 依赖清单
@@ -78,12 +82,20 @@ agentic-system/
 │   │   │   ├── main.py                 #   ★ 应用入口 (lifespan + 动态加载)
 │   │   │   ├── dependencies.py         #   依赖注入 (全局状态容器)
 │   │   │   ├── schemas.py              #   Pydantic 请求/响应 Schema
-│   │   │   ├── routes/                 #   路由模块 (5 个)
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── agents.py           #     GET/POST /api/agents/*
-│   │   │   │   ├── tasks.py            #     GET/POST/DELETE /api/tasks/*
-│   │   │   │   ├── memory.py           #     GET/POST/DELETE /api/memory/*
-│   │   │   │   └── config.py           #     GET/POST /api/config + /api/health
+│   │   │   ├── middleware/auth.py      #   可选全局访问密码门禁
+│   │   │   ├── routes/                 #   路由模块
+│   │   │   │   ├── agents.py           #     Agent 配置 / invoke / persona binding / MCP import
+│   │   │   │   ├── tasks.py            #     /api/tasks + /api/runs
+│   │   │   │   ├── memory.py           #     记忆 CRUD / 搜索 / 设置 / 巩固 / 遗忘
+│   │   │   │   ├── config.py           #     配置 + /api/health + 模型列表
+│   │   │   │   ├── workspaces.py       #     Project 工作区导入 / 文件树 / 文本读写
+│   │   │   │   ├── chatrooms.py        #     多 Agent 聊天室
+│   │   │   │   ├── chat_sessions.py    #     聊天会话
+│   │   │   │   ├── attachments.py      #     附件上传 / 读取 / 删除
+│   │   │   │   ├── artifacts.py        #     Artifact 创建 / 预览 / 下载 / 打开
+│   │   │   │   ├── catalog.py          #     Tools / Skills / MCP 能力库装配
+│   │   │   │   ├── personas.py         #     人格定义 / 版本 / 建议 / 兼容绑定
+│   │   │   │   └── evolution.py        #     系统状态 / 进化指令 / Tool prompt
 │   │   │   └── websocket/
 │   │   │       ├── __init__.py
 │   │   │       └── handlers.py         #   WebSocket 连接管理 + 定向回复/监控广播
@@ -111,7 +123,13 @@ agentic-system/
 │   │   │   │   ├── native.py           #     ★ 内置能力 (3 个)
 │   │   │   │   └── registry.py         #     CapabilityRegistry
 │   │   │   ├── context/store.py        #   上下文管理 (三层作用域)
-│   │   │   ├── task/                   #   Agent Run / 任务状态
+│   │   │   ├── task/                   #   Agent Run / 任务状态 / transcript
+│   │   │   ├── workspace.py            #   Project 工作区
+│   │   │   ├── chatroom.py             #   聊天室存储
+│   │   │   ├── chatroom_orchestrator.py#   聊天室调度
+│   │   │   ├── artifacts.py            #   Artifact 存储
+│   │   │   ├── attachment*.py          #   附件与工作区 materialization
+│   │   │   ├── mcp*.py                 #   MCP 配置 / adapter / import
 │   │   │   └── llm/                    #   LLM 客户端
 │   │   │       ├── base.py / factory.py
 │   │   │       ├── openai_client.py
@@ -124,13 +142,11 @@ agentic-system/
 │   │   │
 │   │   └── utils/                     # 工具 (logger.py + tracer.py)
 │   │
-│   └── tests/                         # 测试 (~605 用例)
-│       ├── unit/ (10 个)
-│       └── integration/ (2 个)
+│   └── tests/                         # 测试 (unit + integration)
 │
 ├── frontend/                          # React + TypeScript + Vite
 │   └── src/
-│       ├── components/ (9 个面板)
+│       ├── components/                 # Overview/Chat/Chatroom/Workspace/Agents/Runs 等工作台组件
 │       ├── hooks/useWebSocket.ts
 │       ├── store/appStore.tsx
 │       ├── api/client.ts
@@ -145,6 +161,8 @@ agentic-system/
 │   └── deployment.md
 │
 └── examples/                          # 示例目录
+├── skills/                            # 本地 Skill 库
+└── workspace/                         # 本地运行产物 (git ignored)
 ```
 
 ---
@@ -166,7 +184,7 @@ agentic-system/
 Agent Run  记忆系统   上下文管理   能力注册中心
     │
     ▼
-智能体层 (4 个 Agent，通过 AgentRegistry 管理)
+智能体层 (15 个配置化 Agent，通过 AgentRegistry 管理)
     │
     ▼
 LLM 客户端层 (OpenAI / Anthropic)
@@ -261,14 +279,13 @@ Agent 启动上下文并做降级提示，状态为 `configured_pending_runtime`
 - `emit(event_type, data)` — 发射事件到总线
 - `get_metadata()` — 返回元数据
 
-**4 个实现:**
+**当前 15 个配置化 Agent:**
 
-| Agent | 输入 | 输出 | 发射事件 |
-|-------|------|------|----------|
-| AssistantAgent | user_message | LLM 回复 + 记忆上下文 | assistant_completed |
-| PlannerAgent | requirement | 结构化子任务计划 (JSON) | plan_created |
-| CoderAgent | task/plan | 代码 + 文件路径 + 说明 (JSON) | code_generated |
-| ReviewerAgent | code | 六维度审查报告 (JSON) | review_passed / review_failed |
+| 分组 | Agent |
+|------|-------|
+| 核心协作 | assistant / planner / coder / reviewer |
+| 系统进化与管理 | tool_creator / agent_creator / agent_manager / persona_evolution |
+| 聊天室原生团队 | facilitator / chat_planner / chat_coder / chat_reviewer / researcher / critic / scribe |
 
 **标准事件链:**
 ```
@@ -358,8 +375,9 @@ agent_progress/agent_done/agent_error → UnifiedBus → WebSocket 广播
 | 文件 | 顶层键 | 作用 |
 |------|--------|------|
 | `system.yaml` | 直接合并到顶层 | 全局配置 (LLM/Bus/Memory/Server 等；Memory 默认 chroma + ./data/chroma) |
-| `agents.yaml` | `agents` (列表) | 4 个 Agent 定义 |
-| `capabilities.yaml` | `capabilities` (列表) | 2 个原生能力 (MCP/OpenAPI 预留) |
+| `agents.yaml` | `agents` (列表) | 15 个 Agent 定义，含 Tools/Skills/MCP/默认工作区 |
+| `capabilities.yaml` | `capabilities` (列表) | 22 个能力配置 |
+| `mcp_servers.yaml` | `mcp_servers` (列表) | 4 个 stdio MCP 模板，默认 disabled |
 
 ### 4.3 加载机制
 
@@ -489,17 +507,26 @@ _CAPABILITY_CLASS_MAP = {
 
 **状态管理:** `useReducer` + React Context (`AppProvider`)
 
-**8 个面板组件:**
+**当前工作台页面/组件:**
 
 | 组件 | 功能 |
 |------|------|
 | `Sidebar` | 侧边栏导航 |
-| `ChatPanel` | 聊天对话 (用户/AI 消息气泡，记忆使用指示) |
-| `AgentPanel` | Agent 状态查看、直接调用 |
-| `TaskPanel` | 任务提交、列表、状态跟踪 |
+| `Topbar` | 页面标题、工作区选择器、实时通道状态 |
+| `OverviewPanel` | 后端健康、运行状态、最近事件总览 |
+| `ChatPanel` | 会话化聊天、附件、工作区绑定、工具/产物展示 |
+| `ChatroomPanel` | 多 Agent 聊天室、host、目标、Todo、@ 成员协作 |
+| `WorkspacePanel` | zip 导入、工作区管理、文件树、文本读写 |
+| `AgentPanel` | Agent 配置、模型、Tools、Skills、MCP、默认工作区 |
+| `RunsPanel` | Agent Run 创建、筛选、详情、Process View、raw events、取消 |
 | `MemoryPanel` | 记忆统计/列表/搜索/创建/删除/设置/遗忘周期 |
 | `MonitorPanel` | 系统监控 (连接状态、按 Agent 聚合的运行进展、事件流) |
-| `Settings` | LLM 配置面板 (热重载) |
+| `ToolsPanel` | Tool 能力库装配/卸下 |
+| `SkillsPanel` | Skill 能力库与 Agent Skills 配置 |
+| `McpPanel` | MCP 模板库与 Agent MCP 配置 |
+| `PersonaPanel` | 人格定义、版本、绑定、建议审核 |
+| `LoginPage` | 可选全局访问密码门禁 |
+| `Settings` | LLM/工具配置面板 (热重载) |
 
 ---
 
@@ -521,7 +548,7 @@ _CAPABILITY_CLASS_MAP = {
 ### Phase 3: 前后端集成 ✅
 - [x] FastAPI 应用 (路由拆分 + 依赖注入)
 - [x] WebSocket 实时通信 (连接管理 + 广播)
-- [x] React + TypeScript 前端 (8 个面板)
+- [x] React + TypeScript 前端工作台
 - [x] 配置 API + 热重载
 
 ### Phase 4: 记忆系统 ✅
@@ -546,14 +573,13 @@ _CAPABILITY_CLASS_MAP = {
 - [x] Agent Run 调度 (多实例 + transcript)
 - [x] UnifiedBus 替换 SimpleBus
 - [x] YAML 配置体系
-- [x] 前端 TaskPanel + MonitorPanel
-- [ ] MCP 客户端集成 (预留接口)
+- [x] 前端 RunsPanel + MonitorPanel + Workspace/Chatroom/Catalog 面板
+- [x] MCP Agent-scoped 配置与 stdio adapter (模板默认禁用)
 - [ ] 消息持久化 (预留接口)
 
 ### Phase 7: 测试与文档 ✅
-- [x] 单元测试 (10 个模块)
-- [x] 集成测试 (Agent 流水线 + API 端点)
-- [x] 总计 ~331 个测试用例 (12 个测试文件)
+- [x] 单元测试与集成测试持续扩展
+- [x] 后端测试文件 73 个，前端契约/逻辑测试已接入 npm test
 - [x] 文档完善 (AGENTS.md / README / QUICKSTART / docs/)
 - [ ] 性能优化 (预留)
 
@@ -674,8 +700,8 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 ---
 
-**文档状态**: v2.1 — 基于实际代码审计
-**最后更新**: 2026-04-23
+**文档状态**: v2.7 — 基于 `db26ae4..HEAD` 提交追溯同步
+**最后更新**: 2026-06-02
 
 ---
 
@@ -703,14 +729,15 @@ find . -type f -name "*.py" -o -name "*.ts" -o -name "*.tsx" | grep -v node_modu
 
 ### 11.4 自我迭代审核流程
 
-对话反馈、管理员指令或反思摘要可调用 `/api/personas/{id}/proposals` 生成人格迭代建议。建议记录包含 `persona_id`、`source/session/message/reflection`、`proposal_text`、`diff`、`summary`、`status`、`reviewer`、`review_time`。建议只能进入 `pending`，禁止自动覆盖人格正文。管理员通过 `/api/personas/proposals/{proposal_id}/approve` 且显式 `admin_approved=true` 后，系统才合并补丁并生成新版本；也可拒绝或回滚旧版本。
+对话反馈、管理员指令或反思摘要仍可调用 `/api/personas/{id}/proposals` 生成人格迭代建议。建议记录包含 `persona_id`、`source/session/message/reflection`、`proposal_text`、`diff`、`summary`、`status`、`reviewer`、`review_time`。这组 REST proposal API 保留为审核/历史归档通道，批准前不会覆盖人格正文；管理员通过 `/api/personas/proposals/{proposal_id}/approve` 且显式 `admin_approved=true` 后才会按 proposal 生成新版本，也可拒绝或回滚旧版本。
 
-新增 `persona_evolution` 智能体，专责读取/管理人格、记录反馈/观察、生成 pending 补丁建议、查看补丁历史，并且只在显式管理员确认后调用写入工具。它暴露两类工具：
+新增 `persona_evolution` 智能体，专责读取/管理人格、记录反馈/观察、按需生成 pending 补丁建议、查看补丁历史，并在当前 A10 运行模型下优先使用 `update_persona(persona_id, patch)` 直接更新人格。`update_persona` 调用即生效、自动生成版本，并通过 `config_change` 日志 + git 追溯审计。它暴露三类工具：
 
 - 受控管理工具：`manage_persona_definition` 支持 list/get/create/update/archive/delete/restore（delete 等价于安全归档）；`manage_persona_binding` 支持 list/resolve/bind_agent/unbind_agent/bind_session/unbind_session。
-- 审核式迭代工具：`read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。
+- 直接更新工具：`update_persona` 支持 name / description / persona_prompt / style_rules / behavior_rules / permission_boundary / status 字段级 patch。
+- 历史/审核工具：`read_persona_definition`、`record_persona_feedback`、`generate_persona_patch_proposal`、`apply_confirmed_persona_patch`、`list_persona_patch_history`。旧 proposal 数据保留可查，新流程不再强制走 propose+approve。
 
-所有 Persona 写入/绑定工具必须收到 `admin_approved=true` 和 `reviewer`，若配置 `PERSONA_ADMIN_TOKEN` 还必须提供匹配 token。普通 Agent 不直接挂载这些写入工具；Assistant 遇到人格创建、编辑、归档或绑定需求时应委派 `persona_evolution`，不要误用 `agent_creator` 创建 Agent。
+`manage_persona_definition` / `manage_persona_binding` 的写入类 operation 仍要求 `admin_approved=true` 和 `reviewer`，若配置 `PERSONA_ADMIN_TOKEN` 还必须提供匹配 token；`update_persona` 是 A10 之后的直接更新路径，不再要求这些审批字段。普通 Agent 不直接挂载这些写入工具；Assistant 遇到人格创建、编辑、归档或绑定需求时应委派 `persona_evolution`，不要误用 `agent_creator` 创建 Agent。
 
 ### 11.5 绑定职责与前端入口
 
@@ -829,23 +856,22 @@ Project 文件属于用户上传资料，不是系统指令。Agent 的 system p
 
 ### 16.1 定位
 
-`agent_manager` 是系统内用于管理既有 Agent 的受控智能体。它不是任意写配置后门，只能读取、校验和在管理员显式批准后维护 `config/agents.yaml` 中指定 Agent 的白名单字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。
+`agent_manager` 是系统内用于管理既有 Agent 的受控智能体。它不是任意写配置后门，只能读取、校验和维护 `config/agents.yaml` 中指定 Agent 的白名单字段：`description`、`system_prompt`、`tools`、`output_format`、`max_iterations`、`llm`、`skills`、`mcp_servers`、`default_workspace_id`、`default_workspace_root`。当前 A10 运行模型中，写入由 `update_agent_config` 直接完成并热重载，不再要求 `admin_approved` / `reviewer` / `admin_token`；审计依赖 `config_change` 日志和 git diff/commit。
 
 新增 Agent 仍由 `agent_creator` 负责；Persona/personality 仍由 `persona_evolution` 负责。Assistant 遇到现有 Agent 的提示词优化、模型切换、Tools/Skills/MCP 挂载或默认工作区配置调整时，应委派 `agent_manager`。
 
 ### 16.2 受控工具链
 
-`agent_manager` 只挂载四个工具：
+`agent_manager` 只挂载三个工具：
 
 - `read_agent_config`：只读列出或读取 Agent 配置，返回时隐藏 `llm.api_key`，只暴露 `api_key_set`。
 - `validate_agent_config_patch`：只读校验字段白名单、高风险工具、模型参数、MCP 配置和工作区字段。
-- `propose_agent_config_patch`：生成字段级补丁预览和风险说明，不写入文件，不会生效。
-- `apply_agent_config_patch`：仅在 `admin_approved=true`、`reviewer` 非空且可选 `AGENT_MANAGER_ADMIN_TOKEN` 匹配时写入；热重载失败会回滚 `agents.yaml`。
+- `update_agent_config`：合并字段级 patch 到目标 Agent，调用即生效并触发热重载；热重载失败会回滚 `agents.yaml`。
 
-高风险工具 `bash`、`write_file`、`create_agent_config`、`create_dynamic_tool_config`、`dispatch_agent` 默认禁止写入到 Agent tools；只有管理员明确传入 `allow_high_risk_tools=true` 时才允许。MCP server 由所属 Agent 独占；运行时只为启用的 stdio server 注册 Agent 作用域代理工具，禁用 server 不得注册工具，状态只能在 `configured_pending_runtime`、`proxy_available`、`partial`、`adapter_unavailable` 等可解释状态中更新。
+高风险工具治理已下沉到配置校验与 `system.yaml` 风险策略：`update_agent_config` 会做字段白名单、MCP、模型、工作区和管理工具挂载校验。MCP server 由所属 Agent 独占；运行时只为启用的 stdio server 注册 Agent 作用域代理工具，禁用 server 不得注册工具，状态只能在 `configured_pending_runtime`、`proxy_available`、`partial`、`adapter_unavailable` 等可解释状态中更新。
 
 ### 16.3 安全与生效
 
 Agent 独立模型配置支持 `llm.provider/model/base_url/temperature/top_p/max_tokens/stop_sequences/reasoning_effort/openai/anthropic/api_key`。读取和返回结果永不明文返回 `api_key`；写入时 `********`、`••••••••` 等掩码值不会覆盖已有密钥。
 
-`agent_manager` 本身属于关键系统 Agent，管理页不应删除它。普通 Agent 不直接挂载 Agent 配置写入工具；只有 `assistant` 可委派 `agent_manager`，而 `agent_manager` 再按审批边界调用受控工具。
+`agent_manager` 本身属于关键系统 Agent，管理页不应删除它。普通 Agent 不直接挂载 Agent 配置写入工具；只有 `assistant` 可委派 `agent_manager`，而 `agent_manager` 再按白名单边界调用受控工具。

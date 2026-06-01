@@ -1,141 +1,196 @@
 # 基于多智能体协作的自动化代码生成与审查系统
 
 > 本科毕业设计项目 | 2026 届
+> 文档同步时间: 2026-06-02
+> 本 README 已按 `db26ae4..HEAD` 提交追溯同步，覆盖 Agent Run、项目工作区、聊天室协作团队、能力库、MCP、附件、Artifact、认证与最新前端工作台。
 
 ## 项目简介
 
-本系统采用**统一消息总线 + Agent Run 多实例调度的多智能体协作架构**，实现从需求分析到代码生成再到自动审查的全流程自动化。系统包含助手、规划、编码、审查等核心智能体，通过统一能力注册表互相协作，支持按 Agent、会话、工作区维度创建独立运行实例，并配备长期记忆系统（情景/语义/程序三种记忆类型）。
+本系统是一个事件驱动的多智能体协作平台，面向“需求分析、代码生成、自动审查、运行观测、能力扩展”的完整流程。后端使用 FastAPI + asyncio，前端使用 React + TypeScript + Vite。系统通过统一消息总线、配置化 Agent、工具能力注册表、长期记忆、项目工作区和 transcript 事件流，把一次用户需求组织成可观察、可回放、可审查的 Agent Run。
 
-前后端分离设计：后端基于 FastAPI + Python asyncio，前端基于 React + TypeScript + Vite，通过 REST API 和 WebSocket 实时通信。
+当前系统已经从早期固定 Pipeline 迁移为 **Agent Run 多实例调度模型**：每次运行都有独立 `run_id/task_id`、`agent_name`、`session_id`、`workspace_id`、目标、状态、进度、输出和事件流。调度层不再写死 plan -> code -> review 步骤，而是让 Agent 根据上下文与工具反馈自主推进。
 
-## 核心特色：可进化私人助理
+## 当前核心能力
 
-本项目的差异化定位不是单个固定聊天机器人，而是一个**可进化的私人助理运行时**：
+### 1. Agent Run 多实例调度
 
-- **主 Agent 调度子 Agent**：`assistant` 是主控 Agent，`planner`、`coder`、`reviewer` 等子 Agent 会被包装成标准 Tool，主 Agent 可按需委派任务。
-- **Agent 即能力**：系统通过 `AgentCapability` 将任意 Agent 注册到统一能力注册表，因此主 Agent 可以把其他 Agent 当作标准能力委派。
-- **运行时装载新 Tool**：新增 `DynamicToolCapability`，支持 `template`、`checklist`、`regex_extract` 三种安全动态工具，可通过 API/前端创建，无需写 Python 插件。
-- **能力热挂载**：动态 Tool 创建后可立即挂载到 `assistant` 或其他 Agent，并触发 Agent 热重载。
-- **Tool 提示词可视化配置**：网页可直接修改暴露给 LLM 的 Tool 提示词，JSON Schema 只读，避免误改工具入参协议。
-- **进化中心可视化**：前端新增“进化中心”，展示 Agent-Tool 能力网络、主 Agent 委派关系、动态 Tool 库和子 Agent 创建入口。
+- `POST /api/runs` 创建自主运行实例，`POST /api/tasks` 作为兼容便捷入口。
+- 每个 Run 可绑定 Agent、Session、Project 工作区和长期记忆召回开关。
+- transcript 以 JSONL 记录 `created`、`started`、`thinking`、`tool_call`、`tool_result`、`done`、`error` 等事件。
+- 前端“运行”页面可查看 run 状态、进度、工具调用、最终输出和事件流。
+- 支持取消控制，终态为 `completed`、`failed` 或 `killed`。
 
----
+### 2. 15 个配置化 Agent
 
-## 技术栈
+Agent 不再依赖 `backend/src/agents/` 里的硬编码类，而是由 `config/agents.yaml` 配置生成，并通过统一能力注册表暴露为可调用能力。
 
-| 分类 | 技术 | 版本 |
-|------|------|------|
-| **后端框架** | FastAPI | ≥ 0.100 |
-| **ASGI 服务器** | Uvicorn | ≥ 0.20 |
-| **数据验证** | Pydantic | ≥ 2.0 |
-| **LLM - OpenAI** | openai SDK | ≥ 1.0 |
-| **LLM - Anthropic** | anthropic SDK | ≥ 0.20 |
-| **配置管理** | PyYAML | ≥ 6.0 |
-| **日志** | structlog | ≥ 23.0 |
-| **向量数据库** | ChromaDB | 可选 |
-| **前端框架** | React | 18.x |
-| **前端语言** | TypeScript | 5.3+ |
-| **构建工具** | Vite | 5.x |
-| **运行时** | Python 3.10+ / Node.js 18+ | |
+| 分组 | Agent |
+|------|-------|
+| 核心协作 | `assistant`、`planner`、`coder`、`reviewer` |
+| 系统进化与管理 | `tool_creator`、`agent_creator`、`agent_manager`、`persona_evolution` |
+| 聊天室原生团队 | `facilitator`、`chat_planner`、`chat_coder`、`chat_reviewer`、`researcher`、`critic`、`scribe` |
 
----
+`assistant` 负责对话协调与委派；`coder` 可通过 `write_file`、`edit_file`、`read_file` 等工具在工作区真实落盘；`reviewer` 负责六维度审查；`agent_manager` 通过白名单字段维护既有 Agent 的模型、Tools、Skills、MCP 和默认工作区配置，调用 `update_agent_config` 后直接热重载，审计依赖 `config_change` 日志和 git 追溯。
 
-## 项目结构
+### 3. 聊天室协作团队
+
+系统新增原生 Chatroom 模型，用来展示多 Agent 团队协作：
+
+- `facilitator` 作为默认主持人，负责拆解目标、组织发言和收敛结论。
+- `chat_planner`、`chat_coder`、`chat_reviewer`、`researcher`、`critic`、`scribe` 分别承担规划、实现、审查、研究、质疑和记录职责。
+- 支持聊天室目标、待办、邀请、发言派发、取消 in-flight 发言任务。
+- 聊天室可绑定 Project 工作区，Agent 文件工具会落到该工作区内。
+
+这部分适合答辩现场展示“多智能体协作”本身，而不只是展示单个聊天机器人。
+
+### 4. 项目工作区与文件安全边界
+
+系统提供受管理的 Project 工作区：
+
+- `POST /api/workspaces/import` 上传 zip 并导入到 `workspace/projects/{workspace_id}/`。
+- `GET /api/workspaces`、`GET /api/workspaces/{id}`、`GET /api/workspaces/{id}/files` 查看工作区和文件树。
+- `GET/PUT /api/workspaces/{id}/files/content` 读取或保存工作区内文本文件。
+- Agent Run 的工作区优先级为：请求 `workspace_id` > 会话绑定 > Agent 默认工作区 > 自动 `workspace/runs/run-*`。
+- 外部请求不能直接传可信 `workspace_root`，只通过后端解析出的工作区边界注入 Agent。
+
+文件工具、附件 materialization、Artifact 和任务 transcript 都默认落在项目根目录下的 `./workspace`。
+
+### 5. 能力库、Tools、Skills 与 MCP
+
+当前 `config/capabilities.yaml` 注册 22 个能力：
+
+| 类型 | 能力 |
+|------|------|
+| 代码与质量 | `code_parser`、`static_analyzer`、`test_runner` |
+| 常用工具 | `memory_search`、`datetime_tool`、`calculator`、`web_fetch`、`web_search`、`json_tool`、`text_processor` |
+| 文件与执行 | `file_search`、`read_file`、`write_file`、`edit_file`、`bash` |
+| 生成与产物 | `create_frontend_artifact`、`requirement_checklist` |
+| 系统进化 | `create_dynamic_tool_config`、`create_agent_config`、`read_agent_config`、`validate_agent_config_patch`、`update_agent_config` |
+
+能力库 Catalog 已覆盖 Tools、Skills、MCP 三类资源：
+
+- `GET /api/catalog/tools`、`GET /api/catalog/skills`、`GET /api/catalog/mcp`
+- `POST /api/catalog/{kind}/{name}/assemble`
+- `POST /api/catalog/{kind}/{name}/unassemble`
+
+仓库内置 Skills 位于 `skills/`，包括 `systematic-debugging`、`test-driven-development`、`verification-before-completion`、`frontend-design`、`mcp-builder`、`pdf`、`docx` 等。核心 Agent 已预装推荐工程纪律 Skill。
+
+MCP 支持已从“预留接口”推进到 Agent-scoped 配置与运行态代理：`config/mcp_servers.yaml` 提供 filesystem、git、fetch、sqlite 模板，均为 `stdio` 且默认禁用；当前 `config/agents.yaml` 未默认启用任何 MCP server。管理员可把模板装配到具体 Agent，运行态通过 adapter 注册 Agent 作用域代理工具，并进入 `proxy_available`、`partial` 或 `adapter_unavailable` 等可解释状态。
+
+### 6. 长期记忆与人格系统
+
+- 记忆后端默认 ChromaDB，缺依赖时可降级到 InMemory。
+- 支持自动对话反思、结构化候选、去重巩固、遗忘、检索解释和访问记录更新。
+- 记忆注入 Agent prompt 时明确标记为“不可信资料”，只能作为事实参考，不能覆盖系统规则。
+- 人格系统支持定义、版本、绑定、归档、恢复、回滚和 pending 迭代建议。
+- 新前端优先通过 `/api/agents/persona-bindings*` 管理 Agent/Session 人格绑定。
+
+### 7. 附件、Artifact 与认证
+
+- 附件 API 支持上传、列表、读取、删除，并可将非图片附件 materialize 到工作区 `.attachments/` 下供 Agent 读取。
+- Artifact API 支持创建、列出、内容预览、下载、inline 打开和删除，默认存储在 `workspace/artifacts/`。
+- 可选全局访问密码门禁：`server.access_password` 非空时，`/api/*` 需要 `Authorization: Bearer <token>`；`/api/health`、Swagger 文档和静态入口豁免。
+- 认证失败带 IP 窗口计数和临时锁定；前端有 `LoginPage` 与 WebSocket token 透传。
+
+## 系统架构
+
+```
+React / TypeScript 前端工作台
+  | REST API + WebSocket
+  v
+FastAPI 服务层
+  | routes + schemas + auth middleware + websocket handlers
+  v
+UnifiedBus 统一消息总线
+  | event / request / broadcast / route / metrics
+  v
+运行时核心
+  | Agent Run + TaskRegistry + transcript
+  | CapabilityRegistry + Tools/Skills/MCP
+  | Memory + Persona + Context + Workspace + Artifact
+  v
+配置化 Agent 层
+  | assistant / planner / coder / reviewer / manager / chatroom team
+  v
+LLM 客户端
+  | OpenAI-compatible / Anthropic + retry + streaming + tool use
+```
+
+## 目录结构
 
 ```
 agentic-system/
-├── config/                         # YAML 配置 (agents/capabilities/system)
+├── config/
+│   ├── agents.yaml              # 15 个 Agent 配置
+│   ├── capabilities.yaml        # 22 个能力配置
+│   ├── mcp_servers.yaml         # MCP 模板库
+│   └── system.yaml              # 系统、LLM、记忆、工具、认证配置
 ├── backend/
+│   ├── requirements.txt
 │   ├── src/
-│   │   ├── agents/                 # 4 个智能体 (assistant/planner/coder/reviewer)
-│   │   ├── api/                    # FastAPI 应用 (routes/websocket/schemas/dependencies)
-│   │   ├── core/                   # 核心框架
-│   │   │   ├── bus/                #   统一消息总线 (UnifiedBus)
-│   │   │   ├── memory/             #   长期记忆系统
-│   │   │   ├── capability/         #   能力插件系统
-│   │   │   ├── task/               #   Agent Run / 任务运行状态
-│   │   │   ├── context/            #   上下文管理
-│   │   │   ├── llm/                #   LLM 客户端 (OpenAI/Anthropic)
-│   │   │   └── config.py           #   配置管理
-│   │   ├── capabilities/builtin/   # 完整能力实现 (代码解析/静态分析/测试运行)
-│   │   └── utils/                  # 日志 + 追踪
-│   ├── tests/                      # 测试 (unit + integration)
-│   └── requirements.txt
+│   │   ├── api/                 # FastAPI 路由、认证中间件、WebSocket
+│   │   ├── capabilities/        # 内置工具能力
+│   │   ├── core/                # Agent、Bus、Memory、Workspace、MCP、Task 等核心模块
+│   │   └── utils/
+│   └── tests/                   # 单元与集成测试
 ├── frontend/
-│   └── src/
-│       ├── components/             # 9 个面板 (Chat/Agent/Task/Memory/Monitor/Evolution/Persona/Settings/Sidebar)
-│       ├── hooks/                  # WebSocket Hook
-│       ├── store/                  # 全局状态管理
-│       └── api/                    # API 客户端
-├── docs/                           # 项目文档 (architecture/api/deployment/bus-design)
-├── CLAUDE.md                       # 架构设计文档 (详细)
-├── QUICKSTART.md                   # 快速开始指南
-├── HANDOFF.md                      # 交接文档
-└── README.md                       # ← 本文件
+│   ├── src/
+│   │   ├── components/          # 工作台面板与通用组件
+│   │   ├── api/                 # 前端 API client
+│   │   ├── hooks/
+│   │   ├── store/
+│   │   ├── types/
+│   │   └── utils/
+│   └── tests/                   # 前端契约/逻辑测试
+├── skills/                      # 本地 Skill 库
+├── docs/                        # 架构、API、部署、设计与计划文档
+├── workspace/                   # 运行时工作区、Artifact、transcript，本地忽略
+├── AGENTS.md                    # 面向后续 AI 和开发者的架构说明
+├── QUICKSTART.md
+├── HANDOFF.md
+└── README.md
 ```
 
----
+## 前端工作台
 
-## 已实现功能
+当前前端已经从早期“9 个面板”升级为综合工作台：
 
-### 🤖 智能体系统
-- **AssistantAgent** — 对话助手，集成记忆检索，支持上下文感知对话
-- **PlannerAgent** — 任务规划，将需求分解为可执行的子任务列表 (结构化 JSON)
-- **CoderAgent** — 代码生成，结构化输出（文件名 + 代码 + 说明）
-- **ReviewerAgent** — 代码审查，六维度评估（正确性/安全性/可维护性/性能/最佳实践/错误处理）
-- **Agent-as-Tool** — 任意 Agent 可被包装成 Capability，供主 Agent 或其他 Agent 调用
+| 页面 | 说明 |
+|------|------|
+| 总览 | 系统健康、运行时状态和关键入口 |
+| 对话 | 单会话 Assistant 对话、附件、Markdown、工作区绑定 |
+| 聊天室 | 多 Agent 原生协作房间，支持主持人、团队成员、目标和消息流 |
+| 工作区 | Project 工作区导入、文件树、文件读取和编辑 |
+| 智能体 | Agent 配置、Tools、Skills、MCP、模型、默认工作区与人格绑定 |
+| 运行 | Agent Run 创建、列表、进度、输出和 transcript |
+| 监控 | WebSocket 事件、Agent 进度和系统监控 |
+| 记忆 | 记忆统计、搜索、创建、设置、巩固和遗忘 |
+| 工具 | 能力库中 Tool 的浏览和装配 |
+| Skills | 本地 Skill 库浏览和装配 |
+| MCP | MCP 模板和 Agent-scoped MCP 配置 |
+| 人格 | Persona 定义、版本、绑定、建议/历史归档与回滚 |
+| 设置 | LLM、工具和系统配置热更新 |
 
-### 📡 消息总线 & 运行监控
-- **UnifiedBus** — 统一消息总线，支持发布/订阅、请求/响应、广播、点对点
-- 优先级队列、消息历史、运行指标统计
-- Agent Run 执行过程会广播 agent_progress、agent_done、agent_error 等监控事件
+## REST API 速览
 
-### 🧠 长期记忆系统
-- 三种记忆类型：情景记忆 / 语义记忆 / 程序性记忆
-- 双后端存储：InMemory + ChromaDB（向量数据库，可选）
-- 多信号加权检索（相关性 + 重要性 + 时间衰减 + 访问频率）
-- 记忆巩固（去重合并）+ 记忆遗忘（时间衰减）
-- 完整 REST API：CRUD + 搜索 + 巩固 + 遗忘
+| 模块 | 关键端点 |
+|------|----------|
+| 健康与配置 | `GET /api/health`、`GET/POST /api/config`、`POST /api/config/models` |
+| Agent | `GET /api/agents`、`GET /api/agents/configs`、`GET /api/agents/{name}/config`、`POST /api/agents/{name}/invoke`、`POST /api/agents/{name}/mcp/import` |
+| 人格绑定 | `GET /api/agents/persona-bindings`、`PUT/DELETE /api/agents/persona-bindings/agents/{agent_name}`、`PUT/DELETE /api/agents/persona-bindings/sessions/{session_id}` |
+| Agent Run | `POST /api/runs`、`GET /api/runs`、`GET /api/runs/{run_id}`、`GET /api/runs/{run_id}/events`、`GET /api/runs/{run_id}/memory-context`、`POST /api/runs/{run_id}/control`、`GET /api/runs/workspaces` |
+| 任务兼容入口 | `POST /api/tasks`、`GET /api/tasks`、`GET /api/tasks/{task_id}/transcript`、`DELETE /api/tasks/{task_id}` |
+| 工作区 | `GET /api/workspaces`、`POST /api/workspaces/import`、`GET/DELETE /api/workspaces/{id}`、`GET /api/workspaces/{id}/files`、`GET/PUT /api/workspaces/{id}/files/content` |
+| 聊天室 | `GET/POST /api/chatrooms`、`GET/PUT/DELETE /api/chatrooms/{id}`、`GET/POST /api/chatrooms/{id}/messages`、`POST /api/chatrooms/{id}/invoke`、`POST /api/chatrooms/{id}/cancel` |
+| 会话与附件 | `GET/POST /api/chat-sessions`、`POST /api/chat-sessions/{id}/messages`、`GET/POST /api/attachments`、`GET /api/attachments/{id}/content` |
+| 记忆 | `GET /api/memory/stats`、`GET /api/memory/list`、`POST /api/memory/search`、`POST /api/memory/create`、`POST /api/memory/consolidate`、`POST /api/memory/forget` |
+| 能力库 | `GET /api/catalog/tools`、`GET /api/catalog/skills`、`GET /api/catalog/mcp`、`POST /api/catalog/{kind}/{name}/assemble`、`POST /api/catalog/{kind}/{name}/unassemble` |
+| Artifact | `GET/POST /api/artifacts`、`GET /api/artifacts/{id}`、`GET /api/artifacts/{id}/content`、`GET /api/artifacts/{id}/download`、`GET /api/artifacts/{id}/open` |
+| 进化中心 | `GET /api/evolution/system-status`、`POST /api/evolution/command`、`GET/PUT /api/evolution/tool-prompts/{name}`、`POST /api/evolution/reload` |
 
-### 🔧 能力系统
-- 能力抽象接口 + JSON Schema 描述
-- 内置能力：代码解析器 (AST)、静态分析器、测试运行器
-- 常规助理工具：`calculator`、`datetime_tool`、`web_fetch`、`file_search`、`json_tool`、`text_processor`
-- 工作区工具：`read_file`、`write_file`、`bash`（默认关闭，需显式启用）。默认工作区为项目根目录下 `./workspace`，bash 默认在该目录执行，工具生成的临时/中间产物默认落在该目录。
-- 能力注册中心，支持动态加载
-- 动态能力：通过配置/API 创建 `template`、`checklist`、`regex_extract` Tool，并热挂载到 Agent
-- Tool 提示词管理：可编辑 LLM-facing prompt，JSON Schema 只读
+完整 API 说明见 [docs/api.md](docs/api.md)。
 
-### 🔄 Agent Run 调度
-- 每次运行都是独立实例，包含 agent、session、workspace、目标、状态、进度和 transcript
-- 调度层只负责创建实例、隔离工作区、记录事件、广播状态和取消
-- Agent 根据上下文与工具反馈自主决定下一步，不再依赖固定模板步骤
-
-### 🌐 WebSocket 实时通信
-- 对话响应只回发到当前连接，避免不同浏览器会话互相串消息
-- Agent Run 监控事件单独广播到监控面板，不混入聊天回复
-- 所有推送消息统一附带时间戳，便于前端事件流展示
-
-### 🖥️ 前端界面 (9 个面板)
-- **ChatPanel** — 聊天气泡界面，显示记忆使用指示
-- **AgentPanel** — 智能体状态查看与直接调用
-- **TaskPanel** — Agent Run 创建、列表、状态跟踪与 transcript 查看
-- **MemoryPanel** — 记忆统计、列表、搜索、创建、删除、设置与遗忘周期推进
-- **MonitorPanel** — 按 Agent 聚合的运行进展与实时事件流
-- **PersonaPanel** — 人格定义、版本、绑定与审核式迭代
-- **Settings** — LLM 配置面板（支持热重载）
-- **Sidebar** — 侧边栏导航
-- **EvolutionPanel** — 进化中心：能力网络可视化、动态 Tool 创建、子 Agent 创建
-
-### 🛠️ 基础设施
-- YAML 配置体系 (5 个配置文件 + 动态加载 + fallback)
-- 统一日志系统 (structlog)
-- 调用追踪器 (Tracer/Span)
-- Pydantic 类型安全配置
-
----
-
-## 安装与运行
+## 安装与启动
 
 ### 环境要求
 
@@ -143,43 +198,45 @@ agentic-system/
 - Node.js 18+
 - npm
 
-### 1. 克隆项目
+### 后端
 
 ```bash
-git clone <repo-url>
-cd agentic-system
+cd backend
+pip install -r requirements.txt
+cd src
+uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-### 2. 后端安装与启动
+也可以在 `backend/src` 下运行：
 
 ```bash
-# 创建虚拟环境 (推荐)
-cd backend
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m api.main
+```
 
-# 安装依赖
-pip install -r requirements.txt
+后端默认地址：`http://127.0.0.1:8001`。
 
-# 配置 LLM (任选其一)
-# 方式 1: 编辑配置文件
-cp config.example.yaml src/config.yaml
-# 编辑 src/config.yaml，填入 LLM API Key
+### LLM 配置
 
-# 方式 2: 环境变量
+建议使用 `backend/src/config.yaml` 或环境变量。`backend/src/config.yaml` 已被 `.gitignore` 忽略，不应提交真实密钥。
+
+```yaml
+llm:
+  provider: "openai"
+  model: "gpt-5.5"
+  api_key: "your-api-key"
+  base_url: "https://example-compatible-endpoint/v1"
+```
+
+环境变量覆盖：
+
+```bash
 export LLM_PROVIDER=openai
 export LLM_API_KEY=sk-your-key
-export LLM_MODEL=gpt-4
-
-# 启动后端 (二选一)
-cd src && python -m api.main
-# 或
-cd src && uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
+export LLM_MODEL=gpt-5.5
+export LLM_BASE_URL=https://example-compatible-endpoint/v1
 ```
 
-后端将在 **http://localhost:8001** 启动。
-
-### 3. 前端安装与启动
+### 前端
 
 ```bash
 cd frontend
@@ -187,263 +244,85 @@ npm install
 npm run dev
 ```
 
-前端将在 **http://localhost:3000** 启动。
+前端默认地址：`http://localhost:3000`。
 
-### 4. 访问系统
+### 常用入口
 
 | 地址 | 说明 |
 |------|------|
-| http://localhost:3000 | 前端界面 |
-| http://localhost:8001/docs | Swagger API 文档 |
-| http://localhost:8001/api/health | 健康检查 |
-| ws://localhost:8001/ws | WebSocket 实时通信 |
+| `http://localhost:3000` | 前端工作台 |
+| `http://localhost:8001/docs` | Swagger 文档 |
+| `http://localhost:8001/api/health` | 健康检查 |
+| `ws://localhost:8001/ws` | WebSocket 实时事件 |
 
----
+## 答辩演示建议
 
-## 答辩 Demo
+推荐演示路径：
 
-前端 **运行 / Agent Run 答辩演示台** 提供一键 Demo 入口，适合毕业设计现场快速展示：
+1. 打开“总览”说明系统健康、Agent 数量、工作区和运行态。
+2. 在“工作区”导入一个小项目 zip，展示 `workspace_id` 和文件树。
+3. 在“运行”创建 `coder` Agent Run，让它在指定工作区生成或修改项目文件。
+4. 展开 transcript，展示 `thinking`、`tool_call`、`write_file`、`reviewer` 审查和 `done` 输出。
+5. 切到“聊天室”，创建带 `facilitator` 的协作房间，展示规划者、编码者、审查者、研究员、批评者、记录员的团队协作。
+6. 切到“智能体 / Skills / MCP / 工具”，说明系统可以运行时装配能力，而不是写死在代码里。
+7. 切到“记忆 / 人格”，说明系统支持长期偏好、反思和人格配置，但都以“不可信资料”和管理员审核边界注入。
 
-- 预设任务包括小型 Flask API、Python 工具函数、CSV 数据处理脚本。
-- 点击“一键演示”后会创建 Agent Run，并展示 run_id、agent、workspace、status 和耗时。
-- 展开 Run 可查看 transcript 时间线：created、started、流式生成片段、tool_call/tool_result、done/error 等事件。
-- Run 完成后可展开最终输出，用于讲解生成代码、运行命令和验收方式。
-- 答辩材料、Mermaid 架构图和讲稿见 `docs/demo/DEFENSE_MATERIALS.md`；现场验收步骤见 `docs/demo/DEMO_ACCEPTANCE_2026-05-11.md`。
-
-该 Demo 主要用于说明多智能体协作、工具能力、长期记忆上下文和运行过程可观测性，不依赖额外前端插件。
-
----
+一个适合现场的真实 demo 是“智能课程作业批改助手”或“需求文档转测试用例工具”：让 Agent 在工作区内生成小型 FastAPI 项目、测试和 README，再由 reviewer 审查，最后用 transcript 证明过程可追溯。
 
 ## 测试与验证
 
+后端：
+
 ```bash
-# 后端单元 + 集成测试
-python3 -m pytest backend/tests/ -q
-
-# 真实 LLM 冒烟验证（建议日常回归优先使用）
-python3 tests/api_live_test.py --suite smoke
-
-# 真实 LLM 全量 API 验证
-python3 tests/api_live_test.py
+python -m pytest backend/tests/ -q
+python -m pytest backend/tests/unit/ -v
+python -m pytest backend/tests/integration/ -v
 ```
 
-`--suite smoke` 会优先验证最关键的真实链路：
-- `/api/agents/assistant/invoke`
-- `task_decompose_and_execute`
-- `code_generation_and_review`
-- WebSocket 连通性
+前端：
 
-如果在 Windows 终端运行 live 脚本时遇到编码问题，可先设置：
+```bash
+cd frontend
+npm run test
+npm run build
+```
+
+真实 API 冒烟验证：
+
+```bash
+python tests/api_live_test.py --suite infra
+python tests/api_live_test.py --suite smoke
+```
+
+Windows 终端遇到中文显示问题时可设置：
 
 ```powershell
 $env:PYTHONUTF8='1'
 $env:PYTHONIOENCODING='utf-8'
 ```
 
----
+## 当前项目统计
 
-## 配置说明
+| 指标 | 当前值 |
+|------|--------|
+| 后端 Python 源文件 | 118 |
+| 后端测试文件 | 73 |
+| 前端 TS/TSX 文件 | 30 |
+| 前端 CSS 文件 | 21 |
+| Agent 配置 | 15 |
+| Capability 配置 | 22 |
+| 本地 Skills | 12 |
+| 主配置文件 | `agents.yaml`、`capabilities.yaml`、`mcp_servers.yaml`、`system.yaml` |
 
-### 运行时配置 (backend/src/config.yaml)
+这些数字来自当前工作树文件扫描，不再沿用旧 README 中的 4 Agent、9 面板、605 用例口径。
 
-`backend/src/config.yaml` 现在只作为本地运行时覆盖项，适合放未提交的个人配置；实际加载优先级为：
+## 关键文档
 
-1. `config/*.yaml`
-2. `backend/src/config.yaml`
-3. 环境变量
-
-敏感信息请优先使用环境变量注入，避免把真实密钥提交到仓库。
-
-```yaml
-llm:
-  provider: openai          # openai 或 anthropic
-  model: gpt-4              # 模型名称
-  api_key: sk-xxx           # API Key (建议用环境变量 LLM_API_KEY)
-  base_url: ""              # 自定义 API 端点 (可选)
-
-memory:
-  backend: "chroma"         # 默认 ChromaDB 持久化；开发测试可改 "memory"
-  persist_dir: "./data/chroma"
-  reflection_min_turns: 3   # 默认累计 3 轮后反思；显著偏好/待办/项目决策可提前触发
-  reflection_max_messages: 12
-```
-
-对话记忆现在不是只靠 `/api/memory/create` 手动写入：REST chat、SSE stream 和
-WebSocket 流式聊天会在完整回复结束后后台追加到反思缓冲，默认累计后生成结构化
-记忆；如果用户明确说“记住/以后默认/我喜欢/待办/需求变更”等显著长期信息，会
-提前触发。下一次生成前会
-检索相关记忆，并以「不可信资料」方式注入上下文。可用以下脚本验证持久化闭环:
-
-```bash
-python scripts/verify_memory_persistence.py
-```
-
-### 组件配置 (config/ 目录)
-
-| 文件 | 用途 |
-|------|------|
-| `config/agents.yaml` | 智能体定义 (名称/类型/能力) |
-| `config/capabilities.yaml` | 能力插件 |
-| `config/system.yaml` | 全局系统配置 |
-
-补充说明:
-- 默认服务监听地址已收紧为 `127.0.0.1`
-- `bash` 工具默认关闭，只有在显式设置 `ENABLE_SHELL_TOOL=true` 时才允许使用；启用后默认 cwd 是项目根目录下 `./workspace`，可用 `tools.file.workspace_root` / `AGENTIC_WORKSPACE_ROOT` 改为显式目录。
-
-### 环境变量
-
-| 变量 | 说明 |
-|------|------|
-| `LLM_PROVIDER` | LLM 提供商 (openai/anthropic) |
-| `LLM_API_KEY` | LLM API Key |
-| `LLM_MODEL` | 模型名称 |
-| `LLM_BASE_URL` | 自定义 API 端点 |
-| `MEMORY_BACKEND` | 记忆后端 (memory/chroma) |
-
----
-
-## 运行测试
-
-```bash
-# 全部测试
-python3 -m pytest backend/tests/ -q
-
-# 单元测试
-python3 -m pytest backend/tests/unit/ -v
-
-# 集成测试
-python3 -m pytest backend/tests/integration/ -v
-
-# 查看详细输出
-python3 -m pytest backend/tests/ -v --tb=short
-```
-
-### 测试模块
-
-| 模块 | 文件 | 覆盖范围 |
-|------|------|----------|
-| 消息总线 | `test_bus.py` | SimpleBus / UnifiedBus / 频道 / 路由 |
-| 智能体 | `test_agent_system.py` | 基类 / 生命周期 / 注册中心 |
-| 能力系统 | `test_capability.py` | 代码解析 / 静态分析 / 注册 |
-| 常规工具 | `test_common_tools.py` | 计算 / 时间 / 网页读取 / 文件搜索 / JSON / 文本处理 |
-| 配置管理 | `test_config.py` | 配置加载 / 环境变量 / YAML 合并 |
-| 上下文 | `test_context.py` | 分层存储 |
-| 记忆系统 | `test_memory.py` | 存储 / 检索 / 巩固 / 遗忘 |
-| 任务注册 | `test_task_registry.py` | 任务状态、排序、取消 |
-| Transcript | `test_transcript_writer.py` | 任务事件落盘 |
-| Live 脚本契约 | `test_api_live_script.py` | 本地验收脚本端点契约 |
-| 集成-API | `test_api.py` | REST API 端点 |
-
----
-
-## API 端点
-
-### 智能体管理
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/agents` | 列出所有已注册智能体 |
-| GET | `/api/agents/{name}` | 获取特定智能体详情 |
-| POST | `/api/agents/{name}/invoke` | 直接调用某个智能体 |
-
-### 任务管理
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/tasks` | 提交新任务 |
-| GET | `/api/tasks` | 列出所有任务 |
-| GET | `/api/tasks/{task_id}` | 获取任务详情 |
-| DELETE | `/api/tasks/{task_id}` | 取消/删除任务 |
-
-### Agent Run
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/runs` | 创建自主运行实例 |
-| GET | `/api/runs` | 按 agent/session/workspace/status 查询运行 |
-| GET | `/api/runs/{run_id}` | 获取运行详情 |
-| GET | `/api/runs/{run_id}/events` | 读取 transcript 事件流 |
-| POST | `/api/runs/{run_id}/control` | 控制运行（当前支持 cancel） |
-| DELETE | `/api/runs/{run_id}` | 取消运行 |
-| GET | `/api/runs/workspaces` | 按工作区汇总运行 |
-
-### 记忆系统
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/memory/stats` | 记忆统计 |
-| GET | `/api/memory/list` | 列出记忆 (支持类型过滤) |
-| POST | `/api/memory/search` | 搜索记忆 |
-| POST | `/api/memory/create` | 创建记忆 |
-| DELETE | `/api/memory/{memory_id}` | 删除记忆 |
-| POST | `/api/memory/consolidate` | 触发记忆巩固 |
-| POST | `/api/memory/forget` | 触发记忆遗忘 |
-
-### 配置与健康
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/config` | 获取当前配置 (隐藏 API Key) |
-| POST | `/api/config` | 更新配置并热重载 |
-| GET | `/api/health` | 健康检查 |
-
-### WebSocket
-
-| 路径 | 说明 |
-|------|------|
-| `ws://localhost:8001/ws` | 实时通信端点 |
-
----
-
-## 前端面板功能描述
-
-| 面板 | 功能说明 |
-|------|----------|
-| **聊天面板** | 用户与 AI 的对话界面，显示聊天气泡，支持记忆使用指示 |
-| **智能体面板** | 列出所有已注册的智能体，查看状态和能力列表，可直接调用 |
-| **任务面板** | 创建并跟踪 Agent Run，查看状态、进度、最终输出和 transcript |
-| **记忆面板** | 查看记忆统计、列表、搜索、设置、手动创建/删除和遗忘周期推进 |
-| **监控面板** | 系统实时状态，按 Agent 聚合运行进展，查看事件流日志 |
-| **设置面板** | LLM 提供商切换，API Key 配置，模型选择，自定义 base_url |
-
----
-
-## 项目统计
-
-| 指标 | 数值 |
-|------|------|
-| 源代码文件 | ~109 个 (82 Python + 16 TS/TSX + 11 CSS) |
-| 后端代码行数 | ~8,300 行 |
-| 前端代码行数 | ~5,100 行 |
-| 测试代码行数 | ~4,900 行 |
-| 测试用例 | 550 个 |
-| 测试模块 | 16 个 |
-| REST API 端点 | 31 个 |
-| 前端面板 | 9 个 |
-| YAML 配置文件 | 6 个 |
-
----
-
-## 文档索引
-
-| 文档 | 说明 |
-|------|------|
-| `CLAUDE.md` | 架构设计文档 (详细，面向 AI 和开发者) |
-| `README.md` | 项目说明 (面向用户和评审) |
-| `QUICKSTART.md` | 5 分钟快速上手 |
-| `HANDOFF.md` | 交接文档 (状态概览 + 下一步) |
-| `PROGRESS.md` | 开发进度追踪 |
-| `docs/architecture.md` | 系统架构 |
-| `docs/api.md` | API 端点详细文档 |
-| `docs/bus-design.md` | 消息总线设计 |
-| `docs/deployment.md` | 部署指南 |
-
----
-
-## 开发规范
-
-- 所有改动遵循「先文档 → 再编码 → 再验收」流程
-- Python: PEP 8 + 类型注解 + Google 风格 docstring
-- TypeScript: 严格模式 + 函数式组件
-- 提交: [Conventional Commits](https://www.conventionalcommits.org/) 规范
-- 架构变动须同步更新 `CLAUDE.md` 和相关文档
+- [AGENTS.md](AGENTS.md)：面向后续 AI 和开发者的详细架构说明。
+- [QUICKSTART.md](QUICKSTART.md)：快速启动与演示。
+- [HANDOFF.md](HANDOFF.md)：交接说明与维护入口。
+- [docs/api.md](docs/api.md)：完整 API 文档。
+- [docs/architecture.md](docs/architecture.md)：架构设计说明。
+- [docs/deployment.md](docs/deployment.md)：部署说明。
+- [docs/superpowers/specs/](docs/superpowers/specs/)：近期开关、聊天室、能力库、工作区等设计文档。
+- [docs/superpowers/plans/](docs/superpowers/plans/)：对应实施计划。

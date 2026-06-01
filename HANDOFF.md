@@ -1,216 +1,134 @@
 # HANDOFF.md — 项目交接文档
 
-> 最后更新: 2026-05-05
-> 本文档帮助后续 AI 或人类开发者快速接手项目。
+> 最后更新: 2026-06-02
+> 本文档按 `db26ae4..HEAD` 提交追溯同步，面向后续 AI 或开发者快速接手当前主分支。
 
----
+## 1. 当前状态
 
-## 1. 项目当前状态
+总体评估：核心功能可运行、可演示，系统已经从早期固定 Pipeline 迁移为 **Agent Run + Project 工作区 + 能力库 + 聊天室协作团队** 的运行时。
 
-**总体评估: 核心功能已完成，可演示运行。**
+- 后端 FastAPI、WebSocket、Agent Run、工作区、记忆、人格、附件、Artifact、能力库、聊天室等 API 已实现。
+- 当前 `config/agents.yaml` 配置 15 个 Agent。
+- 当前 `config/capabilities.yaml` 配置 22 个能力。
+- 仓库内置 12 个 Skill，可通过能力库装配到指定 Agent。
+- `config/mcp_servers.yaml` 提供 filesystem、git、fetch、sqlite 四个 stdio MCP 模板，默认禁用；Agent 可按需挂载。
+- 前端已改为工作台形态：总览、对话、聊天室、工作区、智能体、运行、监控、记忆、工具、Skills、MCP、人格、设置。
+- 可选全局访问密码已接入：`server.access_password` 非空时 `/api/*` 使用 Bearer token，WebSocket 使用 `?token=`。
 
-- ✅ 后端 API 全部实现 (含进化中心 REST 端点 + WebSocket)
-- ✅ 4 个智能体可工作 (需要有效的 LLM API Key)
-- ✅ 前端 9 个面板全部可用
-- ✅ 测试套件 605 个用例通过
-- ✅ YAML 配置体系完整
-- ✅ 支持运行时装载动态 Tool，并挂载到主 Agent/子 Agent
-- ✅ 文档体系完整
+## 2. 当前关键能力
 
----
+### 核心运行时
 
-## 2. 已完成功能清单
+- UnifiedBus：发布/订阅、请求/响应、点对点、广播、优先级队列、消息历史和运行指标。
+- Agent Run：每次运行拥有独立 `run_id/task_id`、Agent、Session、Workspace、目标、状态、进度、输出和 transcript。
+- TaskRegistry + TranscriptWriter：运行状态和事件 JSONL 落盘，`/api/runs/{id}/events` 可读取。
+- CapabilityRegistry：统一管理原生工具、动态 Tool、Agent-as-Tool、MCP 代理工具。
+- WorkspaceStore：Project zip 导入、manifest、文件树、文本读写、安全路径校验。
+- ArtifactStore：HTML、Markdown、代码、图片、文件等产物预览/下载/打开。
 
-### 核心系统
-- [x] UnifiedBus 统一消息总线 (发布/订阅、请求/响应、广播、优先级队列)
-- [x] AgentRegistry + AgentLifecycleManager 智能体管理
-- [x] Agent Run 调度 (多 Agent/会话/工作区实例 + transcript 事件落盘)
-- [x] TaskRegistry + TranscriptWriter 任务状态和事件落盘
-- [x] ContextStore 上下文管理 (全局/会话/智能体三层)
-- [x] CapabilityRegistry 能力注册中心
+### Agent
 
-### 智能体
-- [x] AssistantAgent — 对话助手 (LLM + 记忆检索)
-- [x] PlannerAgent — 任务规划 (需求 → 子任务 JSON)
-- [x] CoderAgent — 代码生成 (结构化 JSON 输出)
-- [x] ReviewerAgent — 代码审查 (六维度评估)
-
-### 记忆系统
-- [x] InMemoryStore + ChromaStore 双后端
-- [x] MemoryFormation (创建/巩固/遗忘)
-- [x] MemoryRetriever (多信号加权检索)
-- [x] 记忆 REST API (CRUD + 搜索 + 巩固 + 遗忘)
-
-### 能力插件
-- [x] CodeParserCapability (AST 解析)
-- [x] StaticAnalyzerCapability (代码质量检查)
-- [x] TestRunnerCapability (测试运行)
+| 分组 | Agent |
+|------|-------|
+| 核心协作 | `assistant`、`planner`、`coder`、`reviewer` |
+| 系统管理 | `tool_creator`、`agent_creator`、`agent_manager`、`persona_evolution` |
+| 聊天室团队 | `facilitator`、`chat_planner`、`chat_coder`、`chat_reviewer`、`researcher`、`critic`、`scribe` |
 
 ### 前端
-- [x] ChatPanel + AgentPanel + TaskPanel + PersonaPanel + EvolutionPanel
-- [x] MemoryPanel + MonitorPanel + Settings + Sidebar
-- [x] WebSocket 实时通信
-- [x] 深色主题 UI
 
-### 配置
-- [x] config/agents.yaml + capabilities.yaml + system.yaml
-- [x] load_yaml_configs() 动态加载 + fallback 机制
-- [x] 环境变量覆盖
-- [x] 前端热重载配置
+- 已删除旧 `TaskPanel` 和旧 `EvolutionPanel`。
+- 运行入口是 `RunsPanel`。
+- 能力相关入口拆为 `ToolsPanel`、`SkillsPanel`、`McpPanel`。
+- 新增 `WorkspacePanel`、`ChatroomPanel`、`OverviewPanel`、`LoginPage`、`Topbar`。
 
----
+### 安全和边界
 
-## 3. 已知问题和限制
+- `bash` 能力存在但默认关闭，需显式开启 `ENABLE_SHELL_TOOL=true` 或配置 `tools.shell.enabled=true`。
+- 文件工具默认工作区为 `./workspace`，Run 会通过可信 `_trusted_workspace_root` 注入当前工作区。
+- 工作区 zip 导入会拒绝 zip-slip、绝对路径、`..`、Windows 保留名等不安全路径。
+- 记忆、附件、网页、文件、工具结果都应作为不可信资料注入 Agent prompt。
+- Agent 配置写入由 `agent_manager` 的白名单字段控制，`update_agent_config` 调用即生效并写 `config_change` 审计日志。
 
-### 架构层面
-- **单进程限制**: 使用内存队列和内存存储，不支持多 worker 部署
-- **SimpleBus 残留**: `core/bus/simple_bus.py` 仍存在，用于兼容旧测试和旧接口语义；运行时主总线为 UnifiedBus
-- **两套能力实现**: `core/capability/native.py` (简化版) 和 `capabilities/builtin/` (完整版) 并存
+## 3. 关键文件索引
 
-### 功能层面
-- **MCP 集成**: 仅预留接口，未实际实现
-- **消息持久化**: 仅内存，无落盘
-- **ChromaDB**: 可选依赖，默认使用内存后端
-- **用户认证**: 无鉴权机制
-- **速率限制**: 无 API 速率限制
-- **前端测试**: 无前端自动化测试
+| 目标 | 关键文件 |
+|------|----------|
+| 应用入口/初始化 | `backend/src/api/main.py` |
+| 路由聚合 | `backend/src/api/routes/__init__.py` |
+| Agent Run / Task | `backend/src/api/routes/tasks.py`、`backend/src/core/task/` |
+| Agent 配置 API | `backend/src/api/routes/agents.py` |
+| 工作区 | `backend/src/api/routes/workspaces.py`、`backend/src/core/workspace.py` |
+| 聊天室 | `backend/src/api/routes/chatrooms.py`、`backend/src/core/chatroom.py`、`backend/src/core/chatroom_orchestrator.py` |
+| 附件 | `backend/src/api/routes/attachments.py`、`backend/src/core/attachment*.py` |
+| Artifact | `backend/src/api/routes/artifacts.py`、`backend/src/core/artifacts.py` |
+| 能力库 | `backend/src/api/routes/catalog.py` |
+| MCP | `backend/src/core/mcp.py`、`backend/src/core/mcp_adapter.py`、`backend/src/core/mcp_import.py`、`config/mcp_servers.yaml` |
+| Agent 配置 | `config/agents.yaml` |
+| 能力配置 | `config/capabilities.yaml` |
+| 系统配置 | `config/system.yaml` |
+| 前端入口 | `frontend/src/App.tsx` |
+| 前端 API | `frontend/src/api/client.ts` |
+| 前端状态 | `frontend/src/store/appStore.tsx` |
+| 前端面板 | `frontend/src/components/` |
 
-### 已知 Bug
-- 监控页仍可继续增强跨会话筛选、长事件流归档和失败原因聚合展示
+## 4. 常用启动命令
 
----
-
-## 4. 下一步可以做的事
-
-### 高优先级
-1. **端到端集成验证**: 从前端提交任务 → 后端处理 → WebSocket 推送 → 前端显示，验证整条链路
-2. **Demo 流程准备**: 准备毕业设计答辩演示脚本
-3. **example_simple.py 完善**: 确保独立脚本可直接运行演示
-
-### 中优先级
-4. **统一能力实现**: 合并 `core/capability/native.py` 和 `capabilities/builtin/` 为一套
-5. **统一本地演示脚本**: 将答辩演示脚本固定到 `tests/api_live_test.py --suite infra/smoke`
-6. **前端实时运行详情**: Agent Run 执行过程中展示输入、输出、工具调用、耗时和错误
-7. **前端自动化测试**: 为 9 个面板补 Vitest + React Testing Library 基础用例
-
-### 低优先级
-8. **MCP 客户端**: 实现真正的 MCP 协议集成
-9. **消息持久化**: Redis 或 SQLite 后端
-10. **用户认证**: JWT 或 API Key 鉴权
-11. **性能优化**: 缓存 LLM 响应、连接池
-12. **前端测试**: Vitest + React Testing Library
-
----
-
-## 5. 关键文件索引
-
-> 改什么看什么
-
-| 要改的功能 | 需要看的文件 |
-|-----------|-------------|
-| 添加新 Agent | `core/agent/base.py` → `agents/*.py` → `config/agents.yaml` → `main.py._AGENT_CLASS_MAP` |
-| 修改运行事件流 | `backend/src/api/routes/tasks.py` → `backend/src/api/websocket/handlers.py` → `frontend/src/components/MonitorPanel.tsx` |
-| 新增 API 端点 | `api/routes/*.py` → `api/schemas.py` → `api/routes/__init__.py` |
-| 修改前端面板 | `frontend/src/components/*.tsx` + `*.css` |
-| 配置变更 | `core/config.py` → `config/*.yaml` → `backend/src/config.yaml` |
-| 添加能力插件 | `core/capability/native.py` → `config/capabilities.yaml` → `main.py._CAPABILITY_CLASS_MAP` |
-| Agent Run 调度 | `backend/src/api/routes/tasks.py` → `backend/src/core/task/` → `frontend/src/components/TaskPanel.tsx` |
-| 记忆系统 | `core/memory/` (store.py / retriever.py / formation.py / types.py) |
-| 前端状态管理 | `frontend/src/store/appStore.tsx` → `frontend/src/types/index.ts` |
-| WebSocket | `api/websocket/handlers.py` → `frontend/src/hooks/useWebSocket.ts` |
-| LLM 客户端 | `core/llm/` (base.py / factory.py / openai_client.py / anthropic_client.py) |
-
----
-
-## 6. 测试命令速查
-
-```bash
-# 全部测试
-python3 -m pytest backend/tests/ -q
-
-# 单元测试 (详细)
-python3 -m pytest backend/tests/unit/ -v
-
-# 集成测试
-python3 -m pytest backend/tests/integration/ -v
-
-# 指定模块
-python3 -m pytest backend/tests/unit/test_bus.py -v
-python3 -m pytest backend/tests/unit/test_memory.py -v
-python3 -m pytest backend/tests/unit/test_capability.py -v
-
-# 带输出
-python3 -m pytest backend/tests/ -v --tb=short -s
-
-# 前端构建检查
-cd frontend && npx tsc --noEmit && npx vite build
-```
-
----
-
-## 7. 环境配置速查
-
-### 后端启动
+后端：
 
 ```bash
 cd backend/src
-python -m api.main                    # 直接运行
-uvicorn api.main:app --port 8001 --reload  # 热重载
+uvicorn api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-### 前端启动
+前端：
 
 ```bash
 cd frontend
-npm install
-npm run dev                           # 开发模式
-npm run build && npm run preview      # 生产构建
+npm run dev
 ```
 
-### 环境变量
+## 5. 常用测试命令
+
+后端：
 
 ```bash
-export LLM_PROVIDER=openai            # openai / anthropic
-export LLM_API_KEY=sk-your-key
-export LLM_MODEL=gpt-4
-export LLM_BASE_URL=                  # 自定义端点 (可选)
-export MEMORY_BACKEND=memory          # memory / chroma
+python -m pytest backend/tests/ -q
+python -m pytest backend/tests/unit/ -v
+python -m pytest backend/tests/integration/ -v
 ```
 
-### 重要端口
+前端：
 
-| 端口 | 服务 |
-|------|------|
-| 8001 | 后端 FastAPI |
-| 3000 | 前端 Vite Dev Server |
+```bash
+cd frontend
+npm run test
+npm run build
+```
 
-### 重要路径
+真实 API 冒烟：
 
-| 路径 | 说明 |
-|------|------|
-| `backend/src/config.yaml` | LLM 运行时配置 (API Key) |
-| `config/*.yaml` | 组件配置 (Agent/Capability/System) |
-| `backend/src/api/main.py` | 应用入口 + 初始化流程 |
-| `backend/src/core/config.py` | 配置加载逻辑 |
+```bash
+python tests/api_live_test.py --suite infra
+python tests/api_live_test.py --suite smoke
+```
 
----
+## 6. 当前项目统计
 
-## 8. 项目统计
+| 指标 | 当前值 |
+|------|--------|
+| 后端 Python 源文件 | 118 |
+| 后端测试文件 | 73 |
+| 前端 TS/TSX 文件 | 30 |
+| 前端 CSS 文件 | 21 |
+| Agent 配置 | 15 |
+| Capability 配置 | 22 |
+| 本地 Skills | 12 |
+| REST route decorators | 约 100 个，完整列表以 `backend/src/api/routes/` 为准 |
 
-| 指标 | 数值 |
-|------|------|
-| Python 源文件 | 82 |
-| 前端 TS/TSX | 16 |
-| 前端 CSS | 11 |
-| 后端代码行数 | ~8,300 |
-| 前端代码行数 | ~5,100 |
-| 测试代码行数 | ~4,900 |
-| 测试用例 | 550 |
-| REST API | 31 端点 |
-| WebSocket | 1 端点 |
-| 前端面板 | 9 个 |
-| YAML 配置 | 6 个文件 |
+## 7. 已知注意事项
 
----
-
-_此文档与 CLAUDE.md、README.md 保持一致。如有架构变动，请同步更新。_
+- `workspace/`、`data/`、`backend/src/config.yaml` 都是本地运行态或密钥相关内容，不应提交。
+- README、QUICKSTART、AGENTS、docs/architecture 和 docs/api 需要随架构变动同步。
+- 前端真实 UI 不再有“一键 Demo”按钮，不要在答辩材料中沿用旧说法。
+- MCP 当前有模板库和 Agent-scoped adapter 支持，但默认没有 Agent 启用 MCP server；演示时应说“可配置/可装配”，不要说“默认已经连接外部 MCP”。
+- 聊天室适合演示多 Agent 协作，但更准确的表述是“支持 host、@ 成员、目标/Todo 和协作调度事件”，不要夸成完全自动项目经理。
