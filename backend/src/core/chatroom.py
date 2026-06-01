@@ -38,7 +38,7 @@ INDEX_FILENAME = "_index.json"
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "auto_host": False,
-    "host_agent": "planner",
+    "host_agent": "facilitator",
     "recent_n": 30,
     "summary_threshold_m": 20,
     "max_relay_depth": 3,
